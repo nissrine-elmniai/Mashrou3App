@@ -18,17 +18,6 @@ export default function LoginScreen({ navigation }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  // Fonction de remplissage automatique des comptes démo
-  const fillDemoAccount = (type) => {
-    if (type === "superviseur") {
-      setUsername("super123");
-      setPassword("superviseur");
-    } else if (type === "membre") {
-      setUsername("membre123");
-      setPassword("membre");
-    }
-  };
-
   const handleLogin = () => {
     // Logique d'authentification à implémenter
     console.log("Login attempt:", { username, password });
@@ -66,11 +55,11 @@ export default function LoginScreen({ navigation }) {
           {/* Formulaire de connexion */}
           <View style={styles.formContainer}>
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>اسم المستخدم</Text>
+              <Text style={styles.label}>البريد الالكتروني </Text>
               <View style={styles.inputWrapper}>
                 <TextInput
                   style={styles.input}
-                  placeholder="superviseur : مثال"
+                  placeholder="quran@gmail.com"
                   placeholderTextColor="#9CA3AF"
                   value={username}
                   onChangeText={setUsername}
@@ -98,6 +87,12 @@ export default function LoginScreen({ navigation }) {
             <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
               <Text style={styles.loginButtonText}>تسجيل الدخول</Text>
             </TouchableOpacity>
+            <View style={styles.signupContainer}>
+              <Text style={styles.signupText}>ليس لديك حساب؟ </Text>
+                <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+                  <Text style={styles.signupLink}>إنشاء حساب جديد</Text>
+                </TouchableOpacity>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -203,82 +198,15 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textAlign: "center",
   },
-  demoContainer: {
-    marginBottom: 24,
-  },
-  demoTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#374151",
-    marginBottom: 16,
-    textAlign: "center",
-  },
-  demoCard: {
-    backgroundColor: "white",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  demoHeader: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    marginBottom: 12,
-  },
   badge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
   },
-  badgeSuperviseur: {
-    backgroundColor: "#EAB308", // Jaune
-  },
-  badgeMembre: {
-    backgroundColor: "#16A34A", // Vert
-  },
+  
   badgeText: {
     color: "white",
     fontWeight: "bold",
     fontSize: 14,
-  },
-  demoRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-    paddingHorizontal: 4,
-  },
-  demoLabel: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#1F2937",
-  },
-  demoValue: {
-    fontSize: 14,
-    color: "#6B7280",
-  },
-  demoFillButton: {
-    backgroundColor: "#F3F4F6",
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  demoFillButtonText: {
-    color: "#16A34A",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  footerNote: {
-    textAlign: "center",
-    color: "#9CA3AF",
-    fontSize: 13,
-    marginTop: 8,
-    writingDirection: "rtl",
   },
 });
