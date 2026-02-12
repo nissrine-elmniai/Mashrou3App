@@ -84,14 +84,29 @@ export default function LoginScreen({ navigation }) {
               </View>
             </View>
 
-            <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
+            <TouchableOpacity
+              style={styles.loginButton}
+              onPress={() => navigation.navigate("Dashboard")}
+            >
               <Text style={styles.loginButtonText}>تسجيل الدخول</Text>
             </TouchableOpacity>
-            <View style={styles.signupContainer}>
-              <Text style={styles.signupText}>ليس لديك حساب؟ </Text>
-              <TouchableOpacity onPress={() => navigation.navigate("Register")}>
-                <Text style={styles.signupLink}>إنشاء حساب جديد</Text>
+            <View style={styles.linksContainer}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate("ForgotPassword")}
+              >
+                <Text style={styles.forgotPasswordLink}>نسيت كلمة المرور؟</Text>
               </TouchableOpacity>
+
+              <View style={styles.separator} />
+
+              <View style={styles.signupContainer}>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate("Register")}
+                >
+                  <Text style={styles.signupLink}>إنشاء حساب جديد</Text>
+                </TouchableOpacity>
+                <Text style={styles.signupText}>ليس لديك حساب؟ </Text>
+              </View>
             </View>
           </View>
         </ScrollView>
@@ -208,5 +223,46 @@ const styles = StyleSheet.create({
     color: "white",
     fontWeight: "bold",
     fontSize: 14,
+  },
+  signupContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  signupText: {
+    fontSize: 15,
+    color: "#6B7280",
+    writingDirection: "rtl",
+  },
+  signupLink: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#16A34A", // Vert principal
+    marginLeft: 5,
+    textDecorationLine: "underline",
+    writingDirection: "rtl",
+  },
+  linksContainer: {
+    marginTop: 24,
+    alignItems: "center",
+    width: "100%",
+  },
+  forgotPasswordLink: {
+    fontSize: 15,
+    color: "#EAB308", // Jaune pour correspondre au thème
+    textAlign: "center",
+    marginBottom: 12,
+    textDecorationLine: "underline",
+    writingDirection: "rtl",
+    fontWeight: "500",
+  },
+  separator: {
+    height: 1,
+    width: "60%",
+    backgroundColor: "#E5E7EB",
+    marginVertical: 16,
+    alignSelf: "center",
   },
 });

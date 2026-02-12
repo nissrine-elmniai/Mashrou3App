@@ -11,11 +11,17 @@
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.28",
+<<<<<<< Updated upstream
+=======
+    "@react-navigation/stack": "^7.7.1",
+>>>>>>> Stashed changes
     "expo": "~54.0.33",
     "expo-status-bar": "~3.0.9",
     "expo-updates": "~29.0.16",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0"
   },
   "private": true
 }
