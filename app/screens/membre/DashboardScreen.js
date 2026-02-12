@@ -61,7 +61,6 @@ export default function DashboardScreen({ navigation }) {
   const [programmes, setProgrammes] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Simuler le chargement des données depuis Firebase
   useEffect(() => {
     const fetchData = async () => {
       try {
