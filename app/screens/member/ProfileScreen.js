@@ -1,50 +1,25 @@
 // app/screens/member/ProfileScreen.js
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   SafeAreaView,
   Platform,
   Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { auth, db } from "../../config/firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { signOut } from "firebase/auth";
 
 export default function ProfileScreen({ navigation }) {
-  const [membre, setMembre] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchUserProfile = async () => {
-      try {
-        const user = auth.currentUser;
-        if (!user) {
-          navigation.replace("Login");
-          return;
-        }
-
-        const membreRef = doc(db, "membres", user.uid);
-        const membreSnap = await getDoc(membreRef);
-
-        if (membreSnap.exists()) {
-          setMembre(membreSnap.data());
-        }
-      } catch (error) {
-        console.error("Erreur chargement profil:", error);
-        Alert.alert("Erreur", "Impossible de charger le profil");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchUserProfile();
-  }, []);
+  // Données du membre
+  const [membre] = useState({
+    prenom: "أمينة",
+    nom: "بنعلي",
+    dateNaissance: "15 مارس 1995",
+    genre: "أنثى",
+  });
 
   const handleLogout = () => {
     Alert.alert("تسجيل الخروج", "هل أنت متأكد من تسجيل الخروج؟", [
@@ -52,162 +27,104 @@ export default function ProfileScreen({ navigation }) {
       {
         text: "تسجيل الخروج",
         style: "destructive",
-        onPress: async () => {
-          try {
-            await signOut(auth);
-            navigation.replace("Login");
-          } catch (error) {
-            Alert.alert("خطأ", "حدث خطأ أثناء تسجيل الخروج");
-          }
-        },
+        onPress: () => navigation.replace("Login"),
       },
     ]);
   };
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>جاري التحميل...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
-      <ScrollView
-        style={styles.container}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.contentContainer}
-      >
-        {/* En-tête avec photo et nom */}
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        {/* ========== EN-TÊTE VERT ========== */}
         <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.headerBack}>رجوع</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleLogout} activeOpacity={0.7}>
+              <Text style={styles.headerLogout}>تسجيل الخروج</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Avatar avec initiales */}
+          <View style={styles.avatarContainer}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{membre.prenom}</Text>
+            </View>
+          </View>
+
+          {/* Nom de l'utilisateur */}
+          <Text style={styles.userName}>
+            {membre.prenom} {membre.nom}
+          </Text>
+
+          {/* Badge عضو */}
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>عضو</Text>
+          </View>
+        </View>
+
+        {/* ========== SECTION 1 : المعلومات الشخصية ========== */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>المعلومات الشخصية</Text>
+          <Text style={styles.sectionSubtitle}>معلومات ملفك الشخصي</Text>
+
+          <View style={styles.infoBlock}>
+            <Text style={styles.infoLabel}>الاسم الكامل</Text>
+            <Text style={styles.infoValue}>
+              {membre.prenom} {membre.nom}
+            </Text>
+          </View>
+
+          <View style={styles.separator} />
+
+          <View style={styles.infoBlock}>
+            <Text style={styles.infoLabel}>تاريخ الميلاد</Text>
+            <Text style={styles.infoValue}>{membre.dateNaissance}</Text>
+          </View>
+
+          <View style={styles.separator} />
+
+          <View style={styles.infoBlock}>
+            <Text style={styles.infoLabel}>الجنس</Text>
+            <Text style={styles.infoValue}>{membre.genre}</Text>
+          </View>
+        </View>
+
+        {/* ========== SECTION 2 : الحساب ========== */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>الحساب</Text>
+          <Text style={styles.sectionSubtitle}>إدارة حسابك</Text>
+
           <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
+            style={styles.menuItem}
+            onPress={() => navigation.navigate("EditProfile")}
           >
-            <Text style={styles.backButtonText}>رجوع</Text>
-            <Text style={styles.backIcon}>←</Text>
+            <Text style={styles.menuText}>تعديل الملف الشخصي</Text>
+            <Text style={styles.menuArrow}>←</Text>
           </TouchableOpacity>
 
-          <View style={styles.profileHeader}>
-            <View style={styles.avatarLargeContainer}>
-              {membre?.avatar ? (
-                <Image
-                  source={{ uri: membre.avatar }}
-                  style={styles.avatarLarge}
-                />
-              ) : (
-                <View style={styles.avatarLargePlaceholder}>
-                  <Text style={styles.avatarLargeText}>
-                    {membre?.prenom?.[0] || "أ"}
-                    {membre?.nom?.[0] || "ب"}
-                  </Text>
-                </View>
-              )}
-            </View>
+          <View style={styles.separator} />
 
-            <Text style={styles.userFullName}>
-              {membre?.prenom || "أمينة"} {membre?.nom || "بنعلي"}
-            </Text>
-            <View style={styles.roleBadge}>
-              <Text style={styles.roleText}>عضو</Text>
-            </View>
-          </View>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => navigation.navigate("ChangePassword")}
+          >
+            <Text style={styles.menuText}>تغيير كلمة المرور</Text>
+            <Text style={styles.menuArrow}>←</Text>
+          </TouchableOpacity>
+
+          <View style={styles.separator} />
+
+          <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
+            <Text style={styles.logoutText}>تسجيل الخروج</Text>
+            <Text style={styles.menuArrow}>←</Text>
+          </TouchableOpacity>
         </View>
-
-        {/* Section: المعلومات الشخصية */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>المعلومات الشخصية</Text>
-            <Text style={styles.sectionSubtitle}>معلومات ملفك الشخصي</Text>
-          </View>
-
-          <View style={styles.infoContainer}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>الاسم الكامل</Text>
-              <Text style={styles.infoValue}>
-                {membre?.prenom || "أمينة"} {membre?.nom || "بنعلي"}
-              </Text>
-            </View>
-
-            <View style={styles.infoDivider} />
-
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>تاريخ الميلاد</Text>
-              <Text style={styles.infoValue}>
-                {membre?.dateNaissance || "15 مارس 1995"}
-              </Text>
-            </View>
-
-            <View style={styles.infoDivider} />
-
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>الجنس</Text>
-              <Text style={styles.infoValue}>
-                {membre?.genre === "feminin"
-                  ? "أنثى"
-                  : membre?.genre === "masculin"
-                    ? "ذكر"
-                    : "أنثى"}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Section: الحساب */}
-        <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>الحساب</Text>
-            <Text style={styles.sectionSubtitle}>إدارة حسابك</Text>
-          </View>
-
-          <View style={styles.menuContainer}>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => navigation.navigate("EditProfile")}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>✏️</Text>
-                <Text style={styles.menuText}>تعديل الملف الشخصي</Text>
-              </View>
-              <Text style={styles.menuArrow}>←</Text>
-            </TouchableOpacity>
-
-            <View style={styles.menuDivider} />
-
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => navigation.navigate("ChangePassword")}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={styles.menuIcon}>🔒</Text>
-                <Text style={styles.menuText}>تغيير كلمة المرور</Text>
-              </View>
-              <Text style={styles.menuArrow}>←</Text>
-            </TouchableOpacity>
-
-            <View style={styles.menuDivider} />
-
-            <TouchableOpacity
-              style={[styles.menuItem, styles.logoutItem]}
-              onPress={handleLogout}
-            >
-              <View style={styles.menuItemLeft}>
-                <Text style={[styles.menuIcon, styles.logoutIcon]}>🚪</Text>
-                <Text style={[styles.menuText, styles.logoutText]}>
-                  تسجيل الخروج
-                </Text>
-              </View>
-              <Text style={styles.menuArrow}>←</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Version de l'application */}
-        <Text style={styles.versionText}>الإصدار 1.0.0</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -216,192 +133,145 @@ export default function ProfileScreen({ navigation }) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#F9FAFB", // MÊME GRIS que Dashboard
   },
   container: {
     flex: 1,
   },
-  contentContainer: {
-    paddingBottom: 30,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  loadingText: {
-    fontSize: 16,
-    color: "#6B7280",
-  },
-  // Header
+  // ========== HEADER VERT (MÊME QUE DASHBOARD) ==========
   header: {
     backgroundColor: "#16A34A",
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 20 : 40,
+    paddingTop: Platform.OS === "ios" ? 50 : 40,
     paddingBottom: 30,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
   },
-  backButton: {
+  headerRow: {
     flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    alignSelf: "flex-end",
-    marginBottom: 10,
+    marginBottom: 20,
   },
-  backButtonText: {
-    color: "white",
-    fontSize: 16,
-    marginRight: 5,
+  headerLogout: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "500",
     writingDirection: "rtl",
   },
-  backIcon: {
-    color: "white",
-    fontSize: 18,
+  headerBack: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "500",
+    writingDirection: "rtl",
   },
-  profileHeader: {
+  avatarContainer: {
     alignItems: "center",
+    marginBottom: 12,
   },
-  avatarLargeContainer: {
-    marginBottom: 16,
-  },
-  avatarLarge: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 4,
-    borderColor: "white",
-  },
-  avatarLargePlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#EAB308",
+  avatar: {
+    width: 85,
+    height: 85,
+    borderRadius: 42.5,
+    backgroundColor: "#EAB308", // ✅ JAUNE EXACT des autres screens
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 4,
-    borderColor: "white",
+    borderWidth: 3, // ✅ BORDURE BLANCHE comme Dashboard
+    borderColor: "#FFFFFF",
   },
-  avatarLargeText: {
-    fontSize: 40,
+  avatarText: {
+    fontSize: 34,
     fontWeight: "bold",
-    color: "white",
+    color: "#FFFFFF",
   },
-  userFullName: {
-    fontSize: 24,
+  userName: {
+    fontSize: 22,
     fontWeight: "bold",
-    color: "white",
-    marginBottom: 8,
+    color: "#FFFFFF",
+    textAlign: "center",
+    marginBottom: 10,
     writingDirection: "rtl",
   },
-  roleBadge: {
-    backgroundColor: "rgba(255,255,255,0.2)",
-    paddingHorizontal: 16,
-    paddingVertical: 6,
+  badge: {
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    paddingHorizontal: 14,
+    paddingVertical: 5,
     borderRadius: 20,
+    alignSelf: "center",
   },
-  roleText: {
-    color: "white",
-    fontSize: 14,
+  badgeText: {
+    color: "#FFFFFF",
+    fontSize: 13,
     fontWeight: "600",
+    writingDirection: "rtl",
   },
-  // Section Card
-  sectionCard: {
-    backgroundColor: "white",
-    borderRadius: 20,
+  // ========== SECTIONS BLANCHES (COMME DASHBOARD) ==========
+  section: {
+    backgroundColor: "#FFFFFF",
     marginHorizontal: 20,
-    marginTop: 24,
-    padding: 20,
+    marginTop: 20,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    borderRadius: 16, // ✅ MÊME ARRONDI que Dashboard
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
   },
-  sectionHeader: {
-    marginBottom: 20,
-  },
   sectionTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#1F2937",
+    color: "#1F2937", // ✅ MÊME GRIS FONCÉ que Dashboard
     writingDirection: "rtl",
     marginBottom: 4,
   },
   sectionSubtitle: {
     fontSize: 14,
-    color: "#6B7280",
+    color: "#6B7280", // ✅ MÊME GRIS que Dashboard
     writingDirection: "rtl",
+    marginBottom: 16,
   },
-  // Info Section
-  infoContainer: {
-    marginTop: 8,
-  },
-  infoRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  // ========== STYLES INFORMATIONS ==========
+  infoBlock: {
     paddingVertical: 12,
   },
   infoLabel: {
-    fontSize: 15,
-    color: "#6B7280",
+    fontSize: 14,
+    color: "#6B7280", // ✅ MÊME GRIS que Dashboard
     writingDirection: "rtl",
+    marginBottom: 4,
   },
   infoValue: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "600",
-    color: "#1F2937",
+    color: "#1F2937", // ✅ MÊME GRIS FONCÉ que Dashboard
     writingDirection: "rtl",
   },
-  infoDivider: {
+  separator: {
     height: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F3F4F6", // ✅ MÊME GRIS que Dashboard
   },
-  // Menu Section
-  menuContainer: {
-    marginTop: 8,
-  },
+  // ========== STYLES MENU ==========
   menuItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 16,
   },
-  menuItemLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  menuIcon: {
-    fontSize: 20,
-    marginRight: 12,
-  },
   menuText: {
     fontSize: 16,
-    color: "#374151",
+    color: "#374151", // ✅ MÊME GRIS que Dashboard
+    writingDirection: "rtl",
+  },
+  logoutText: {
+    fontSize: 16,
+    color: "#EF4444", // ✅ ROUGE EXACT des autres screens
+    fontWeight: "500",
     writingDirection: "rtl",
   },
   menuArrow: {
     fontSize: 18,
-    color: "#9CA3AF",
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: "#F3F4F6",
-  },
-  logoutItem: {
-    marginTop: 0,
-  },
-  logoutIcon: {
-    color: "#EF4444",
-  },
-  logoutText: {
-    color: "#EF4444",
-    fontWeight: "500",
-  },
-  versionText: {
-    textAlign: "center",
-    color: "#9CA3AF",
-    fontSize: 12,
-    marginTop: 30,
+    color: "#9CA3AF", // ✅ MÊME GRIS que Dashboard
   },
 });

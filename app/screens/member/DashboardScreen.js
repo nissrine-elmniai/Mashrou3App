@@ -9,8 +9,12 @@ import {
   Image,
   SafeAreaView,
   Platform,
+  Modal,
+  TextInput,
+  Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import DateTimePicker from "@react-native-community/datetimepicker";
 
 // Données simulées (à remplacer par Firebase plus tard)
 const MOCK_DATA = {
@@ -61,22 +65,87 @@ export default function DashboardScreen({ navigation }) {
   const [programmes, setProgrammes] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // États pour le modal nouveau programme
+  const [modalVisible, setModalVisible] = useState(false);
+  const [newProgrammeName, setNewProgrammeName] = useState("");
+  const [newProgrammeNbHizb, setNewProgrammeNbHizb] = useState("");
+
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dateText, setDateText] = useState("");
+
+  const formatDate = (date) => {
+    const months = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    const day = date.getDate();
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    return `${day}-${month}-${year}`;
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Ici vous ferez vos appels Firebase
-        setMembre(MOCK_DATA.membre);
-        setStats(MOCK_DATA.stats);
-        setProgrammes(MOCK_DATA.programmes);
-      } catch (error) {
-        console.error("Erreur chargement données:", error);
-      } finally {
-        setLoading(false);
-      }
+    const today = new Date();
+    setSelectedDate(today);
+    setDateText(formatDate(today));
+  }, []);
+  useEffect(() => {
+    console.log("🟢 Chargement des données simulées");
+    setMembre(MOCK_DATA.membre);
+    setStats(MOCK_DATA.stats);
+    setProgrammes(MOCK_DATA.programmes);
+    setLoading(false);
+    console.log("🟢 Données chargées, loading = false");
+  }, []);
+
+  const onDateChange = (event, date) => {
+    setShowDatePicker(Platform.OS === "ios");
+    if (date) {
+      setSelectedDate(date);
+      setDateText(formatDate(date));
+    }
+  };
+
+  // Fonction pour créer un nouveau programme
+  const handleCreateProgramme = () => {
+    if (!newProgrammeName || !newProgrammeNbHizb) {
+      Alert.alert("خطأ", "الرجاء ملء جميع الخانات");
+      return;
+    }
+
+    const newProgramme = {
+      id: Date.now().toString(),
+      nom: newProgrammeName,
+      duree: 30,
+      nbHizb: parseInt(newProgrammeNbHizb),
+      dateDebut: dateText,
+      statut: "en_cours",
+      progression: 0,
     };
 
-    fetchData();
-  }, []);
+    setProgrammes([...programmes, newProgramme]);
+    setNewProgrammeName("");
+    setNewProgrammeNbHizb("");
+
+    // 📅 Réinitialiser à la date du jour
+    const today = new Date();
+    setSelectedDate(today);
+    setDateText(formatDate(today));
+    setModalVisible(false);
+
+    Alert.alert("نجاح", "تم إنشاء البرنامج بنجاح");
+  };
 
   // Fonction pour obtenir la couleur de progression
   const getProgressColor = (progress) => {
@@ -108,7 +177,11 @@ export default function DashboardScreen({ navigation }) {
       <TouchableOpacity
         style={styles.programmeCard}
         activeOpacity={0.7}
-        onPress={() => console.log("Détail programme", item.id)}
+        onPress={() =>
+          navigation.navigate("ProgrammeDetails", {
+            programme: item,
+          })
+        }
       >
         <View style={styles.programmeHeader}>
           <Text style={styles.programmeNom}>{item.nom}</Text>
@@ -174,7 +247,6 @@ export default function DashboardScreen({ navigation }) {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-        {/* 🟢 EN-TÊTE MODIFIÉ - Initiales + Navigation vers Profil */}
         <View style={styles.header}>
           <View style={styles.userInfo}>
             <TouchableOpacity
@@ -190,7 +262,7 @@ export default function DashboardScreen({ navigation }) {
             <View style={styles.userTextContainer}>
               <Text style={styles.welcomeText}>لوحة تحكم</Text>
               <Text style={styles.userName}>
-                {membre?.prenom || "أمينة"} {membre?.nom || "بتعلي"}
+                {membre?.prenom || "اسم"} {membre?.nom || "النسب"}
               </Text>
               <View style={styles.roleBadge}>
                 <Text style={styles.roleText}>العضو</Text>
@@ -224,13 +296,117 @@ export default function DashboardScreen({ navigation }) {
         <View style={styles.newProgrammeSection}>
           <TouchableOpacity
             style={styles.newProgrammeButton}
-            onPress={() => console.log("Nouveau programme")}
-            activeOpacity={0.8}
+            onPress={() => {
+              // 📅 Réinitialiser à la date du jour quand on ouvre le modal
+              const today = new Date();
+              setSelectedDate(today);
+              setDateText(formatDate(today));
+              setModalVisible(true);
+            }}
           >
             <Text style={styles.newProgrammeIcon}>+</Text>
             <Text style={styles.newProgrammeText}>برنامج جديد</Text>
           </TouchableOpacity>
         </View>
+
+        {/* MODAL NOUVEAU PROGRAMME */}
+        <Modal
+          transparent={true}
+          visible={modalVisible}
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {/* En-tête du modal */}
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>إنشاء برنامج جديد</Text>
+                  <TouchableOpacity onPress={() => setModalVisible(false)}>
+                    <Text style={styles.modalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.modalSubtitle}>
+                  حدد برنامج الحفظ المخصص الخاص بك
+                </Text>
+
+                {/* Nom du programme */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>اسم البرنامج</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="مثال: برنامج جزء عم"
+                    placeholderTextColor="#9CA3AF"
+                    value={newProgrammeName}
+                    onChangeText={setNewProgrammeName}
+                    textAlign="right"
+                    writingDirection="rtl"
+                  />
+                </View>
+
+                {/* Nombre de Hizb */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>عدد الأحزاب</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="مثال: 5"
+                    placeholderTextColor="#9CA3AF"
+                    value={newProgrammeNbHizb}
+                    onChangeText={setNewProgrammeNbHizb}
+                    keyboardType="numeric"
+                    textAlign="right"
+                    writingDirection="rtl"
+                  />
+                </View>
+
+                {/* 📅 Date de début avec calendrier */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>تاريخ البداية</Text>
+                  <TouchableOpacity
+                    style={styles.dateInputContainer}
+                    onPress={() => setShowDatePicker(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.dateInputText}>
+                      {dateText || formatDate(new Date())}
+                    </Text>
+                    <Text style={styles.calendarIcon}>📅</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* 📅 DatePicker */}
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={selectedDate}
+                    mode="date"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    onChange={onDateChange}
+                    locale="fr-FR"
+                  />
+                )}
+
+                {/* Boutons */}
+                <View style={styles.modalButtonRow}>
+                  <TouchableOpacity
+                    style={styles.createButton}
+                    onPress={handleCreateProgramme}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.createButtonText}>إنشاء البرنامج</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={() => setModalVisible(false)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.cancelButtonText}>إلغاء</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
 
         {/* Section Programmes */}
         <View style={styles.programmesSection}>
@@ -264,13 +440,13 @@ export default function DashboardScreen({ navigation }) {
           )}
         </View>
 
-        {/* Espace en bas pour le scroll */}
         <View style={styles.bottomPadding} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+// AJOUTER CE STYLE
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -303,13 +479,6 @@ const styles = StyleSheet.create({
   },
   avatarContainer: {
     marginRight: 16,
-  },
-  avatar: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    borderWidth: 3,
-    borderColor: "white",
   },
   avatarPlaceholder: {
     width: 70,
@@ -419,6 +588,192 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     writingDirection: "rtl",
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxHeight: "80%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#16A34A",
+    writingDirection: "rtl",
+  },
+  modalClose: {
+    fontSize: 24,
+    color: "#9CA3AF",
+    padding: 4,
+  },
+  modalSubtitle: {
+    fontSize: 15,
+    color: "#6B7280",
+    writingDirection: "rtl",
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+    paddingBottom: 16,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#374151",
+    writingDirection: "rtl",
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    backgroundColor: "#F9FAFB",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#1F2937",
+    textAlign: "right",
+    writingDirection: "rtl",
+  },
+  dateInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    backgroundColor: "#F9FAFB",
+  },
+  dateInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#1F2937",
+    textAlign: "right",
+    writingDirection: "rtl",
+  },
+  calendarIcon: {
+    fontSize: 18,
+    marginRight: 16,
+    color: "#6B7280",
+  },
+  modalButtonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 20,
+    marginBottom: 24,
+  },
+  createButton: {
+    backgroundColor: "#16A34A",
+    flex: 1,
+    marginRight: 10,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    shadowColor: "#16A34A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  createButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+    textAlign: "center",
+    writingDirection: "rtl",
+  },
+  cancelButton: {
+    backgroundColor: "white",
+    flex: 1,
+    marginLeft: 10,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  cancelButtonText: {
+    color: "#6B7280",
+    fontSize: 16,
+    fontWeight: "500",
+    textAlign: "center",
+    writingDirection: "rtl",
+  },
+  previewContainer: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  previewTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#1F2937",
+    writingDirection: "rtl",
+    marginBottom: 12,
+  },
+  previewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  previewLabel: {
+    fontSize: 14,
+    color: "#6B7280",
+    writingDirection: "rtl",
+    marginRight: 8,
+  },
+  previewValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1F2937",
+    writingDirection: "rtl",
+  },
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  progressLabel: {
+    fontSize: 14,
+    color: "#6B7280",
+    writingDirection: "rtl",
+  },
+  progressPercentage: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#16A34A",
+    writingDirection: "rtl",
+  },
+  progressBarContainer: {
+    height: 8,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressBar: {
+    height: "100%",
+    borderRadius: 4,
   },
   // Programmes Section
   programmesSection: {
@@ -558,5 +913,14 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 30,
+  },
+  dateInputText: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#1F2937",
+    textAlign: "right",
+    writingDirection: "rtl",
   },
 });
