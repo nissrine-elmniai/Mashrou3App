@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-export default function SupervisorDashboard() {
+export default function SupervisorDashboard({ navigation }) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -33,21 +33,31 @@ export default function SupervisorDashboard() {
 
         {/* Main Buttons */}
         <View style={styles.actionsContainer}>
-          <TouchableOpacity style={styles.attendanceButton}>
-            <Ionicons name="calendar-outline" size={20} color="white" />
-            <Text style={styles.actionText}>إدارة الحضور</Text>
-          </TouchableOpacity>
+  <TouchableOpacity 
+    style={styles.attendanceButton}
+    onPress={() => navigation.navigate("Presence")}
+  >
+    <Ionicons name="calendar-outline" size={20} color="white" />
+    <Text style={styles.actionText}>إدارة الحضور</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity style={styles.statsButton}>
-            <Ionicons name="trending-up-outline" size={20} color="white" />
-            <Text style={styles.actionText}>الإحصائيات</Text>
-          </TouchableOpacity>
+  <TouchableOpacity 
+    style={styles.statsButton}
+    onPress={() => navigation.navigate("Statistics")}
+  >
+    <Ionicons name="trending-up-outline" size={20} color="white" />
+    <Text style={styles.actionText}>الإحصائيات</Text>
+  </TouchableOpacity>
 
-          <TouchableOpacity style={styles.addButton}>
-            <Ionicons name="person-add-outline" size={20} color="white" />
-            <Text style={styles.actionText}>إضافة عضو جديد</Text>
-          </TouchableOpacity>
-        </View>
+  <TouchableOpacity 
+    style={styles.addButton}
+    onPress={() => navigation.navigate("AddMember")} 
+  >
+    <Ionicons name="person-add-outline" size={20} color="white" />
+    <Text style={styles.actionText}>إضافة عضو جديد</Text>
+  </TouchableOpacity>
+</View>
+
 
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
@@ -200,6 +210,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 15,
     elevation: 2,
+      alignItems: "flex-end", // 👈 AJOUTE ÇA
+
   },
 
   greenBorder: {
