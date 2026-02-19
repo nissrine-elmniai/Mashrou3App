@@ -102,6 +102,45 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     // Ici vous ajouterez la logique pour sauvegarder dans Firebase
   };
 
+  // 🆕 FONCTION POUR SUPPRIMER LE PROGRAMME
+  const handleDeleteProgramme = () => {
+    Alert.alert(
+      "حذف البرنامج",
+      `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيتم حذف جميع بيانات التقدم المرتبطة به بشكل نهائي.`,
+      [
+        {
+          text: "إلغاء",
+          style: "cancel",
+        },
+        {
+          text: "حذف",
+          style: "destructive",
+          onPress: confirmDelete,
+        },
+      ],
+    );
+  };
+
+  const confirmDelete = async () => {
+    try {
+      // Ici vous ferez l'appel Firebase pour supprimer
+      // await deleteDoc(doc(db, "programmes", programData.id));
+
+      console.log("Programme supprimé:", programData.id);
+
+      // Message de succès
+      Alert.alert("✅ تم الحذف", "تم حذف البرنامج بنجاح", [
+        {
+          text: "رجوع",
+          onPress: () => navigation.goBack(),
+        },
+      ]);
+    } catch (error) {
+      console.error("Erreur suppression:", error);
+      Alert.alert("خطأ", "حدث خطأ أثناء حذف البرنامج");
+    }
+  };
+
   // Composant Modal pour ajuster la progression
   const ProgressModal = () => (
     <Modal
@@ -368,6 +407,19 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               </View>
             )}
           </View>
+
+          {/* 🆕 BOUTON SUPPRIMER AJOUTÉ ICI - À LA FIN DE L'ÉCRAN */}
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={handleDeleteProgramme}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.deleteButtonIcon}>🗑️</Text>
+            <Text style={styles.deleteButtonText}>حذف البرنامج</Text>
+          </TouchableOpacity>
+
+          {/* Espace en bas pour le scroll */}
+          <View style={styles.bottomPadding} />
         </View>
       </ScrollView>
 
@@ -614,6 +666,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: "right",
     lineHeight: 20,
+  },
+  // 🆕 STYLES POUR LE BOUTON SUPPRIMER
+  deleteButton: {
+    backgroundColor: "#EF4444",
+    marginTop: 8,
+    marginBottom: 16,
+    paddingVertical: 18,
+    borderRadius: 14,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#EF4444",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  deleteButtonIcon: {
+    fontSize: 22,
+    color: "white",
+    marginRight: 10,
+  },
+  deleteButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+    writingDirection: "rtl",
+  },
+  bottomPadding: {
+    height: 20,
   },
   // Styles du Modal
   modalOverlay: {
