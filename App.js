@@ -25,7 +25,7 @@ const Stack = createStackNavigator();
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName="SupervisorDashboard">
+      <Stack.Navigator initialRouteName="Dashboard">
 
         <Stack.Screen
           name="Login"
