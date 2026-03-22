@@ -2,7 +2,6 @@ import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 
-
 import LoginScreen from "./app/screens/LoginScreen";
 import RegisterScreen from "./app/screens/RegisterScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
@@ -29,9 +28,9 @@ export default function App() {
         <Stack.Screen
           name="Login"
           component={LoginScreen}
-          options={{ headerShown: false }}
+          options={{ headerShown: false, }}
         />
-        <Stack.Screen
+        {/* <Stack.Screen
           name="Register"
           component={RegisterScreen}
           options={{
@@ -66,37 +65,35 @@ export default function App() {
         />
 
         <Stack.Screen
-  name="SupervisorDashboard"
-  component={SupervisorDashboard}
-  options={{ headerShown: false }}
-/>
-<Stack.Screen
-  name="Presence"
-  component={PresenceScreen}
-  options={{
-    title: "إدارة الحضور",
-    headerTitleStyle: { writingDirection: "rtl" },
-  }}
-/>
-<Stack.Screen
-  name="Statistics"
-  component={StatisticsScreen}
-  options={{
-    title: "الإحصائيات",
-    headerTitleStyle: { writingDirection: "rtl" },
-  }}
-/>
+          name="SupervisorDashboard"
+          component={SupervisorDashboard}
+          options={{ headerShown: false, }}
+        />
+        <Stack.Screen
+          name="Presence"
+          component={PresenceScreen}
+          options={{
+            title: "إدارة الحضور",
+            headerTitleStyle: { writingDirection: "rtl" },
+          }}
+        />
+        <Stack.Screen
+          name="Statistics"
+          component={StatisticsScreen}
+          options={{
+            title: "الإحصائيات",
+            headerTitleStyle: { writingDirection: "rtl" },
+          }}
+        />
 
-<Stack.Screen
-  name="AddMember"
-  component={AddMember}
-  options={{
-    title: "إضافة عضو جديد",
-    headerTitleStyle: { writingDirection: "rtl" },
-  }}
-/>
-
-
+        <Stack.Screen
+          name="AddMember"
+          component={AddMember}
+          options={{
+            title: "إضافة عضو جديد",
+            headerTitleStyle: { writingDirection: "rtl" },
+          }}
+        /> */}
       </Stack.Navigator>
     </NavigationContainer>
   );
