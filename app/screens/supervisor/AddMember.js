@@ -1,165 +1,207 @@
+// AddMember.js
+
 import React, { useState } from "react";
 import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
+  TouchableOpacity,
+  Modal,
   SafeAreaView,
-  ScrollView,
+  ScrollView
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 
 export default function AddMember({ navigation }) {
+
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [birthDate, setBirthDate] = useState("");
   const [gender, setGender] = useState("");
 
+  const handleClose = () => {
+    navigation.goBack();
+  };
+
   const handleAddMember = () => {
-    // Ici tu peux ajouter la logique pour sauvegarder le membre
-    console.log("Nouveau membre :", { firstName, lastName, birthDate, gender });
-    navigation.goBack(); // Retour au dashboard après ajout
+    console.log("Member Added:", {
+      firstName,
+      lastName,
+      birthDate,
+      gender,
+    });
+
+    navigation.goBack();
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>إضافة عضو جديد</Text>
-          <Text style={styles.headerSubtitle}>أدخل معلومات العضو الجديد</Text>
-        </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: "transparent" }}>
+      <Modal animationType="fade" transparent={true} visible={true}>
+        <View style={styles.overlay}>
+          <View style={styles.modalContainer}>
+            <ScrollView showsVerticalScrollIndicator={false}>
 
-        {/* Form */}
-        <View style={styles.formContainer}>
-          <Text style={styles.label}>الاسم الأول</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="مثال: أمينة"
-            placeholderTextColor="#9CA3AF"
-            value={firstName}
-            onChangeText={setFirstName}
-            textAlign="right"
-          />
+              {/* Close Button */}
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={handleClose}
+              >
+                <Ionicons name="close" size={24} color="#777" />
+              </TouchableOpacity>
 
-          <Text style={styles.label}>اسم العائلة</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="مثال: بنعلي"
-            placeholderTextColor="#9CA3AF"
-            value={lastName}
-            onChangeText={setLastName}
-            textAlign="right"
-          />
+              <Text style={styles.title}>إضافة عضو جديد</Text>
+              <Text style={styles.subtitle}>أدخل معلومات العضو الجديد</Text>
 
-          <Text style={styles.label}>تاريخ الميلاد</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="jj/mm/aaaa"
-            placeholderTextColor="#9CA3AF"
-            value={birthDate}
-            onChangeText={setBirthDate}
-            textAlign="right"
-          />
+              <Text style={styles.label}>الاسم الأول</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="مثال: أمينة"
+                textAlign="right"
+                value={firstName}
+                onChangeText={setFirstName}
+              />
 
-          <Text style={styles.label}>الجنس</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="اختر الجنس"
-            placeholderTextColor="#9CA3AF"
-            value={gender}
-            onChangeText={setGender}
-            textAlign="right"
-          />
+              <Text style={styles.label}>اسم العائلة</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="مثال: بنعلي"
+                textAlign="right"
+                value={lastName}
+                onChangeText={setLastName}
+              />
 
-          {/* Buttons */}
-          <View style={styles.buttonsContainer}>
-            <TouchableOpacity style={styles.addButton} onPress={handleAddMember}>
-              <Ionicons name="checkmark-outline" size={20} color="white" />
-              <Text style={styles.buttonText}>إضافة العضو</Text>
-            </TouchableOpacity>
+              <Text style={styles.label}>تاريخ الميلاد</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="jj/mm/aaaa"
+                textAlign="right"
+                value={birthDate}
+                onChangeText={setBirthDate}
+              />
 
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Ionicons name="close-outline" size={20} color="white" />
-              <Text style={styles.buttonText}>إلغاء</Text>
-            </TouchableOpacity>
+              <Text style={styles.label}>الجنس</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={gender}
+                  onValueChange={(itemValue) => setGender(itemValue)}
+                >
+                  <Picker.Item label="اختر الجنس" value="" />
+                  <Picker.Item label="ذكر" value="male" />
+                  <Picker.Item label="أنثى" value="female" />
+                </Picker>
+              </View>
+
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity
+                  style={styles.addButton}
+                  onPress={handleAddMember}
+                >
+                  <Text style={styles.addButtonText}>إضافة العضو</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={handleClose}
+                >
+                  <Text style={styles.cancelButtonText}>إلغاء</Text>
+                </TouchableOpacity>
+              </View>
+
+            </ScrollView>
           </View>
         </View>
-      </ScrollView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+
+  overlay: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  header: {
+
+  modalContainer: {
+    width: "90%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
     padding: 20,
-    backgroundColor: "#16A34A",
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
   },
-  headerTitle: {
-    color: "white",
+
+  closeBtn: {
+    alignSelf: "flex-start",
+  },
+
+  title: {
     fontSize: 20,
     fontWeight: "bold",
-    textAlign: "right",
+    textAlign: "center",
+    color: "#16A34A",
+    marginBottom: 5,
   },
-  headerSubtitle: {
-    color: "white",
-    marginTop: 4,
-    textAlign: "right",
+
+  subtitle: {
+    textAlign: "center",
+    color: "#777",
+    marginBottom: 20,
   },
-  formContainer: {
-    padding: 20,
-  },
+
   label: {
-    textAlign: "right",
-    fontWeight: "bold",
+    marginTop: 10,
     marginBottom: 6,
+    textAlign: "right",
   },
+
   input: {
-    backgroundColor: "white",
+    backgroundColor: "#f5f5f5",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 15,
     borderWidth: 1,
-    borderColor: "#D1D5DB",
+    borderColor: "#cde7d8",
   },
-  buttonsContainer: {
+
+  pickerContainer: {
+    backgroundColor: "#f5f5f5",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#cde7d8",
+  },
+
+  buttonContainer: {
     flexDirection: "row-reverse",
     justifyContent: "space-between",
-    marginTop: 20,
+    marginTop: 25,
   },
+
   addButton: {
-    flexDirection: "row",
-    alignItems: "center",
     backgroundColor: "#16A34A",
     padding: 12,
-    borderRadius: 12,
-    flex: 1,
-    marginLeft: 8,
-    justifyContent: "center",
-  },
-  cancelButton: {
-    flexDirection: "row",
+    borderRadius: 10,
+    width: "48%",
     alignItems: "center",
-    backgroundColor: "#DC2626",
-    padding: 12,
-    borderRadius: 12,
-    flex: 1,
-    marginRight: 8,
-    justifyContent: "center",
   },
-  buttonText: {
-    color: "white",
+
+  addButtonText: {
+    color: "#fff",
     fontWeight: "bold",
-    marginLeft: 6,
+  },
+
+  cancelButton: {
+    borderWidth: 1,
+    borderColor: "#16A34A",
+    padding: 12,
+    borderRadius: 10,
+    width: "48%",
+    alignItems: "center",
+  },
+
+  cancelButtonText: {
+    color: "#16A34A",
+    fontWeight: "bold",
   },
 });
