@@ -65,35 +65,35 @@ export default function App() {
 
         {/* SUPERVISOR */}
         <Stack.Screen
-  name="SupervisorDashboard"
-  component={SupervisorDashboard}
-  options={{ headerShown: false }}
-/>
-<Stack.Screen
-  name="Presence"
-  component={PresenceScreen}
-  options={{
-    title: "إدارة الحضور",
-    headerTitleStyle: { writingDirection: "rtl" },
-  }}
-/>
-<Stack.Screen
-  name="Statistics"
-  component={StatisticsScreen}
-  options={{
-    title: "الإحصائيات",
-    headerTitleStyle: { writingDirection: "rtl" },
-  }}
-/>
+          name="SupervisorDashboard"
+          component={SupervisorDashboard}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Presence"
+          component={PresenceScreen}
+          options={{
+            title: "إدارة الحضور",
+            headerTitleStyle: { writingDirection: "rtl" },
+          }}
+        />
+        <Stack.Screen
+          name="Statistics"
+          component={StatisticsScreen}
+          options={{
+            title: "الإحصائيات",
+            headerTitleStyle: { writingDirection: "rtl" },
+          }}
+        />
 
-<Stack.Screen
-  name="AddMember"
-  component={AddMember}
-  options={{
-    title: "إضافة عضو جديد",
-    headerTitleStyle: { writingDirection: "rtl" },
-  }}
-/>
+        <Stack.Screen
+          name="AddMember"
+          component={AddMember}
+          options={{
+            title: "إضافة عضو جديد",
+            headerTitleStyle: { writingDirection: "rtl" },
+          }}
+        />
 
 
       </Stack.Navigator>
