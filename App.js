@@ -2,7 +2,6 @@ import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 
-
 import LoginScreen from "./app/screens/LoginScreen";
 import RegisterScreen from "./app/screens/RegisterScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
@@ -94,7 +93,6 @@ export default function App() {
             headerTitleStyle: { writingDirection: "rtl" },
           }}
         />
-
 
       </Stack.Navigator>
     </NavigationContainer>
