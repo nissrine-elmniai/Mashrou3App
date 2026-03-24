@@ -1,4 +1,5 @@
 import React from "react";
+import { I18nManager } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 
@@ -6,7 +7,7 @@ import LoginScreen from "./app/screens/LoginScreen";
 import RegisterScreen from "./app/screens/RegisterScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
 
-import DashboardScreen from "./app/screens/member/DashboardScreen";
+import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
 import ProfileScreen from "./app/screens/member/ProfileScreen";
 import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen";
 
@@ -24,7 +25,7 @@ const Stack = createStackNavigator();
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName="Dashboard">
+      <Stack.Navigator initialRouteName="Login">
 
         <Stack.Screen
           name="Login"
@@ -45,13 +46,13 @@ export default function App() {
 
         {/* MEMBER */}
         <Stack.Screen
-          name="Dashboard"
-          component={DashboardScreen}
+          name="MemberDashboardScreen"
+          component={MemberDashboardScreen}
           options={{ headerShown: false }}
         />
 
         <Stack.Screen
-          name="Profile"
+          name="MemberProfile"
           component={ProfileScreen}
           options={{ headerShown: false }}
         />
