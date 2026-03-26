@@ -9,6 +9,7 @@ import {
   StatusBar,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import MemberProfileScreen from "./MemberProfileScreen";
 
 export default function MemberDashboardScreen() {
   return (
@@ -24,9 +25,11 @@ export default function MemberDashboardScreen() {
               <TouchableOpacity style={styles.headerAction}>
                 <Ionicons name="log-out-outline" size={20} color="white" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.headerAction}>
+              <TouchableOpacity style={styles.headerAction}
+                onPress={() => navigation.navigate("MemberProfileScreen")}>
                 <Ionicons name="person-outline" size={20} color="white" />
                 <Text style={styles.headerActionText}>الملف الشخصي</Text>
+
               </TouchableOpacity>
             </View>
 

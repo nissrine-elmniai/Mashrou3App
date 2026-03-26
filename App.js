@@ -8,11 +8,10 @@ import RegisterScreen from "./app/screens/RegisterScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
 
 import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
-import ProfileScreen from "./app/screens/member/ProfileScreen";
+import MemberProfileScreen from "./app/screens/member/MemberProfileScreen";
 import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen";
 
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
-import SupervisorProfileScreen from "./app/screens/supervisor/SupervisorProfileScreen";
 import PresenceScreen from "./app/screens/supervisor/PresenceScreen";
 import StatisticsScreen from "./app/screens/supervisor/StatisticsScreen";
 import AddMember from "./app/screens/supervisor/AddMember";
@@ -52,8 +51,8 @@ export default function App() {
         />
 
         <Stack.Screen
-          name="MemberProfile"
-          component={ProfileScreen}
+          name="MemberProfileScreen"
+          component={MemberProfileScreen}
           options={{ headerShown: false }}
         />
 

@@ -21,8 +21,6 @@ export default function LoginScreen({ navigation }) {
   const handleLogin = () => {
     // Logique d'authentification à implémenter
     console.log("Login attempt:", { username, password });
-    // Navigation vers le dashboard
-    // navigation.navigate('Main');
   };
 
   return (
