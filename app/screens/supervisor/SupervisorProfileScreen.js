@@ -1,211 +1,100 @@
 import React from "react";
+import { View, Text, StyleSheet } from "react-native";
+import { useApp } from "../../context/AppContext";
+import { ROLE_LABELS } from "../../constants/roles";
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  TouchableOpacity,
-} from "react-native";
+  AppShell,
+  SectionCard,
+  QuickButton,
+} from "../../components/ui";
+import { colors } from "../../constants/theme";
+import { rtlText } from "../../constants/rtl";
 
 export default function SupervisorProfileScreen({ navigation }) {
+  const { currentUser, logout, getSupervisorGroups } = useApp();
+  const groups = getSupervisorGroups(currentUser?.id);
+  const fullName = currentUser
+    ? `${currentUser.firstName} ${currentUser.lastName}`
+    : "";
+
+  const handleLogout = () => {
+    logout();
+    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+  };
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
-
-        {/* HEADER */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate("SupervisorDashboard")}
-          >
-            <Text style={styles.headerButton}>رجوع</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => navigation.replace("Login")}
-          >
-            <Text style={styles.headerButton}>تسجيل الخروج</Text>
-          </TouchableOpacity>
+    <AppShell
+      title="الملف الشخصي"
+      subtitle="معلومات المشرف"
+      icon="person"
+      onBack={() => navigation.goBack()}
+      onLogout={handleLogout}
+    >
+      <SectionCard title="المعلومات الشخصية" subtitle={ROLE_LABELS[currentUser?.role] || "مسؤول فرعي"}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {currentUser?.firstName?.[0] || "م"}
+            {currentUser?.lastName?.[0] || ""}
+          </Text>
         </View>
+        <Text style={styles.name}>{fullName}</Text>
 
-        {/* PROFILE ICON */}
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarIcon}>🛡️</Text>
-          </View>
+        <InfoRow label="الاسم الكامل" value={fullName} />
+        <InfoRow label="تاريخ الميلاد" value={currentUser?.birthDate || "—"} />
+        <InfoRow label="البريد" value={currentUser?.email || "—"} />
+        <InfoRow
+          label="المجموعات"
+          value={groups.map((g) => g.name).join("، ") || "—"}
+        />
 
-          <Text style={styles.name}>حسن القادري</Text>
+        <QuickButton
+          color={colors.red}
+          icon="log-out-outline"
+          label="تسجيل الخروج"
+          onPress={handleLogout}
+        />
+      </SectionCard>
+    </AppShell>
+  );
+}
 
-          <View style={styles.roleBadge}>
-            <Text style={styles.roleText}>مشرف</Text>
-          </View>
-        </View>
-
-        {/* PERSONAL INFO */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>المعلومات الشخصية</Text>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.label}>الاسم الكامل</Text>
-            <Text style={styles.value}>حسن القادري</Text>
-          </View>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.label}>تاريخ الميلاد</Text>
-            <Text style={styles.value}>10 يونيو 1985</Text>
-          </View>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.label}>الجنس</Text>
-            <Text style={styles.value}>ذكر</Text>
-          </View>
-
-          <View style={styles.roleBox}>
-            <Text style={styles.label}>الدور</Text>
-            <Text style={styles.roleValue}>مشرف</Text>
-          </View>
-        </View>
-
-        {/* ACCOUNT */}
-        <View style={styles.accountCard}>
-          <Text style={styles.accountTitle}>الحساب</Text>
-          <Text style={styles.accountSubtitle}>إدارة حسابك الإداري</Text>
-        </View>
-
-      </ScrollView>
-    </SafeAreaView>
+function InfoRow({ label, value }) {
+  return (
+    <View style={styles.infoRow}>
+      <Text style={styles.infoValue}>{value}</Text>
+      <Text style={styles.infoLabel}>{label}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-  },
-  container: {
-    paddingBottom: 40,
-  },
-
-  header: {
-    backgroundColor: "#16A34A",
-    paddingTop: 20,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-    flexDirection: "row-reverse",
-    justifyContent: "space-between",
-  },
-
-  headerButton: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-
-  avatarContainer: {
-    alignItems: "center",
-    marginTop: 30,
-  },
-
   avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "#16A34A",
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.primary,
+    alignSelf: "center",
     justifyContent: "center",
     alignItems: "center",
+    marginBottom: 10,
   },
-
-  avatarIcon: {
-    fontSize: 50,
-    color: "white",
-  },
-
+  avatarText: { color: "white", fontWeight: "bold", fontSize: 22 },
   name: {
-    fontSize: 22,
-    fontWeight: "bold",
-    marginTop: 15,
     textAlign: "center",
-  },
-
-  roleBadge: {
-    borderWidth: 1,
-    borderColor: "#F59E0B",
-    paddingHorizontal: 15,
-    paddingVertical: 5,
-    borderRadius: 20,
-    marginTop: 8,
-  },
-
-  roleText: {
-    color: "#F59E0B",
+    fontSize: 20,
     fontWeight: "bold",
+    color: colors.text,
+    marginBottom: 16,
+    ...rtlText,
   },
-
-  card: {
-    backgroundColor: "#E6F4EA",
-    margin: 20,
-    padding: 20,
-    borderRadius: 20,
-  },
-
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 20,
-    textAlign: "right",
-  },
-
-  infoBox: {
+  infoRow: {
+    flexDirection: "row-reverse",
+    justifyContent: "space-between",
     backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 15,
-    marginBottom: 15,
-    alignItems: "flex-end",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
   },
-
-  label: {
-    color: "#6B7280",
-    marginBottom: 5,
-    textAlign: "right",
-  },
-
-  value: {
-    fontWeight: "bold",
-    fontSize: 16,
-    textAlign: "right",
-  },
-
-  roleBox: {
-    backgroundColor: "#FEF3C7",
-    padding: 15,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#F59E0B",
-    alignItems: "flex-end",
-  },
-
-  roleValue: {
-    color: "#F59E0B",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-
-  accountCard: {
-    backgroundColor: "#F3E8D9",
-    marginHorizontal: 20,
-    padding: 20,
-    borderRadius: 20,
-  },
-
-  accountTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    textAlign: "right",
-  },
-
-  accountSubtitle: {
-    color: "#6B7280",
-    marginTop: 5,
-    textAlign: "right",
-  },
+  infoLabel: { color: colors.muted, ...rtlText },
+  infoValue: { fontWeight: "600", color: colors.text, ...rtlText, maxWidth: "60%" },
 });

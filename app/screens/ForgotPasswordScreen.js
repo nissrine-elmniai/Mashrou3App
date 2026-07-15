@@ -1,4 +1,3 @@
-// ForgotPasswordScreen.js
 import React, { useState } from "react";
 import {
   View,
@@ -14,27 +13,31 @@ import {
   Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { colors, radii, shadows } from "../constants/theme";
+import { useApp } from "../context/AppContext";
 
 export default function ForgotPasswordScreen({ navigation }) {
+  const { resetPassword } = useApp();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
 
   const handleResetPassword = () => {
     if (!email) {
       Alert.alert("خطأ", "الرجاء إدخال البريد الإلكتروني");
       return;
     }
-
-    // Logique d'envoi d'email de réinitialisation
-    console.log("Demande de réinitialisation:", email);
-    Alert.alert(
-      "✅ تم الإرسال",
-      "إذا كان البريد الإلكتروني موجودًا في نظامنا، ستتلقى رابط إعادة تعيين كلمة المرور",
-    );
-
-    // Redirection vers la connexion après quelques secondes
-    setTimeout(() => {
-      navigation.navigate("Login");
-    }, 2000);
+    if (password !== confirm) {
+      Alert.alert("خطأ", "كلمة المرور غير متطابقة");
+      return;
+    }
+    const result = resetPassword(email, password);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
+      return;
+    }
+    Alert.alert("تم", "تم تحديث كلمة المرور. يمكنك تسجيل الدخول الآن.");
+    navigation.navigate("Login");
   };
 
   return (
@@ -48,7 +51,6 @@ export default function ForgotPasswordScreen({ navigation }) {
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
         >
-          {/* Logo */}
           <View style={styles.logoContainer}>
             <Image
               source={require("../assets/logo.png")}
@@ -57,71 +59,67 @@ export default function ForgotPasswordScreen({ navigation }) {
             />
           </View>
 
-          {/* 🆕 CARTE DE RÉINITIALISATION */}
           <View style={styles.card}>
-            {/* Icône de cadenas (optionnel) */}
-            <View style={styles.iconContainer}>
-              <Text style={styles.lockIcon}>🔐</Text>
-            </View>
-
-            {/* Titre */}
             <Text style={styles.title}>استعادة كلمة المرور</Text>
-
-            {/* Sous-titre */}
             <Text style={styles.subtitle}>
-              أدخل بريدك الإلكتروني وسنرسل لك رابطًا لإعادة تعيين كلمة المرور
+              أدخل بريدك وكلمة مرور جديدة لحسابك المسجّل في التطبيق
             </Text>
-
-            {/* Séparateur */}
             <View style={styles.divider} />
 
-            {/* Formulaire */}
-            <View style={styles.formContainer}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>البريد الإلكتروني</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="quran@gmail.com"
-                    placeholderTextColor="#9CA3AF"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    textAlign="right"
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={styles.resetButton}
-                onPress={handleResetPassword}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.resetButtonText}>إرسال رابط الاستعادة</Text>
-              </TouchableOpacity>
-
-              <View style={styles.separatorContainer}>
-                <View style={styles.separatorLine} />
-                <Text style={styles.separatorText}>أو</Text>
-                <View style={styles.separatorLine} />
-              </View>
-
-              <TouchableOpacity
-                style={styles.backButton}
-                onPress={() => navigation.goBack()}
-              >
-                <Text style={styles.backButtonText}>
-                  ← العودة إلى تسجيل الدخول
-                </Text>
-              </TouchableOpacity>
+            <Text style={styles.label}>البريد الإلكتروني</Text>
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.input}
+                placeholder="quran@gmail.com"
+                placeholderTextColor={colors.placeholder}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                textAlign="right"
+              />
             </View>
-          </View>
 
-          {/* Note de bas de page */}
-          <Text style={styles.footerNote}>
-            سيتم إرسال رابط إعادة التعيين إلى بريدك الإلكتروني
-          </Text>
+            <Text style={styles.label}>كلمة المرور الجديدة</Text>
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.input}
+                placeholder="********"
+                placeholderTextColor={colors.placeholder}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                textAlign="right"
+              />
+            </View>
+
+            <Text style={styles.label}>تأكيد كلمة المرور</Text>
+            <View style={styles.inputWrapper}>
+              <TextInput
+                style={styles.input}
+                placeholder="********"
+                placeholderTextColor={colors.placeholder}
+                value={confirm}
+                onChangeText={setConfirm}
+                secureTextEntry
+                textAlign="right"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={handleResetPassword}
+            >
+              <Text style={styles.resetButtonText}>حفظ كلمة المرور</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => navigation.goBack()}
+            >
+              <Text style={styles.backButtonText}>العودة إلى تسجيل الدخول</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -129,13 +127,8 @@ export default function ForgotPasswordScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#F9FAFB",
-  },
-  container: {
-    flex: 1,
-  },
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  container: { flex: 1 },
   scrollContainer: {
     flexGrow: 1,
     paddingHorizontal: 20,
@@ -144,141 +137,81 @@ const styles = StyleSheet.create({
   },
   logoContainer: {
     alignItems: "center",
-    justifyContent: "center",
     marginBottom: 20,
     marginTop: Platform.OS === "ios" ? 10 : 20,
   },
-  logo: {
-    width: 100,
-    height: 100,
-  },
-
-  // 🆕 STYLES DE LA CARTE
+  logo: { width: 100, height: 100 },
   card: {
-    backgroundColor: "white",
-    borderRadius: 24,
+    backgroundColor: colors.card,
+    borderRadius: radii.xl,
     padding: 24,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 4,
+    ...shadows.card,
     borderWidth: 1,
-    borderColor: "#F3F4F6",
-  },
-  iconContainer: {
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  lockIcon: {
-    fontSize: 48,
-    color: "#16A34A",
+    borderColor: colors.borderGreen,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
     textAlign: "center",
-    marginBottom: 12,
+    marginBottom: 10,
     writingDirection: "rtl",
   },
   subtitle: {
-    fontSize: 15,
-    color: "#6B7280",
+    fontSize: 14,
+    color: colors.muted,
     textAlign: "center",
-    marginBottom: 20,
+    marginBottom: 16,
     writingDirection: "rtl",
     lineHeight: 22,
-    paddingHorizontal: 10,
   },
   divider: {
     width: 60,
     height: 3,
-    backgroundColor: "#EAB308",
+    backgroundColor: colors.gold,
     borderRadius: 2,
     alignSelf: "center",
-    marginBottom: 24,
-  },
-  formContainer: {
-    width: "100%",
-  },
-  inputGroup: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   label: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#374151",
+    color: colors.textSecondary,
     marginBottom: 8,
     textAlign: "right",
-    writingDirection: "rtl",
   },
   inputWrapper: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: colors.border,
     borderRadius: 14,
-    backgroundColor: "#F9FAFB",
-    overflow: "hidden",
+    backgroundColor: colors.bg,
+    marginBottom: 14,
   },
   input: {
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
-    color: "#1F2937",
+    color: colors.text,
     textAlign: "right",
-    writingDirection: "rtl",
   },
   resetButton: {
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.primary,
     paddingVertical: 16,
     borderRadius: 14,
     alignItems: "center",
-    marginBottom: 20,
-    shadowColor: "#16A34A",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    marginTop: 8,
+    marginBottom: 12,
   },
   resetButtonText: {
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
-    textAlign: "center",
   },
-  separatorContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginVertical: 20,
-  },
-  separatorLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#E5E7EB",
-  },
-  separatorText: {
-    marginHorizontal: 12,
-    color: "#9CA3AF",
-    fontSize: 14,
-  },
-  backButton: {
-    paddingVertical: 12,
-    alignItems: "center",
-  },
+  backButton: { paddingVertical: 12, alignItems: "center" },
   backButtonText: {
-    color: "#EAB308",
-    fontSize: 16,
+    color: colors.gold,
+    fontSize: 15,
     fontWeight: "600",
     textAlign: "center",
-    writingDirection: "rtl",
-  },
-  footerNote: {
-    textAlign: "center",
-    color: "#9CA3AF",
-    fontSize: 13,
-    marginTop: 10,
-    writingDirection: "rtl",
   },
 });

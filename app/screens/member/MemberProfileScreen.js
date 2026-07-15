@@ -9,42 +9,58 @@ import {
   StatusBar,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useApp } from "../../context/AppContext";
+import { ROLE_LABELS } from "../../constants/roles";
 
-export default function MemberProfileScreen() {
+export default function MemberProfileScreen({ navigation }) {
+  const { currentUser, logout } = useApp();
+  const fullName = currentUser
+    ? `${currentUser.firstName} ${currentUser.lastName}`
+    : "";
+
+  const handleLogout = () => {
+    logout();
+    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0A8F3C" />
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.headerTop}>
-            <TouchableOpacity style={styles.headerAction}>
+            <TouchableOpacity
+              style={styles.headerAction}
+              onPress={() => navigation.goBack()}
+            >
               <Text style={styles.headerText}>رجوع</Text>
               <Ionicons name="arrow-forward" size={20} color="white" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.headerAction}>
+            <TouchableOpacity style={styles.headerAction} onPress={handleLogout}>
               <Text style={styles.headerText}>تسجيل الخروج</Text>
               <Ionicons name="log-out-outline" size={20} color="white" />
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* PROFILE */}
         <View style={styles.profileSection}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>أمينة</Text>
+            <Text style={styles.avatarText}>
+              {currentUser?.firstName || "عضو"}
+            </Text>
           </View>
 
-          <Text style={styles.userName}>أمينة بنعلي</Text>
+          <Text style={styles.userName}>{fullName}</Text>
 
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>عضو</Text>
+            <Text style={styles.badgeText}>
+              {ROLE_LABELS[currentUser?.role] || "عضو"}
+            </Text>
           </View>
         </View>
 
         <View style={styles.content}>
-          {/* PERSONAL INFO CARD */}
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>المعلومات الشخصية</Text>
@@ -53,19 +69,27 @@ export default function MemberProfileScreen() {
 
             <InfoItem
               label="الاسم الكامل"
-              value="أمينة بنعلي"
+              value={fullName}
               icon="person-outline"
             />
             <InfoItem
               label="تاريخ الميلاد"
-              value="15 مارس 1995"
+              value={currentUser?.birthDate || "—"}
               icon="calendar-outline"
               yellow
             />
-            <InfoItem label="الجنس" value="أنثى" icon="person-outline" />
+            <InfoItem
+              label="الجنس"
+              value={currentUser?.gender || "—"}
+              icon="person-outline"
+            />
+            <InfoItem
+              label="البريد"
+              value={currentUser?.email || "—"}
+              icon="mail-outline"
+            />
           </View>
 
-          {/* ACCOUNT CARD */}
           <View style={[styles.card, styles.accountCard]}>
             <View style={styles.cardHeader}>
               <Text style={[styles.cardTitle, { color: "#8A6D00" }]}>
@@ -74,12 +98,11 @@ export default function MemberProfileScreen() {
               <Text style={styles.cardSub}>إدارة حسابك</Text>
             </View>
 
-            <ActionButton label="تعديل الملف الشخصي" color="#0A8F3C" />
-            <ActionButton label="تغيير كلمة المرور" color="#F4B400" />
             <ActionButton
               label="تسجيل الخروج"
               color="#D32F2F"
               icon="log-out-outline"
+              onPress={handleLogout}
             />
           </View>
         </View>
@@ -101,8 +124,11 @@ const InfoItem = ({ label, value, icon, yellow }) => (
   </View>
 );
 
-const ActionButton = ({ label, color, icon }) => (
-  <TouchableOpacity style={[styles.actionBtn, { borderColor: color }]}>
+const ActionButton = ({ label, color, icon, onPress }) => (
+  <TouchableOpacity
+    style={[styles.actionBtn, { borderColor: color }]}
+    onPress={onPress}
+  >
     {icon && (
       <Ionicons name={icon} size={18} color={color} style={{ marginLeft: 8 }} />
     )}
