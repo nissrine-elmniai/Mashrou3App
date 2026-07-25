@@ -10,7 +10,7 @@ import {
 } from "../../components/ui";
 import { ATTENDANCE_STATUS } from "../../constants/roles";
 import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+import { rtlText, row } from "../../constants/rtl";
 
 export default function PresenceScreen({ navigation }) {
   const {
@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   memberName: { ...rtlText, fontWeight: "bold", marginBottom: 8 },
-  btnRow: { flexDirection: "row-reverse", gap: 8 },
+  btnRow: { flexDirection: row, gap: 8 },
   statusBtn: {
     flex: 1,
     padding: 10,

@@ -11,6 +11,7 @@ import {
   TextInput,
   Alert,
   Modal,
+  I18nManager,
 } from "react-native";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 
@@ -262,7 +263,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             onPress={() => navigation.goBack()}
           >
             <Text style={styles.backText}>رجوع</Text>
-            <Ionicons name="arrow-forward" size={20} color="white" />
+            <Ionicons name={I18nManager.isRTL ? "arrow-back" : "arrow-forward"} size={20} color="white" />
           </TouchableOpacity>
         </View>
 
@@ -431,16 +432,16 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
 // Composant pour les petites cartes de stats
 const StatCard = ({ title, value, icon, color }) => (
-  <View style={[styles.card, { borderColor: color, borderLeftWidth: 4 }]}>
+  <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
     <View style={styles.rowBetween}>
       <Text style={[styles.statValue, { color }]}>{value}</Text>
       <View style={styles.row}>
-        <Text style={styles.statTitle}>{title}</Text>
+        <Text style={[styles.statTitle, { writingDirection: "rtl" }]}>{title}</Text>
         <MaterialCommunityIcons
           name={icon}
           size={20}
           color="#888"
-          style={{ marginLeft: 8 }}
+          style={{ marginStart: 8 }}
         />
       </View>
     </View>
@@ -467,7 +468,7 @@ const styles = StyleSheet.create({
   },
   backText: {
     color: "white",
-    marginRight: 8,
+    marginEnd: 8,
     fontSize: 16,
     fontWeight: "bold",
   },
@@ -510,7 +511,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "bold",
     color: "#16A34A",
-    marginRight: 10,
+    marginEnd: 10,
   },
   iconCircle: {
     backgroundColor: "#16A34A",
@@ -592,14 +593,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "bold",
     color: "#444",
-    marginRight: 5,
+    marginEnd: 5,
   },
   dateValueRow: {
     flexDirection: "row",
     alignItems: "center",
   },
   dateIcon: {
-    marginLeft: 5,
+    marginStart: 5,
   },
   progressContainer: {
     backgroundColor: "#F0F9F0",
@@ -686,7 +687,7 @@ const styles = StyleSheet.create({
   deleteButtonIcon: {
     fontSize: 22,
     color: "white",
-    marginRight: 10,
+    marginEnd: 10,
   },
   deleteButtonText: {
     color: "white",
@@ -794,7 +795,7 @@ const styles = StyleSheet.create({
   percentSymbol: {
     fontSize: 18,
     color: "#666",
-    marginLeft: 4,
+    marginStart: 4,
   },
   modalActions: {
     flexDirection: "row",
@@ -835,7 +836,7 @@ const styles = StyleSheet.create({
   },
   warningIcon: {
     fontSize: 18,
-    marginRight: 10,
+    marginEnd: 10,
   },
   warningText: {
     flex: 1,

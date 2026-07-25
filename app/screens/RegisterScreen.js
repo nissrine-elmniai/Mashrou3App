@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: colors.primary,
-    marginLeft: 5,
+    marginStart: 5,
     textDecorationLine: "underline",
   },
 });

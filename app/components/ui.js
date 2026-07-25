@@ -18,6 +18,7 @@ import {
   fonts,
   row,
   textAlignStart,
+  arrowBack,
 } from "../constants/rtl";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
@@ -54,7 +55,7 @@ export function AppHeader({
         {onBack ? (
           <TouchableOpacity style={styles.headerBtn} onPress={onBack}>
             <Text style={styles.headerBtnText}>رجوع</Text>
-            <Ionicons name="arrow-back" size={20} color="white" />
+            <Ionicons name={arrowBack} size={20} color="white" />
           </TouchableOpacity>
         ) : null}
         {onLogout ? (

@@ -93,14 +93,19 @@ export const rtlStyles = StyleSheet.create({
 });
 
 /**
+ * Icônes directionnelles RTL-aware.
+ * En RTL : "back" = arrow-forward (→), "forward" = arrow-back (←)
+ */
+export const arrowBack = I18nManager.isRTL ? "arrow-forward" : "arrow-back";
+export const arrowForward = I18nManager.isRTL ? "arrow-back" : "arrow-forward";
+
+/**
  * Police arabe globale — sans forcer textAlign sur tous les Text
  * (sinon les titres centrés du login partent à droite).
  */
 export function applyGlobalRtlTypography() {
-  I18nManager.allowRTL(true);
-  if (!I18nManager.isRTL) {
-    I18nManager.forceRTL(true);
-  }
+  // I18nManager.allowRTL/forceRTL are handled in index.js before rendering.
+  // This only applies default text styles globally for Arabic shaping.
 
   const family = fonts.regular;
   const baseStyle = {

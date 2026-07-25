@@ -8,7 +8,7 @@ import {
   QuickButton,
 } from "../../components/ui";
 import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+import { rtlText, row } from "../../constants/rtl";
 
 export default function SupervisorProfileScreen({ navigation }) {
   const { currentUser, logout, getSupervisorGroups } = useApp();
@@ -88,7 +88,8 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   infoRow: {
-    flexDirection: "row-reverse",
+    width: "100%",
+    flexDirection: row,
     justifyContent: "space-between",
     backgroundColor: "#F9FAFB",
     borderRadius: 12,

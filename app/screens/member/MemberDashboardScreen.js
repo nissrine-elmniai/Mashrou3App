@@ -10,7 +10,7 @@ import {
 } from "../../constants/roles";
 import { FREE_TIME_OPTIONS } from "../../data/seed";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+import { rtlText, row } from "../../constants/rtl";
 import {
   AppShell,
   StatCard,
@@ -480,7 +480,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.soft,
   },
   programTop: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 6,
@@ -493,7 +493,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   progressHead: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     justifyContent: "space-between",
     marginTop: 10,
     marginBottom: 6,
@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
   rolePillText: { color: colors.primaryDark, fontWeight: "600", ...rtlText },
   infoRow: {
     width: "100%",
-    flexDirection: "row-reverse",
+    flexDirection: row,
     justifyContent: "space-between",
     backgroundColor: colors.bg,
     borderRadius: radii.md,

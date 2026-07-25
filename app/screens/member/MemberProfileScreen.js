@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
+  I18nManager,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
+import { row } from "../../constants/rtl";
 
 export default function MemberProfileScreen({ navigation }) {
   const { currentUser, logout } = useApp();
@@ -34,7 +36,7 @@ export default function MemberProfileScreen({ navigation }) {
               onPress={() => navigation.goBack()}
             >
               <Text style={styles.headerText}>رجوع</Text>
-              <Ionicons name="arrow-forward" size={20} color="white" />
+              <Ionicons name={I18nManager.isRTL ? "arrow-back" : "arrow-forward"} size={20} color="white" />
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.headerAction} onPress={handleLogout}>
@@ -130,7 +132,7 @@ const ActionButton = ({ label, color, icon, onPress }) => (
     onPress={onPress}
   >
     {icon && (
-      <Ionicons name={icon} size={18} color={color} style={{ marginLeft: 8 }} />
+      <Ionicons name={icon} size={18} color={color} style={{ marginStart: 8 }} />
     )}
     <Text style={[styles.actionText, { color }]}>{label}</Text>
   </TouchableOpacity>
@@ -147,13 +149,13 @@ const styles = StyleSheet.create({
   },
 
   headerTop: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     justifyContent: "space-between",
     alignItems: "center",
   },
 
   headerAction: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     alignItems: "center",
   },
 
@@ -161,6 +163,7 @@ const styles = StyleSheet.create({
     color: "white",
     fontWeight: "bold",
     marginHorizontal: 6,
+    writingDirection: "rtl",
   },
 
   profileSection: {
@@ -192,6 +195,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 10,
     color: "#004D40",
+    writingDirection: "rtl",
   },
 
   badge: {
@@ -207,6 +211,7 @@ const styles = StyleSheet.create({
     color: "#00C853",
     fontWeight: "bold",
     fontSize: 12,
+    writingDirection: "rtl",
   },
 
   content: {
@@ -231,16 +236,18 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "bold",
     color: "#0A8F3C",
+    writingDirection: "rtl",
   },
 
   cardSub: {
     fontSize: 13,
     color: "#888",
     marginTop: 3,
+    writingDirection: "rtl",
   },
 
   infoBox: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     alignItems: "center",
     backgroundColor: "#F9F9F9",
     margin: 10,
@@ -258,19 +265,21 @@ const styles = StyleSheet.create({
   },
 
   infoText: {
-    marginRight: 12,
+    marginEnd: 12,
     alignItems: "flex-end",
   },
 
   label: {
     fontSize: 12,
     color: "#999",
+    writingDirection: "rtl",
   },
 
   value: {
     fontSize: 15,
     fontWeight: "bold",
     color: "#222",
+    writingDirection: "rtl",
   },
 
   accountCard: {
@@ -278,7 +287,7 @@ const styles = StyleSheet.create({
   },
 
   actionBtn: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     borderWidth: 1,
     borderRadius: 12,
     paddingVertical: 12,
@@ -292,5 +301,6 @@ const styles = StyleSheet.create({
   actionText: {
     fontWeight: "bold",
     fontSize: 14,
+    writingDirection: "rtl",
   },
 });

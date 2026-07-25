@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity } from "react-nativ
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+import { rtlText, row } from "../../constants/rtl";
 import {
   AppShell,
   StatCard,
@@ -254,7 +254,7 @@ export default function SupervisorDashboard({ navigation }) {
 
 const styles = StyleSheet.create({
   searchWrapper: {
-    flexDirection: "row-reverse",
+    flexDirection: row,
     alignItems: "center",
     borderWidth: 1.5,
     borderColor: colors.borderBlue,

@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.nissrineelmniai.Mashrou3App",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDevelopmentRegion": "ar"
       }
     },
     "android": {
@@ -25,7 +26,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.nissrineelmniai.Mashrou3App"
+      "package": "com.nissrineelmniai.Mashrou3App",
+      "supportsRtl": true
     },
     "web": {
       "favicon": "./app/assets/favicon.png"

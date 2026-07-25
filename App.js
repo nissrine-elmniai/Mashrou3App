@@ -1,5 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { I18nManager, View, ActivityIndicator, StyleSheet } from "react-native";
+import {
+  View,
+  ActivityIndicator,
+  StyleSheet,
+} from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 import {
@@ -42,9 +46,6 @@ import AdminGroupsScreen from "./app/screens/admin/AdminGroupsScreen";
 import AdminSupervisorsScreen from "./app/screens/admin/AdminSupervisorsScreen";
 import AdminStatsScreen from "./app/screens/admin/AdminStatsScreen";
 
-I18nManager.allowRTL(true);
-I18nManager.forceRTL(true);
-
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -54,7 +55,6 @@ export default function App() {
     Cairo_600SemiBold,
     Cairo_700Bold,
   });
-
   useEffect(() => {
     if (fontsLoaded) {
       setCairoLoaded(true);

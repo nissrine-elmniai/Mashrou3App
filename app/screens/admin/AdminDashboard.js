@@ -10,7 +10,7 @@ import {
 import { useApp } from "../../context/AppContext";
 import { ROLES, ROLE_LABELS, SEASON_TYPES } from "../../constants/roles";
 import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+import { rtlText, arrowBack } from "../../constants/rtl";
 import {
   AppShell,
   StatCard,
@@ -229,7 +229,7 @@ export default function AdminDashboard({ navigation }) {
             />
             <QuickButton
               color={colors.primaryDark}
-              icon="arrow-forward"
+              icon={arrowBack}
               label="رجوع للرئيسية"
               onPress={() => setTab("home")}
             />
