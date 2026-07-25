@@ -1,5 +1,4 @@
-// LoginScreen.js
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -11,16 +10,47 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { useApp } from "../context/AppContext";
+import { ROLE_LABELS, DASHBOARD_BY_ROLE } from "../constants/roles";
+import { colors, radii, shadows } from "../constants/theme";
+import { rtlText } from "../constants/rtl";
 
 export default function LoginScreen({ navigation }) {
+  const { login, DEMO_PASSWORD, currentUser } = useApp();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
+  useEffect(() => {
+    if (currentUser?.role && DASHBOARD_BY_ROLE[currentUser.role]) {
+      navigation.reset({
+        index: 0,
+        routes: [{ name: DASHBOARD_BY_ROLE[currentUser.role] }],
+      });
+    }
+  }, [currentUser, navigation]);
+
   const handleLogin = () => {
-    // Logique d'authentification à implémenter
-    console.log("Login attempt:", { username, password });
+    if (!username || !password) {
+      Alert.alert("تنبيه", "أدخل البريد وكلمة المرور");
+      return;
+    }
+    const result = login(username, password);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
+      return;
+    }
+    navigation.reset({
+      index: 0,
+      routes: [{ name: result.dashboard }],
+    });
+  };
+
+  const quickLogin = (email) => {
+    setUsername(email);
+    setPassword(DEMO_PASSWORD);
   };
 
   return (
@@ -41,16 +71,14 @@ export default function LoginScreen({ navigation }) {
               resizeMode="contain"
             />
           </View>
-          {/* Logo / Titre principal */}
           <View style={styles.headerContainer}>
             <Text style={styles.titleMain}>مهندس حامل لكتاب الله</Text>
             <Text style={styles.subtitleMain}>
-              تطبيق متابعة حفظ القرآن الكريم
+              منصة إدارة حلقات تحفيظ القرآن الكريم
             </Text>
             <View style={styles.divider} />
           </View>
 
-          {/* Formulaire de connexion */}
           <View style={styles.formContainer}>
             <View style={styles.inputGroup}>
               <Text style={styles.label}>البريد الالكتروني </Text>
@@ -58,7 +86,7 @@ export default function LoginScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="quran@gmail.com"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.placeholder}
                   value={username}
                   onChangeText={setUsername}
                   autoCapitalize="none"
@@ -73,7 +101,7 @@ export default function LoginScreen({ navigation }) {
                 <TextInput
                   style={styles.input}
                   placeholder="*********"
-                  placeholderTextColor="#9CA3AF"
+                  placeholderTextColor={colors.placeholder}
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry
@@ -82,12 +110,24 @@ export default function LoginScreen({ navigation }) {
               </View>
             </View>
 
-            <TouchableOpacity
-              style={styles.loginButton}
-              onPress={() => navigation.navigate("MemberDashboardScreen")}
-            >
+            <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
               <Text style={styles.loginButtonText}>تسجيل الدخول</Text>
             </TouchableOpacity>
+
+            <Text style={styles.demoTitle}>حساب المسؤول الأول</Text>
+            <TouchableOpacity
+              style={styles.demoChip}
+              onPress={() => quickLogin("admin@mosque.ma")}
+            >
+              <Text style={styles.demoText}>
+                admin@mosque.ma — {ROLE_LABELS.admin} ({DEMO_PASSWORD})
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.hintStart}>
+              أضف المشرفين والأعضاء والمواسم من لوحة الإدارة. المنخرطون
+              الجدد ينشئون حساباً ثم يملؤون استمارة التسجيل.
+            </Text>
+
             <View style={styles.linksContainer}>
               <TouchableOpacity
                 onPress={() => navigation.navigate("ForgotPassword")}
@@ -114,13 +154,8 @@ export default function LoginScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#F9FAFB",
-  },
-  container: {
-    flex: 1,
-  },
+  safeArea: { flex: 1, backgroundColor: colors.bg },
+  container: { flex: 1 },
   scrollContainer: {
     flexGrow: 1,
     paddingHorizontal: 20,
@@ -132,25 +167,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: Platform.OS === "ios" ? 10 : 20,
   },
-  logo: {
-    width: 200,
-    height: 200,
-  },
-  headerContainer: {
-    alignItems: "center",
-    marginBottom: 40,
-  },
+  logo: { width: 160, height: 160 },
+  headerContainer: { alignItems: "center", marginBottom: 24 },
   titleMain: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "bold",
-    color: "#16A34A", // Vert principal
+    color: colors.primary,
     textAlign: "center",
     marginBottom: 8,
     writingDirection: "rtl",
   },
   subtitleMain: {
-    fontSize: 16,
-    color: "#6B7280",
+    fontSize: 15,
+    color: colors.muted,
     textAlign: "center",
     marginBottom: 16,
     writingDirection: "rtl",
@@ -158,50 +187,45 @@ const styles = StyleSheet.create({
   divider: {
     width: 80,
     height: 4,
-    backgroundColor: "#EAB308", // Jaune
+    backgroundColor: colors.gold,
     borderRadius: 2,
     marginTop: 8,
   },
   formContainer: {
-    backgroundColor: "white",
-    borderRadius: 16,
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
     padding: 20,
     marginBottom: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    ...shadows.card,
   },
-  inputGroup: {
-    marginBottom: 20,
-  },
+  inputGroup: { marginBottom: 20 },
   label: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#374151",
+    color: colors.textSecondary,
     marginBottom: 8,
     textAlign: "right",
     writingDirection: "rtl",
+    alignSelf: "stretch",
   },
   inputWrapper: {
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 12,
-    backgroundColor: "#F9FAFB",
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.bg,
   },
   input: {
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: "#1F2937",
+    color: colors.text,
     textAlign: "right",
     writingDirection: "rtl",
   },
   loginButton: {
-    backgroundColor: "#16A34A", // Vert
+    backgroundColor: colors.primary,
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: radii.md,
     alignItems: "center",
     marginTop: 8,
   },
@@ -211,16 +235,29 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textAlign: "center",
   },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+  demoTitle: {
+    textAlign: "center",
+    marginTop: 18,
+    marginBottom: 8,
+    color: colors.muted,
+    fontWeight: "600",
   },
-
-  badgeText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 14,
+  demoChip: {
+    backgroundColor: colors.soft,
+    borderRadius: radii.sm,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+  },
+  demoText: { textAlign: "center", color: colors.primaryDark, fontSize: 13 },
+  hintStart: {
+    ...rtlText,
+    color: colors.muted,
+    fontSize: 13,
+    marginTop: 8,
+    marginBottom: 4,
+    lineHeight: 20,
   },
   signupContainer: {
     flexDirection: "row",
@@ -229,27 +266,19 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 10,
   },
-  signupText: {
-    fontSize: 15,
-    color: "#6B7280",
-    writingDirection: "rtl",
-  },
+  signupText: { fontSize: 15, color: colors.muted, writingDirection: "rtl" },
   signupLink: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#16A34A", // Vert principal
+    color: colors.primary,
     marginLeft: 5,
     textDecorationLine: "underline",
     writingDirection: "rtl",
   },
-  linksContainer: {
-    marginTop: 24,
-    alignItems: "center",
-    width: "100%",
-  },
+  linksContainer: { marginTop: 24, alignItems: "center", width: "100%" },
   forgotPasswordLink: {
     fontSize: 15,
-    color: "#EAB308", // Jaune pour correspondre au thème
+    color: colors.gold,
     textAlign: "center",
     marginBottom: 12,
     textDecorationLine: "underline",
@@ -259,7 +288,7 @@ const styles = StyleSheet.create({
   separator: {
     height: 1,
     width: "60%",
-    backgroundColor: "#E5E7EB",
+    backgroundColor: colors.border,
     marginVertical: 16,
     alignSelf: "center",
   },

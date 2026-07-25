@@ -39,7 +39,8 @@
       "url": "https://u.expo.dev/e516fd4c-2f64-4062-a2f6-0af20da9fc64"
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-font"
     ]
   }
 }
