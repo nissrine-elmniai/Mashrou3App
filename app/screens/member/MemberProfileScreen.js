@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
   },
 
   headerAction: {
-    flexDirection: "row",
+    flexDirection: "row-reverse",
     alignItems: "center",
   },
 

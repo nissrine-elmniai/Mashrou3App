@@ -9,9 +9,8 @@ import {
   StatusBar,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import MemberProfileScreen from "./MemberProfileScreen";
 
-export default function MemberDashboardScreen() {
+export default function MemberDashboardScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0A8F3C" />
@@ -54,7 +53,8 @@ export default function MemberDashboardScreen() {
 
           {/* SECTION TITRE */}
           <View style={styles.sectionHeader}>
-            <TouchableOpacity style={styles.addBtn}>
+            <TouchableOpacity style={styles.addBtn}
+              onPress={() => navigation.navigate("PerogrammeDetailsScreen")}>
               <Text style={styles.addBtnText}>برنامج جديد +</Text>
             </TouchableOpacity>
             <Text style={styles.sectionTitle}>برامجي</Text>
