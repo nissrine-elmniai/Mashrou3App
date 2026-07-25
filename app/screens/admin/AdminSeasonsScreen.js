@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  Alert,
+  TouchableOpacity,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import {
   AppShell,
@@ -10,8 +17,8 @@ import {
   SoftButton,
 } from "../../components/ui";
 import { SEASON_TYPES } from "../../constants/roles";
-import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+import { colors, radii, shadows } from "../../constants/theme";
+import { rtlText, row } from "../../constants/rtl";
 
 export default function AdminSeasonsScreen({ navigation }) {
   const {
@@ -69,6 +76,15 @@ export default function AdminSeasonsScreen({ navigation }) {
     );
   };
 
+  const toggleRegistration = (season) => {
+    if (season.registrationOpen) {
+      setRegistrationOpen(season.id, false);
+      Alert.alert("تم", "تم إغلاق استمارة التسجيل");
+    } else {
+      handleAnnounce(season.id, season.name);
+    }
+  };
+
   return (
     <AppShell
       title="إدارة المواسم العادية"
@@ -78,12 +94,8 @@ export default function AdminSeasonsScreen({ navigation }) {
     >
       <SectionCard
         title="إعلان موسم دراسي جديد"
-        subtitle="إنشاء الموسم وفتح استمارة التسجيل التي يملأها المنخرطون الجدد"
+        subtitle="إنشاء الموسم وفتح استمارة التسجيل"
       >
-        <Text style={styles.info}>
-          عند الإعلان يُفتح نموذج التسجيل في لوحة العضو، فيختار المنخرط
-          أوقات فراغه ويرسل الطلب لقبول الإدارة.
-        </Text>
         <Text style={styles.label}>اسم الموسم</Text>
         <FormInput
           value={name}
@@ -124,66 +136,130 @@ export default function AdminSeasonsScreen({ navigation }) {
         <EmptyState text="لا توجد مواسم عادية بعد" />
       ) : (
         regularSeasons.map((season) => (
-          <SectionCard key={season.id} title={season.name}>
-            <Text style={styles.meta}>
-              حضوري في المسجد{season.active ? " • نشط" : ""}
-              {season.registrationOpen ? " • الاستمارة مفتوحة" : " • الاستمارة مغلقة"}
-            </Text>
-            <Text style={styles.meta}>
-              {season.startDate} → {season.endDate}
-            </Text>
+          <View key={season.id} style={styles.seasonCard}>
+            <View style={styles.cardTop}>
+              <View style={styles.cardInfo}>
+                <Text style={styles.seasonName} numberOfLines={2}>
+                  {season.name}
+                </Text>
+                <Text style={styles.dates}>
+                  {season.startDate} → {season.endDate}
+                </Text>
+                <View style={styles.badges}>
+                  {season.active ? (
+                    <View style={[styles.badge, styles.badgeActive]}>
+                      <Text style={styles.badgeTextActive}>نشط</Text>
+                    </View>
+                  ) : null}
+                  <View
+                    style={[
+                      styles.badge,
+                      season.registrationOpen
+                        ? styles.badgeOpen
+                        : styles.badgeClosed,
+                    ]}
+                  >
+                    <Text
+                      style={
+                        season.registrationOpen
+                          ? styles.badgeTextOpen
+                          : styles.badgeTextClosed
+                      }
+                    >
+                      {season.registrationOpen
+                        ? "الاستمارة مفتوحة"
+                        : "الاستمارة مغلقة"}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
 
-            {!season.registrationOpen ? (
-              <QuickButton
-                color={colors.primary}
-                icon="megaphone-outline"
-                label="إعلان استمارة التسجيل للمنخرطين"
-                onPress={() => handleAnnounce(season.id, season.name)}
-              />
-            ) : (
-              <QuickButton
-                color={colors.orange}
-                icon="close-circle-outline"
-                label="إغلاق استمارة التسجيل"
-                onPress={() => {
-                  setRegistrationOpen(season.id, false);
-                  Alert.alert("تم", "تم إغلاق استمارة التسجيل");
-                }}
-              />
-            )}
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                style={styles.actionChip}
+                onPress={() => toggleRegistration(season)}
+              >
+                <Ionicons
+                  name={
+                    season.registrationOpen
+                      ? "close-circle-outline"
+                      : "megaphone-outline"
+                  }
+                  size={18}
+                  color={
+                    season.registrationOpen ? colors.orange : colors.primary
+                  }
+                />
+                <Text
+                  style={[
+                    styles.actionLabel,
+                    {
+                      color: season.registrationOpen
+                        ? colors.orange
+                        : colors.primary,
+                    },
+                  ]}
+                >
+                  {season.registrationOpen ? "إغلاق الاستمارة" : "فتح الاستمارة"}
+                </Text>
+              </TouchableOpacity>
 
-            {!season.active ? (
-              <QuickButton
-                color={colors.teal}
-                icon="checkmark-circle-outline"
-                label="تعيين كموسم نشط"
-                onPress={() => activateSeason(season.id)}
-              />
-            ) : (
-              <Text style={styles.activeBadge}>الموسم العادي الحالي</Text>
-            )}
+              {!season.active ? (
+                <TouchableOpacity
+                  style={styles.actionChip}
+                  onPress={() => activateSeason(season.id)}
+                >
+                  <Ionicons
+                    name="checkmark-circle-outline"
+                    size={18}
+                    color={colors.teal}
+                  />
+                  <Text style={[styles.actionLabel, { color: colors.teal }]}>
+                    تفعيل الموسم
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
 
-            <QuickButton
-              color={colors.gold}
-              icon="document-text-outline"
-              label="طلبات تسجيل هذا الموسم"
-              onPress={() =>
-                navigation.navigate("AdminRegistrations", {
-                  seasonType: SEASON_TYPES.REGULAR,
-                })
-              }
-            />
-            <QuickButton
-              color={colors.primaryDark}
-              icon="people-outline"
-              label="مجموعات الموسم العادي"
-              onPress={() =>
-                navigation.navigate("AdminGroups", {
-                  seasonType: SEASON_TYPES.REGULAR,
-                })
-              }
-            />
-          </SectionCard>
+              <TouchableOpacity
+                style={styles.actionChip}
+                onPress={() =>
+                  navigation.navigate("AdminRegistrations", {
+                    seasonType: SEASON_TYPES.REGULAR,
+                  })
+                }
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={18}
+                  color={colors.gold}
+                />
+                <Text style={[styles.actionLabel, { color: colors.gold }]}>
+                  طلبات التسجيل
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionChip}
+                onPress={() =>
+                  navigation.navigate("AdminGroups", {
+                    seasonType: SEASON_TYPES.REGULAR,
+                  })
+                }
+              >
+                <Ionicons
+                  name="people-outline"
+                  size={18}
+                  color={colors.primaryDark}
+                />
+                <Text
+                  style={[styles.actionLabel, { color: colors.primaryDark }]}
+                >
+                  المجموعات
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         ))
       )}
     </AppShell>
@@ -191,17 +267,6 @@ export default function AdminSeasonsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  info: {
-    ...rtlText,
-    color: colors.primaryDark,
-    backgroundColor: colors.soft,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-    lineHeight: 22,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-  },
   label: { ...rtlText, marginBottom: 6, color: colors.muted },
   listTitle: {
     fontSize: 17,
@@ -209,13 +274,106 @@ const styles = StyleSheet.create({
     ...rtlText,
     color: colors.text,
     marginBottom: 12,
-    marginTop: 4,
+    marginTop: 8,
   },
-  meta: { ...rtlText, color: colors.muted, marginTop: 4 },
-  activeBadge: {
-    textAlign: "center",
-    color: colors.primary,
-    fontWeight: "bold",
+  seasonCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     marginBottom: 10,
+    ...shadows.card,
+  },
+  cardTop: {
+    marginBottom: 10,
+  },
+  cardInfo: {
+    flex: 1,
+  },
+  seasonName: {
+    ...rtlText,
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.primary,
+    marginBottom: 4,
+    lineHeight: 24,
+  },
+  dates: {
+    ...rtlText,
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 8,
+  },
+  badges: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+  badge: {
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginStart: 6,
+    marginBottom: 4,
+    borderWidth: 1,
+  },
+  badgeActive: {
+    backgroundColor: colors.soft,
+    borderColor: colors.borderGreen,
+  },
+  badgeOpen: {
+    backgroundColor: "#ECFDF5",
+    borderColor: colors.borderGreen,
+  },
+  badgeClosed: {
+    backgroundColor: "#F3F4F6",
+    borderColor: colors.border,
+  },
+  badgeTextActive: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  badgeTextOpen: {
+    color: colors.green || colors.primary,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  badgeTextClosed: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  actionsRow: {
+    flexDirection: row,
+    flexWrap: "nowrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+  },
+  actionChip: {
+    flex: 1,
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.bg,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginHorizontal: 3,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minWidth: 0,
+  },
+  actionLabel: {
+    textAlign: "center",
+    writingDirection: "rtl",
+    fontSize: 10,
+    fontWeight: "600",
+    marginTop: 4,
   },
 });

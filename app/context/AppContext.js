@@ -320,6 +320,47 @@ export function AppProvider({ children }) {
     return group;
   };
 
+  const updateGroup = (groupId, patch) => {
+    const target = groups.find((g) => g.id === groupId);
+    if (!target) return { ok: false, error: "المجموعة غير موجودة" };
+    const name = patch.name !== undefined ? String(patch.name).trim() : null;
+    if (name !== null && !name) {
+      return { ok: false, error: "اسم المجموعة مطلوب" };
+    }
+    if (patch.supervisorId) {
+      const supervisor = users.find(
+        (u) => u.id === patch.supervisorId && u.role === ROLES.SUPERVISOR
+      );
+      if (!supervisor) {
+        return { ok: false, error: "المشرف المحدد غير موجود" };
+      }
+    }
+    setGroups((prev) =>
+      prev.map((g) =>
+        g.id === groupId
+          ? {
+              ...g,
+              ...(name !== null ? { name } : {}),
+              ...(patch.supervisorId !== undefined
+                ? { supervisorId: patch.supervisorId }
+                : {}),
+            }
+          : g
+      )
+    );
+    return { ok: true };
+  };
+
+  const deleteGroup = (groupId) => {
+    const target = groups.find((g) => g.id === groupId);
+    if (!target) return { ok: false, error: "المجموعة غير موجودة" };
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    setProgress((prev) => prev.filter((p) => p.groupId !== groupId));
+    setAttendance((prev) => prev.filter((a) => a.groupId !== groupId));
+    setExams((prev) => prev.filter((e) => e.groupId !== groupId));
+    return { ok: true };
+  };
+
   const assignMemberToGroup = (groupId, memberId) => {
     setGroups((prev) => {
       const target = prev.find((g) => g.id === groupId);
@@ -384,16 +425,20 @@ export function AppProvider({ children }) {
     password = "123456",
     birthDate = "2000/01/01",
     gender = "ذكر",
+    groupName,
     groupId,
     newGroup,
+    seasonId: seasonIdArg,
   }) => {
     if (!firstName?.trim() || !lastName?.trim() || !email?.trim()) {
       return { ok: false, error: "املأ الاسم واللقب والبريد" };
     }
-    if (!groupId && !newGroup?.name?.trim()) {
+
+    const typedName = (groupName || newGroup?.name || "").trim();
+    if (!groupId && !typedName) {
       return {
         ok: false,
-        error: "يجب تحديد المجموعة المعنية بهذا المشرف",
+        error: "أدخل اسم المجموعة المعنية بهذا المشرف",
       };
     }
     if (
@@ -404,32 +449,43 @@ export function AppProvider({ children }) {
 
     let assignedGroup = null;
     let pendingNewGroup = null;
+    let created = false;
+
     if (groupId) {
       assignedGroup = groups.find((g) => g.id === groupId);
       if (!assignedGroup) {
         return { ok: false, error: "المجموعة المحددة غير موجودة" };
       }
-    } else if (newGroup?.name?.trim()) {
-      const seasonId =
-        newGroup.seasonId ||
-        seasons.find((s) => s.active)?.id ||
-        seasons[0]?.id;
-      if (!seasonId) {
-        return {
-          ok: false,
-          error: "لا يوجد موسم لإنشاء المجموعة — أنشئ موسماً أولاً",
+    } else {
+      const match = groups.find(
+        (g) => g.name.trim().toLowerCase() === typedName.toLowerCase()
+      );
+      if (match) {
+        assignedGroup = match;
+      } else {
+        const seasonId =
+          seasonIdArg ||
+          newGroup?.seasonId ||
+          seasons.find((s) => s.active)?.id ||
+          seasons[0]?.id;
+        if (!seasonId) {
+          return {
+            ok: false,
+            error: "لا يوجد موسم لإنشاء المجموعة — أنشئ موسماً أولاً",
+          };
+        }
+        pendingNewGroup = {
+          id: uid("g"),
+          seasonId,
+          name: typedName,
+          freeTimeSlot: newGroup?.freeTimeSlot || "",
+          supervisorId: null,
+          memberIds: [],
+          schedule: newGroup?.schedule || "",
+          remote: !!newGroup?.remote,
         };
+        created = true;
       }
-      pendingNewGroup = {
-        id: uid("g"),
-        seasonId,
-        name: newGroup.name.trim(),
-        freeTimeSlot: newGroup.freeTimeSlot || "",
-        supervisorId: null,
-        memberIds: [],
-        schedule: newGroup.schedule || "",
-        remote: !!newGroup.remote,
-      };
     }
 
     const user = {
@@ -444,8 +500,9 @@ export function AppProvider({ children }) {
     };
     setUsers((prev) => [...prev, user]);
 
-    if (groupId) {
-      assignSupervisorToGroup(groupId, user.id);
+    if (assignedGroup && !pendingNewGroup) {
+      assignSupervisorToGroup(assignedGroup.id, user.id);
+      assignedGroup = { ...assignedGroup, supervisorId: user.id };
     } else if (pendingNewGroup) {
       assignedGroup = { ...pendingNewGroup, supervisorId: user.id };
       setGroups((prev) => [...prev, assignedGroup]);
@@ -458,7 +515,7 @@ export function AppProvider({ children }) {
       userId: user.id,
     });
 
-    return { ok: true, user, group: assignedGroup };
+    return { ok: true, user, group: assignedGroup, created };
   };
 
   const addMember = ({
@@ -688,6 +745,8 @@ export function AppProvider({ children }) {
     submitSeasonRegistration,
     reviewRegistration,
     createGroup,
+    updateGroup,
+    deleteGroup,
     assignMemberToGroup,
     assignSupervisorToGroup,
     addSupervisor,

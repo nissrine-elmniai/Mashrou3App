@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Alert } from "react-native";
+import { Text, StyleSheet, Alert } from "react-native";
 import { useApp } from "../../context/AppContext";
 import {
   AppShell,
@@ -7,79 +7,61 @@ import {
   QuickButton,
   FormInput,
   EmptyState,
-  SoftButton,
   PersonCard,
 } from "../../components/ui";
 import { ROLES, ROLE_LABELS } from "../../constants/roles";
 import { colors } from "../../constants/theme";
 import { rtlText } from "../../constants/rtl";
+
 export default function AdminSupervisorsScreen({ navigation }) {
-  const {
-    users,
-    groups,
-    seasons,
-    addSupervisor,
-    getSupervisorGroups,
-  } = useApp();
+  const { users, addSupervisor, getSupervisorGroups } = useApp();
   const supervisors = users.filter((u) => u.role === ROLES.SUPERVISOR);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("123456");
-  const [mode, setMode] = useState("existing");
-  const [groupId, setGroupId] = useState(groups[0]?.id || "");
-  const [newGroupName, setNewGroupName] = useState("");
-  const [seasonId, setSeasonId] = useState(
-    seasons.find((s) => s.active)?.id || seasons[0]?.id || ""
-  );
+  const [groupName, setGroupName] = useState("");
 
   const handleAdd = () => {
-    const payload = { firstName, lastName, email, password };
-    if (mode === "existing") {
-      if (!groupId) {
-        Alert.alert("تنبيه", "اختر المجموعة المعنية بهذا المشرف");
-        return;
-      }
-      payload.groupId = groupId;
-    } else {
-      if (!newGroupName.trim() || !seasonId) {
-        Alert.alert("تنبيه", "أدخل اسم المجموعة واختر الموسم");
-        return;
-      }
-      payload.newGroup = {
-        name: newGroupName.trim(),
-        seasonId,
-        freeTimeSlot: "",
-        schedule: "",
-      };
+    if (!groupName.trim()) {
+      Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
+      return;
     }
-    const result = addSupervisor(payload);
+    const result = addSupervisor({
+      firstName,
+      lastName,
+      email,
+      password,
+      groupName: groupName.trim(),
+    });
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
     }
     Alert.alert(
       "تم",
-      `تمت إضافة المشرف وربطه بالمجموعة: ${result.group?.name || "—"}`
+      result.created
+        ? `تم إنشاء المجموعة «${result.group?.name}» وربطها بالمشرف`
+        : `تمت إضافة المشرف وربطه بالمجموعة: ${result.group?.name || "—"}`
     );
     setFirstName("");
     setLastName("");
     setEmail("");
     setPassword("123456");
-    setNewGroupName("");
+    setGroupName("");
   };
 
   return (
     <AppShell
       title="إدارة المشرفين"
-      subtitle="إضافة مشرف مع تحديد المجموعة المعنية"
+      subtitle="إضافة مشرف مع اسم مجموعته"
       icon="shield-checkmark"
       onBack={() => navigation.goBack()}
     >
       <SectionCard
         title="إضافة مشرف"
-        subtitle="الحساب + المجموعة المسندة إليه"
+        subtitle="اكتب اسم المجموعة — تُربط إن وُجدت أو تُنشأ تلقائياً"
       >
         <FormInput
           placeholder="الاسم"
@@ -105,46 +87,15 @@ export default function AdminSupervisorsScreen({ navigation }) {
           secureTextEntry
         />
 
-        <Text style={styles.label}>المجموعة المعنية بالمشرف</Text>
-        <SoftButton
-          label="مجموعة موجودة"
-          active={mode === "existing"}
-          onPress={() => setMode("existing")}
+        <Text style={styles.label}>اسم المجموعة</Text>
+        <FormInput
+          placeholder="مثال: مجموعة الفجر"
+          value={groupName}
+          onChangeText={setGroupName}
         />
-        <SoftButton
-          label="إنشاء مجموعة جديدة"
-          active={mode === "new"}
-          onPress={() => setMode("new")}
-        />
-
-        {mode === "existing"
-          ? groups.map((g) => (
-              <SoftButton
-                key={g.id}
-                active={groupId === g.id}
-                label={g.name}
-                onPress={() => setGroupId(g.id)}
-              />
-            ))
-          : (
-            <View>
-              <Text style={styles.label}>اسم مجموعة المشرف</Text>
-              <FormInput
-                placeholder="أدخل اسم المجموعة كما سيديرها المشرف"
-                value={newGroupName}
-                onChangeText={setNewGroupName}
-              />
-              <Text style={styles.label}>الموسم</Text>
-              {seasons.map((s) => (
-                <SoftButton
-                  key={s.id}
-                  active={seasonId === s.id}
-                  label={s.name}
-                  onPress={() => setSeasonId(s.id)}
-                />
-              ))}
-            </View>
-          )}
+        <Text style={styles.hint}>
+          إذا كان الاسم موجوداً يُربط بالمشرف، وإلا تُنشأ مجموعة جديدة تلقائياً
+        </Text>
 
         <QuickButton
           color={colors.primary}
@@ -180,6 +131,13 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   label: { ...rtlText, color: colors.muted, marginTop: 8, marginBottom: 6 },
+  hint: {
+    ...rtlText,
+    color: colors.orange,
+    marginBottom: 10,
+    lineHeight: 20,
+    fontSize: 13,
+  },
   section: {
     fontSize: 17,
     fontWeight: "bold",

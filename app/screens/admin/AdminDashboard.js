@@ -19,7 +19,6 @@ import {
   PersonCard,
   FormInput,
   EmptyState,
-  SoftButton,
 } from "../../components/ui";
 const TABS = [
   { key: "home", label: "الرئيسية" },
@@ -32,7 +31,6 @@ export default function AdminDashboard({ navigation }) {
     stats,
     exams,
     users,
-    groups,
     seasons,
     logout,
     addSupervisor,
@@ -203,9 +201,6 @@ export default function AdminDashboard({ navigation }) {
           supervisors={supervisors}
           getSupervisorGroups={getSupervisorGroups}
           addSupervisor={addSupervisor}
-          groups={groups}
-          seasons={seasons}
-          users={users}
         />
       )}
 
@@ -248,76 +243,48 @@ function SupervisorsTab({
   supervisors,
   getSupervisorGroups,
   addSupervisor,
-  groups,
-  seasons,
-  users,
 }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("123456");
-  const [mode, setMode] = useState("existing"); // existing | new
-  const [groupId, setGroupId] = useState(groups[0]?.id || "");
-  const [newGroupName, setNewGroupName] = useState("");
-  const activeSeason =
-    seasons.find((s) => s.active) || seasons[0];
-  const [seasonId, setSeasonId] = useState(activeSeason?.id || "");
-
-  const getUser = (id) => users.find((u) => u.id === id);
+  const [groupName, setGroupName] = useState("");
 
   const handleAdd = () => {
-    const payload = {
+    if (!groupName.trim()) {
+      Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
+      return;
+    }
+
+    const result = addSupervisor({
       firstName,
       lastName,
       email,
       password,
-    };
-    if (mode === "existing") {
-      if (!groupId) {
-        Alert.alert("تنبيه", "اختر المجموعة المعنية بهذا المشرف");
-        return;
-      }
-      payload.groupId = groupId;
-    } else {
-      if (!newGroupName.trim()) {
-        Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
-        return;
-      }
-      if (!seasonId) {
-        Alert.alert("تنبيه", "اختر الموسم لإنشاء المجموعة");
-        return;
-      }
-      payload.newGroup = {
-        name: newGroupName.trim(),
-        seasonId,
-        freeTimeSlot: "",
-        schedule: "",
-      };
-    }
-
-    const result = addSupervisor(payload);
+      groupName: groupName.trim(),
+    });
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
     }
     Alert.alert(
       "تم",
-      `تمت إضافة المشرف وتعيينه على المجموعة: ${
-        result.group?.name || "—"
-      }`
+      result.created
+        ? `تم إنشاء المجموعة «${result.group?.name}» وربطها بالمشرف`
+        : `تمت إضافة المشرف وتعيينه على المجموعة: ${result.group?.name || "—"}`
     );
     setFirstName("");
     setLastName("");
     setEmail("");
     setPassword("123456");
-    setNewGroupName("");
+    setGroupName("");
   };
 
   return (
     <View>
       <SectionCard
         title="إضافة مشرف"
-        subtitle="يجب تحديد المجموعة المعنية بهذا المشرف"
+        subtitle="اكتب اسم المجموعة — تُربط إن وُجدت أو تُنشأ تلقائياً"
       >
         <FormInput
           placeholder="الاسم"
@@ -343,66 +310,15 @@ function SupervisorsTab({
           secureTextEntry
         />
 
-        <Text style={styles.fieldLabel}>المجموعة المعنية بالمشرف</Text>
-        <SoftButton
-          label="مجموعة موجودة"
-          active={mode === "existing"}
-          onPress={() => setMode("existing")}
+        <Text style={styles.fieldLabel}>اسم المجموعة</Text>
+        <FormInput
+          placeholder="مثال: مجموعة الفجر"
+          value={groupName}
+          onChangeText={setGroupName}
         />
-        <SoftButton
-          label="إنشاء مجموعة جديدة للمشرف"
-          active={mode === "new"}
-          onPress={() => setMode("new")}
-        />
-
-        {mode === "existing" ? (
-          groups.length === 0 ? (
-            <Text style={styles.hintInline}>
-              لا توجد مجموعات بعد — أنشئ مجموعة جديدة أدناه أو من إدارة المجموعات
-            </Text>
-          ) : (
-            groups.map((g) => {
-              const season = seasons.find((s) => s.id === g.seasonId);
-              const current = getUser(g.supervisorId);
-              return (
-                <SoftButton
-                  key={g.id}
-                  active={groupId === g.id}
-                  label={`${g.name} — ${season?.name || ""} ${
-                    current
-                      ? `(حالياً: ${current.firstName} ${current.lastName})`
-                      : ""
-                  }`}
-                  onPress={() => setGroupId(g.id)}
-                />
-              );
-            })
-          )
-        ) : (
-          <View>
-            <Text style={styles.hintInline}>
-              أدخل اسم مجموعة المشرف كما سيديرها — بدون اقتراحات جاهزة
-            </Text>
-            <FormInput
-              placeholder="اسم مجموعة المشرف"
-              value={newGroupName}
-              onChangeText={setNewGroupName}
-            />
-            <Text style={styles.fieldLabel}>الموسم</Text>
-            {seasons.length === 0 ? (
-              <Text style={styles.hintInline}>أنشئ موسماً أولاً</Text>
-            ) : (
-              seasons.map((s) => (
-                <SoftButton
-                  key={s.id}
-                  active={seasonId === s.id}
-                  label={s.name}
-                  onPress={() => setSeasonId(s.id)}
-                />
-              ))
-            )}
-          </View>
-        )}
+        <Text style={styles.hintInline}>
+          إذا كان الاسم موجوداً يُربط بالمشرف، وإلا تُنشأ مجموعة جديدة تلقائياً
+        </Text>
 
         <QuickButton
           color={colors.primary}
