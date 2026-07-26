@@ -11,9 +11,9 @@ import {
   TextInput,
   Alert,
   Modal,
-  I18nManager,
 } from "react-native";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { row, rtlText, textAlignStart, arrowBack } from "../../constants/rtl";
 
 const { width } = Dimensions.get("window");
 
@@ -263,7 +263,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             onPress={() => navigation.goBack()}
           >
             <Text style={styles.backText}>رجوع</Text>
-            <Ionicons name={I18nManager.isRTL ? "arrow-back" : "arrow-forward"} size={20} color="white" />
+            <Ionicons name={arrowBack} size={20} color="white" />
           </TouchableOpacity>
         </View>
 
@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   backButton: {
-    flexDirection: "row",
+    flexDirection: row,
     alignItems: "center",
   },
   backText: {
@@ -493,17 +493,17 @@ const styles = StyleSheet.create({
     borderColor: "#D0E8D0",
   },
   row: {
-    flexDirection: "row",
+    flexDirection: row,
     alignItems: "center",
   },
   rowBetween: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "space-between",
     alignItems: "center",
   },
   titleContainer: {
     flex: 1,
-    flexDirection: "row",
+    flexDirection: row,
     alignItems: "center",
     justifyContent: "flex-end",
   },
@@ -565,7 +565,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     color: "#16A34A",
-    textAlign: "right",
+    ...rtlText,
   },
   titleRight: {
     alignItems: "flex-end",
@@ -573,10 +573,10 @@ const styles = StyleSheet.create({
   subTitle: {
     fontSize: 12,
     color: "#888",
-    textAlign: "right",
+    ...rtlText,
   },
   datesRow: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "space-between",
     marginVertical: 20,
   },
@@ -596,7 +596,7 @@ const styles = StyleSheet.create({
     marginEnd: 5,
   },
   dateValueRow: {
-    flexDirection: "row",
+    flexDirection: row,
     alignItems: "center",
   },
   dateIcon: {
@@ -608,7 +608,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   progressHeader: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "space-between",
     marginBottom: 10,
   },
@@ -643,7 +643,7 @@ const styles = StyleSheet.create({
   currentProgressLabel: {
     fontSize: 14,
     color: "#666",
-    textAlign: "right",
+    ...rtlText,
     marginTop: 16,
     marginBottom: 4,
   },
@@ -652,7 +652,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#16A34A",
     marginVertical: 8,
-    textAlign: "left",
+    ...rtlText,
   },
   noteBox: {
     backgroundColor: "#FFF8E7",
@@ -665,7 +665,7 @@ const styles = StyleSheet.create({
   noteText: {
     color: "#B76E3C",
     fontSize: 13,
-    textAlign: "right",
+    ...rtlText,
     lineHeight: 20,
   },
   // 🆕 STYLES POUR LE BOUTON SUPPRIMER
@@ -675,7 +675,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingVertical: 18,
     borderRadius: 14,
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#EF4444",
@@ -713,7 +713,7 @@ const styles = StyleSheet.create({
     maxWidth: 400,
   },
   modalHeader: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
@@ -731,7 +731,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   currentProgressContainer: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
@@ -758,7 +758,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sliderContainer: {
-    flexDirection: "row",
+    flexDirection: row,
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 24,
@@ -777,7 +777,7 @@ const styles = StyleSheet.create({
     color: "#16A34A",
   },
   progressInputContainer: {
-    flexDirection: "row",
+    flexDirection: row,
     alignItems: "center",
     backgroundColor: "#F5F5F5",
     borderRadius: 12,
@@ -798,7 +798,7 @@ const styles = StyleSheet.create({
     marginStart: 4,
   },
   modalActions: {
-    flexDirection: "row",
+    flexDirection: row,
     gap: 12,
   },
   saveButton: {
@@ -826,7 +826,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   warningNote: {
-    flexDirection: "row",
+    flexDirection: row,
     backgroundColor: "#FFF8E7",
     padding: 16,
     borderRadius: 12,

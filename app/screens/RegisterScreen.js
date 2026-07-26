@@ -15,6 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { useApp } from "../context/AppContext";
 import { colors, radii, shadows } from "../constants/theme";
+import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function RegisterScreen({ navigation }) {
   const { registerAccount } = useApp();
@@ -148,7 +149,7 @@ function Field({
           secureTextEntry={!!secure}
           autoCapitalize={autoCapitalize}
           keyboardType={keyboardType}
-          textAlign="right"
+          textAlign={textAlignStart}
         />
       </View>
     </View>
@@ -200,7 +201,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.textSecondary,
     marginBottom: 6,
-    textAlign: "right",
+    ...rtlText,
   },
   inputWrapper: {
     borderWidth: 1,
@@ -213,7 +214,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
     color: colors.text,
-    textAlign: "right",
+    ...rtlText,
   },
   registerButton: {
     backgroundColor: colors.primary,
@@ -229,7 +230,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   loginContainer: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "center",
     alignItems: "center",
   },

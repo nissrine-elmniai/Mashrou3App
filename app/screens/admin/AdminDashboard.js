@@ -10,7 +10,7 @@ import {
 import { useApp } from "../../context/AppContext";
 import { ROLES, ROLE_LABELS, SEASON_TYPES } from "../../constants/roles";
 import { colors } from "../../constants/theme";
-import { rtlText, arrowBack } from "../../constants/rtl";
+import { rtlText, arrowBack, textAlignStart } from "../../constants/rtl";
 import {
   AppShell,
   StatCard,
@@ -219,7 +219,7 @@ export default function AdminDashboard({ navigation }) {
             value={alertText}
             onChangeText={setAlertText}
             multiline
-            textAlign="right"
+            textAlign={textAlignStart}
           />
             <QuickButton
               color={colors.orange}

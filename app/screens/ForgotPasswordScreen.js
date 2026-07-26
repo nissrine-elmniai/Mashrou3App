@@ -15,6 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { colors, radii, shadows } from "../constants/theme";
 import { useApp } from "../context/AppContext";
+import { rtlText, textAlignStart } from "../constants/rtl";
 
 export default function ForgotPasswordScreen({ navigation }) {
   const { resetPassword } = useApp();
@@ -75,9 +76,9 @@ export default function ForgotPasswordScreen({ navigation }) {
                 value={email}
                 onChangeText={setEmail}
                 autoCapitalize="none"
-                keyboardType="email-address"
-                textAlign="right"
-              />
+                  keyboardType="email-address"
+                  textAlign={textAlignStart}
+                />
             </View>
 
             <Text style={styles.label}>كلمة المرور الجديدة</Text>
@@ -89,8 +90,8 @@ export default function ForgotPasswordScreen({ navigation }) {
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
-                textAlign="right"
-              />
+                textAlign={textAlignStart}
+                />
             </View>
 
             <Text style={styles.label}>تأكيد كلمة المرور</Text>
@@ -102,7 +103,7 @@ export default function ForgotPasswordScreen({ navigation }) {
                 value={confirm}
                 onChangeText={setConfirm}
                 secureTextEntry
-                textAlign="right"
+                textAlign={textAlignStart}
               />
             </View>
 
@@ -178,7 +179,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.textSecondary,
     marginBottom: 8,
-    textAlign: "right",
+    ...rtlText,
   },
   inputWrapper: {
     borderWidth: 1,
@@ -192,7 +193,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 15,
     color: colors.text,
-    textAlign: "right",
+    ...rtlText,
   },
   resetButton: {
     backgroundColor: colors.primary,

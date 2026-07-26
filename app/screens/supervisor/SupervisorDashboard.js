@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity } from "react-nativ
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { colors } from "../../constants/theme";
-import { rtlText, row } from "../../constants/rtl";
+import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import {
   AppShell,
   StatCard,
@@ -175,7 +175,7 @@ export default function SupervisorDashboard({ navigation }) {
               placeholder="البحث عن عضو..."
               placeholderTextColor={colors.placeholder}
               style={styles.searchInput}
-              textAlign="right"
+              textAlign={textAlignStart}
               value={search}
               onChangeText={setSearch}
             />

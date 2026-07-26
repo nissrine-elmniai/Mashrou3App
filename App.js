@@ -80,9 +80,7 @@ export default function App() {
             headerTintColor: "#fff",
             headerTitleStyle: {
               fontWeight: "bold",
-              writingDirection: "rtl",
               fontFamily: fonts.bold,
-              textAlign: "right",
             },
             headerTitleAlign: "center",
             headerBackTitleVisible: false,

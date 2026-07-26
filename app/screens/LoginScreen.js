@@ -16,7 +16,7 @@ import { StatusBar } from "expo-status-bar";
 import { useApp } from "../context/AppContext";
 import { ROLE_LABELS, DASHBOARD_BY_ROLE } from "../constants/roles";
 import { colors, radii, shadows } from "../constants/theme";
-import { rtlText } from "../constants/rtl";
+import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function LoginScreen({ navigation }) {
   const { login, DEMO_PASSWORD, currentUser } = useApp();
@@ -90,7 +90,7 @@ export default function LoginScreen({ navigation }) {
                   value={username}
                   onChangeText={setUsername}
                   autoCapitalize="none"
-                  textAlign="right"
+                  textAlign={textAlignStart}
                 />
               </View>
             </View>
@@ -105,7 +105,7 @@ export default function LoginScreen({ navigation }) {
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry
-                  textAlign="right"
+                  textAlign={textAlignStart}
                 />
               </View>
             </View>
@@ -204,8 +204,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.textSecondary,
     marginBottom: 8,
-    textAlign: "right",
-    writingDirection: "rtl",
+    ...rtlText,
     alignSelf: "stretch",
   },
   inputWrapper: {
@@ -219,8 +218,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 16,
     color: colors.text,
-    textAlign: "right",
-    writingDirection: "rtl",
+    ...rtlText,
   },
   loginButton: {
     backgroundColor: colors.primary,
@@ -260,7 +258,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   signupContainer: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "center",
     alignItems: "center",
     marginTop: 20,

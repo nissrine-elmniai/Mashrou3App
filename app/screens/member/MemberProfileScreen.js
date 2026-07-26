@@ -7,12 +7,11 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
-  I18nManager,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
-import { row } from "../../constants/rtl";
+import { row, arrowBack } from "../../constants/rtl";
 
 export default function MemberProfileScreen({ navigation }) {
   const { currentUser, logout } = useApp();
@@ -36,7 +35,7 @@ export default function MemberProfileScreen({ navigation }) {
               onPress={() => navigation.goBack()}
             >
               <Text style={styles.headerText}>رجوع</Text>
-              <Ionicons name={I18nManager.isRTL ? "arrow-back" : "arrow-forward"} size={20} color="white" />
+              <Ionicons name={arrowBack} size={20} color="white" />
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.headerAction} onPress={handleLogout}>
