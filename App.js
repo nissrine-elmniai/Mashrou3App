@@ -6,6 +6,7 @@ import {
 } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import {
   useFonts,
   Cairo_400Regular,
@@ -33,12 +34,7 @@ import MemberProfileScreen from "./app/screens/member/MemberProfileScreen";
 import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen";
 
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
-import PresenceScreen from "./app/screens/supervisor/PresenceScreen";
-import StatisticsScreen from "./app/screens/supervisor/StatisticsScreen";
-import AddMember from "./app/screens/supervisor/AddMember";
-import SupervisorProfileScreen from "./app/screens/supervisor/SupervisorProfileScreen";
-import SupervisorTrackingScreen from "./app/screens/supervisor/SupervisorTrackingScreen";
-import SupervisorExamsScreen from "./app/screens/supervisor/SupervisorExamsScreen";
+import ChatConversationScreen from "./app/screens/supervisor/ChatConversationScreen";
 
 import AdminDashboard from "./app/screens/admin/AdminDashboard";
 import AdminSeasonsScreen from "./app/screens/admin/AdminSeasonsScreen";
@@ -115,95 +111,71 @@ export default function App() {
             options={{ headerShown: false }}
           />
 
-          <Stack.Screen
-            name="AdminDashboard"
-            component={AdminDashboard}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AdminSeasons"
-            component={AdminSeasonsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AdminSummerSchool"
-            component={AdminSummerSchoolScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AdminRegistrations"
-            component={AdminRegistrationsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AdminGroups"
-            component={AdminGroupsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AdminSupervisors"
-            component={AdminSupervisorsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AdminStats"
-            component={AdminStatsScreen}
-            options={{ headerShown: false }}
-          />
+            <Stack.Screen
+              name="AdminDashboard"
+              component={AdminDashboard}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AdminSeasons"
+              component={AdminSeasonsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AdminSummerSchool"
+              component={AdminSummerSchoolScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AdminRegistrations"
+              component={AdminRegistrationsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AdminGroups"
+              component={AdminGroupsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AdminSupervisors"
+              component={AdminSupervisorsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AdminStats"
+              component={AdminStatsScreen}
+              options={{ headerShown: false }}
+            />
 
-          <Stack.Screen
-            name="MemberDashboardScreen"
-            component={MemberDashboardScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="MemberProfileScreen"
-            component={MemberProfileScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="ProgrammeDetails"
-            component={ProgrammeDetailsScreen}
-            options={{ headerShown: false }}
-          />
+            <Stack.Screen
+              name="MemberDashboardScreen"
+              component={MemberDashboardScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="MemberProfileScreen"
+              component={MemberProfileScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="ProgrammeDetails"
+              component={ProgrammeDetailsScreen}
+              options={{ headerShown: false }}
+            />
 
-          <Stack.Screen
-            name="SupervisorDashboard"
-            component={SupervisorDashboard}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="SupervisorProfileScreen"
-            component={SupervisorProfileScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="SupervisorTracking"
-            component={SupervisorTrackingScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="SupervisorExams"
-            component={SupervisorExamsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="Presence"
-            component={PresenceScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="Statistics"
-            component={StatisticsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="AddMember"
-            component={AddMember}
-            options={{ headerShown: false }}
-          />
-        </Stack.Navigator>
-      </NavigationContainer>
+            <Stack.Screen
+              name="SupervisorDashboard"
+              component={SupervisorDashboard}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="ChatConversation"
+              component={ChatConversationScreen}
+              options={{ headerShown: false }}
+            />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SafeAreaProvider>
     </AppProvider>
   );
 }
