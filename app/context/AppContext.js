@@ -10,6 +10,7 @@ import { ActivityIndicator, View, StyleSheet } from "react-native";
 import { DEMO_PASSWORD, emptyState, bootstrapUsers } from "../data/seed";
 import { loadAppState, saveAppState, clearAppState } from "../data/storage";
 import {
+  ACCOUNT_STATUS,
   DASHBOARD_BY_ROLE,
   REGISTRATION_STATUS,
   ROLES,
@@ -23,6 +24,30 @@ const uid = (prefix) =>
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+}
+
+function inviteToken() {
+  return `INV-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function splitFullName(fullName) {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return { firstName: "", lastName: "" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  return {
+    firstName: parts.slice(0, -1).join(" "),
+    lastName: parts[parts.length - 1],
+  };
+}
+
+function normalizeName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
 export function AppProvider({ children }) {
@@ -105,11 +130,18 @@ export function AppProvider({ children }) {
 
   const login = (email, password) => {
     const user = users.find(
-      (u) =>
-        u.email.toLowerCase() === email.trim().toLowerCase() &&
-        u.password === password
+      (u) => u.email.toLowerCase() === email.trim().toLowerCase()
     );
     if (!user) {
+      return { ok: false, error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" };
+    }
+    if (user.accountStatus === ACCOUNT_STATUS.INVITED || !user.password) {
+      return {
+        ok: false,
+        error: "الحساب غير مفعّل بعد — استخدم رمز الدعوة لإنشاء كلمة المرور",
+      };
+    }
+    if (user.password !== password) {
       return { ok: false, error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" };
     }
     setCurrentUser(user);
@@ -132,6 +164,79 @@ export function AppProvider({ children }) {
     setCurrentUser(null);
   };
 
+  /** Demande d’inscription publique (sans mot de passe) */
+  const submitMemberApplication = ({
+    fullName,
+    school = "",
+    level,
+    phone,
+    hifzAmount = "",
+    seasonId,
+    email = "",
+  }) => {
+    const name = String(fullName || "").trim();
+    const phoneClean = String(phone || "").trim();
+    const schoolClean = String(school || "").trim();
+    const levelClean = String(level || "").trim();
+    const hifzClean = String(hifzAmount || "").trim();
+    const emailClean = String(email || "").trim().toLowerCase();
+    if (
+      !name ||
+      !schoolClean ||
+      !levelClean ||
+      !phoneClean ||
+      !emailClean ||
+      !hifzClean
+    ) {
+      return { ok: false, error: "الرجاء ملء جميع الحقول المطلوبة" };
+    }
+    if (!emailClean.includes("@")) {
+      return { ok: false, error: "أدخل بريداً إلكترونياً صالحاً" };
+    }
+    // Inscription membre toujours ouverte — rattachement optionnel au saison actif
+    const resolvedSeasonId =
+      seasonId ||
+      seasons.find((s) => s.active)?.id ||
+      seasons[0]?.id ||
+      null;
+    const duplicate = registrations.find(
+      (r) =>
+        r.phone === phoneClean &&
+        (r.seasonId || null) === (resolvedSeasonId || null) &&
+        r.status !== REGISTRATION_STATUS.REJECTED
+    );
+    if (duplicate) {
+      return { ok: false, error: "لديك طلب تسجيل مسبقاً" };
+    }
+
+    const { firstName, lastName } = splitFullName(name);
+    const registration = {
+      id: uid("r"),
+      userId: null,
+      seasonId: resolvedSeasonId,
+      fullName: name,
+      firstName,
+      lastName,
+      school: schoolClean,
+      level: levelClean,
+      phone: phoneClean,
+      hifzAmount: hifzClean,
+      email: emailClean,
+      freeTimes: [],
+      status: REGISTRATION_STATUS.PENDING,
+      inviteToken: null,
+      createdAt: todayStr(),
+    };
+    setRegistrations((prev) => [...prev, registration]);
+    pushNotification({
+      title: "طلب تسجيل جديد",
+      body: `طلب من ${name} — راجعه من طلبات التسجيل`,
+      audience: "admin",
+    });
+    return { ok: true, registration };
+  };
+
+  /** Compat: ancien enregistrement compte immédiat (évite casser les appels) */
   const registerAccount = ({
     firstName,
     lastName,
@@ -154,6 +259,7 @@ export function AppProvider({ children }) {
       birthDate,
       gender,
       role: ROLES.MEMBER,
+      accountStatus: ACCOUNT_STATUS.ACTIVE,
     };
     setUsers((prev) => [...prev, user]);
     return { ok: true, user };
@@ -293,23 +399,226 @@ export function AppProvider({ children }) {
 
   const reviewRegistration = (registrationId, status) => {
     const reg = registrations.find((r) => r.id === registrationId);
+    if (!reg) return { ok: false, error: "الطلب غير موجود" };
+
+    if (status === REGISTRATION_STATUS.REJECTED) {
+      setRegistrations((prev) =>
+        prev.map((r) =>
+          r.id === registrationId
+            ? { ...r, status: REGISTRATION_STATUS.REJECTED }
+            : r
+        )
+      );
+      pushNotification({
+        title: "تم رفض طلب تسجيل",
+        body: `رُفض طلب: ${reg.fullName || reg.phone}`,
+        audience: "admin",
+      });
+      return { ok: true };
+    }
+
+    if (status === REGISTRATION_STATUS.ACCEPTED) {
+      const token = inviteToken();
+      setRegistrations((prev) =>
+        prev.map((r) =>
+          r.id === registrationId
+            ? {
+                ...r,
+                status: REGISTRATION_STATUS.INVITED,
+                inviteToken: token,
+                acceptedAt: todayStr(),
+              }
+            : r
+        )
+      );
+      pushNotification({
+        title: "دعوة انضمام",
+        body: `تم قبول طلب ${reg.fullName}. رمز الدعوة: ${token}`,
+        audience: "admin",
+      });
+      return { ok: true, inviteToken: token, registration: reg };
+    }
+
     setRegistrations((prev) =>
       prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
     );
-    if (reg) {
-      pushNotification({
-        title:
-          status === REGISTRATION_STATUS.ACCEPTED
-            ? "تم قبول طلبك"
-            : "تم رفض طلبك",
-        body:
-          status === REGISTRATION_STATUS.ACCEPTED
-            ? "تم قبول طلب التسجيل. ستُوزّع على مجموعة قريباً."
-            : "لم يتم قبول طلب التسجيل هذه المرة.",
-        audience: "user",
-        userId: reg.userId,
-      });
+    return { ok: true };
+  };
+
+  /** Activation via token d’invitation (membre ou superviseur) */
+  const activateInvite = ({ token, password, confirmPassword }) => {
+    const code = String(token || "").trim().toUpperCase();
+    if (!code) return { ok: false, error: "أدخل رمز الدعوة" };
+    if (!password || password.length < 4) {
+      return { ok: false, error: "كلمة المرور قصيرة جداً" };
     }
+    if (password !== confirmPassword) {
+      return { ok: false, error: "كلمة المرور غير متطابقة" };
+    }
+
+    const pendingUser = users.find(
+      (u) =>
+        u.inviteToken?.toUpperCase() === code &&
+        u.accountStatus === ACCOUNT_STATUS.INVITED
+    );
+    if (pendingUser) {
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === pendingUser.id
+            ? {
+                ...u,
+                password,
+                accountStatus: ACCOUNT_STATUS.ACTIVE,
+                inviteToken: null,
+              }
+            : u
+        )
+      );
+      pushNotification({
+        title: "تم تفعيل الحساب",
+        body: `مرحباً ${pendingUser.firstName}، حسابك جاهز لتسجيل الدخول`,
+        audience: "user",
+        userId: pendingUser.id,
+      });
+      return {
+        ok: true,
+        user: { ...pendingUser, password, accountStatus: ACCOUNT_STATUS.ACTIVE },
+        role: pendingUser.role,
+      };
+    }
+
+    const reg = registrations.find(
+      (r) =>
+        r.inviteToken?.toUpperCase() === code &&
+        r.status === REGISTRATION_STATUS.INVITED
+    );
+    if (!reg) {
+      return { ok: false, error: "رمز الدعوة غير صالح أو منتهي" };
+    }
+
+    const mail =
+      reg.email ||
+      `member_${reg.phone.replace(/\D/g, "") || Date.now()}@mosque.ma`;
+    if (users.some((u) => u.email.toLowerCase() === mail.toLowerCase())) {
+      return { ok: false, error: "البريد المرتبط مستخدم مسبقاً" };
+    }
+
+    const user = {
+      id: uid("u"),
+      email: mail.toLowerCase(),
+      password,
+      firstName: reg.firstName || splitFullName(reg.fullName).firstName,
+      lastName: reg.lastName || splitFullName(reg.fullName).lastName,
+      birthDate: "2000/01/01",
+      school: reg.school || "",
+      level: reg.level,
+      phone: reg.phone,
+      hifzAmount: reg.hifzAmount || "",
+      gender: "غير محدد",
+      role: ROLES.MEMBER,
+      accountStatus: ACCOUNT_STATUS.ACTIVE,
+      seasonId: reg.seasonId,
+    };
+    setUsers((prev) => [...prev, user]);
+    setRegistrations((prev) =>
+      prev.map((r) =>
+        r.id === reg.id
+          ? {
+              ...r,
+              status: REGISTRATION_STATUS.ACTIVATED,
+              userId: user.id,
+              inviteToken: null,
+            }
+          : r
+      )
+    );
+    pushNotification({
+      title: "تم إنشاء الحساب",
+      body: `مرحباً ${user.firstName}، يمكنك تسجيل الدخول الآن`,
+      audience: "user",
+      userId: user.id,
+    });
+    return { ok: true, user, role: ROLES.MEMBER };
+  };
+
+  /** إنشاء حساب المشرف بالبريد (بعد تعيينه من الإدارة) */
+  const activateSupervisorAccount = ({
+    fullName,
+    email,
+    password,
+    confirmPassword,
+  }) => {
+    const name = String(fullName || "").trim();
+    const mail = String(email || "").trim().toLowerCase();
+    if (!name) return { ok: false, error: "أدخل الاسم الكامل" };
+    if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
+    if (!password || password.length < 4) {
+      return { ok: false, error: "كلمة المرور قصيرة جداً" };
+    }
+    if (password !== confirmPassword) {
+      return { ok: false, error: "كلمة المرور غير متطابقة" };
+    }
+
+    const pendingUser = users.find(
+      (u) =>
+        u.email.toLowerCase() === mail &&
+        u.role === ROLES.SUPERVISOR &&
+        u.accountStatus === ACCOUNT_STATUS.INVITED
+    );
+    if (!pendingUser) {
+      return {
+        ok: false,
+        error: "لا توجد دعوة مشرف لهذا البريد أو الحساب مفعّل مسبقاً",
+      };
+    }
+
+    const expectedName = normalizeName(
+      `${pendingUser.firstName} ${pendingUser.lastName}`
+    );
+    if (normalizeName(name) !== expectedName) {
+      return {
+        ok: false,
+        error: "الاسم الكامل لا يطابق البيانات المسجلة لدى الإدارة",
+      };
+    }
+
+    const { firstName, lastName } = splitFullName(name);
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === pendingUser.id
+          ? {
+              ...u,
+              firstName,
+              lastName,
+              password,
+              accountStatus: ACCOUNT_STATUS.ACTIVE,
+              inviteToken: null,
+            }
+          : u
+      )
+    );
+    pushNotification({
+      title: "تم إنشاء الحساب",
+      body: `مرحباً ${pendingUser.firstName}، حسابك جاهز لتسجيل الدخول`,
+      audience: "user",
+      userId: pendingUser.id,
+    });
+    return {
+      ok: true,
+      user: {
+        ...pendingUser,
+        password,
+        accountStatus: ACCOUNT_STATUS.ACTIVE,
+      },
+      role: ROLES.SUPERVISOR,
+    };
+  };
+
+  const findRegistrationByPhone = (phone) => {
+    const phoneClean = String(phone || "").trim();
+    return registrations
+      .filter((r) => r.phone === phoneClean)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
   };
 
   const createGroup = ({
@@ -436,7 +745,6 @@ export function AppProvider({ children }) {
     firstName,
     lastName,
     email,
-    password = "123456",
     birthDate = "2000/01/01",
     gender = "ذكر",
     groupName,
@@ -449,6 +757,13 @@ export function AppProvider({ children }) {
     }
 
     const typedName = (groupName || newGroup?.name || "").trim();
+    const seasonId =
+      seasonIdArg ||
+      newGroup?.seasonId ||
+      seasons.find((s) => s.active)?.id ||
+      seasons[0]?.id ||
+      null;
+
     if (!groupId && !typedName) {
       return {
         ok: false,
@@ -477,20 +792,11 @@ export function AppProvider({ children }) {
       if (match) {
         assignedGroup = match;
       } else {
-        const seasonId =
-          seasonIdArg ||
-          newGroup?.seasonId ||
-          seasons.find((s) => s.active)?.id ||
-          seasons[0]?.id;
-        if (!seasonId) {
-          return {
-            ok: false,
-            error: "لا يوجد موسم لإنشاء المجموعة — أنشئ موسماً أولاً",
-          };
-        }
+        const sid =
+          seasonId || seasons.find((s) => s.active)?.id || seasons[0]?.id || null;
         pendingNewGroup = {
           id: uid("g"),
-          seasonId,
+          seasonId: sid,
           name: typedName,
           freeTimeSlot: newGroup?.freeTimeSlot || "",
           supervisorId: null,
@@ -502,15 +808,22 @@ export function AppProvider({ children }) {
       }
     }
 
+    const token = inviteToken();
+    const resolvedSeasonId =
+      assignedGroup?.seasonId || pendingNewGroup?.seasonId || seasonId;
+
     const user = {
       id: uid("u"),
       email: email.trim().toLowerCase(),
-      password,
+      password: null,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       birthDate,
       gender,
       role: ROLES.SUPERVISOR,
+      accountStatus: ACCOUNT_STATUS.INVITED,
+      inviteToken: token,
+      seasonId: resolvedSeasonId,
     };
     setUsers((prev) => [...prev, user]);
 
@@ -523,13 +836,19 @@ export function AppProvider({ children }) {
     }
 
     pushNotification({
-      title: "حساب مشرف جديد",
-      body: `تم إنشاء حسابك: ${user.email}`,
-      audience: "user",
-      userId: user.id,
+      title: "تمت إضافة مشرف",
+      body: `تم تعيين ${user.firstName} ${user.lastName} على ${assignedGroup?.name || typedName}`,
+      audience: "admin",
     });
 
-    return { ok: true, user, group: assignedGroup, created };
+    return {
+      ok: true,
+      user,
+      group: assignedGroup,
+      groupName: assignedGroup?.name || typedName,
+      created,
+      inviteToken: token,
+    };
   };
 
   const addMember = ({
@@ -558,6 +877,7 @@ export function AppProvider({ children }) {
       birthDate: birthDate || "2000/01/01",
       gender: gender || "غير محدد",
       role: ROLES.MEMBER,
+      accountStatus: ACCOUNT_STATUS.ACTIVE,
     };
     setUsers((prev) => [...prev, user]);
     if (groupId) {
@@ -703,7 +1023,11 @@ export function AppProvider({ children }) {
     const pendingRegs = registrations.filter(
       (r) => r.status === REGISTRATION_STATUS.PENDING
     ).length;
-    const members = users.filter((u) => u.role === ROLES.MEMBER).length;
+    const members = users.filter(
+      (u) =>
+        u.role === ROLES.MEMBER &&
+        u.accountStatus !== ACCOUNT_STATUS.INVITED
+    ).length;
     const supervisors = users.filter(
       (u) => u.role === ROLES.SUPERVISOR
     ).length;
@@ -751,6 +1075,10 @@ export function AppProvider({ children }) {
     logout,
     resetToSeedData,
     registerAccount,
+    submitMemberApplication,
+    activateInvite,
+    activateSupervisorAccount,
+    findRegistrationByPhone,
     resetPassword,
     createSeason,
     updateSeason,

@@ -24,7 +24,9 @@ import {
 } from "./app/constants/rtl";
 
 import LoginScreen from "./app/screens/LoginScreen";
+import SupervisorLoginScreen from "./app/screens/supervisor/SupervisorLoginScreen";
 import RegisterScreen from "./app/screens/RegisterScreen";
+import ActivateAccountScreen from "./app/screens/ActivateAccountScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
 
 import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
@@ -68,37 +70,46 @@ export default function App() {
 
   return (
     <AppProvider>
-      <SafeAreaProvider>
-        <NavigationContainer direction="rtl">
-          <Stack.Navigator
-            initialRouteName="Login"
-            screenOptions={{
-              headerStyle: { backgroundColor: colors.primary },
-              headerTintColor: "#fff",
-              headerTitleStyle: {
-                fontWeight: "bold",
-                fontFamily: fonts.bold,
-              },
-              headerTitleAlign: "center",
-              headerBackTitleVisible: false,
-              contentStyle: { backgroundColor: colors.bg },
-            }}
-          >
-            <Stack.Screen
-              name="Login"
-              component={LoginScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Register"
-              component={RegisterScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="ForgotPassword"
-              component={ForgotPasswordScreen}
-              options={{ headerShown: false }}
-            />
+      <NavigationContainer direction="rtl">
+        <Stack.Navigator
+          initialRouteName="Login"
+          screenOptions={{
+            headerStyle: { backgroundColor: colors.primary },
+            headerTintColor: "#fff",
+            headerTitleStyle: {
+              fontWeight: "bold",
+              fontFamily: fonts.bold,
+            },
+            headerTitleAlign: "center",
+            headerBackTitleVisible: false,
+            contentStyle: { backgroundColor: colors.bg },
+          }}
+        >
+          <Stack.Screen
+            name="Login"
+            component={LoginScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="SupervisorLogin"
+            component={SupervisorLoginScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="Register"
+            component={RegisterScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ActivateAccount"
+            component={ActivateAccountScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ForgotPassword"
+            component={ForgotPasswordScreen}
+            options={{ headerShown: false }}
+          />
 
             <Stack.Screen
               name="AdminDashboard"
