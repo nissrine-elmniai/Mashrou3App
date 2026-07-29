@@ -19,7 +19,7 @@ import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function LoginScreen({ navigation }) {
-  const { login, DEMO_PASSWORD, currentUser } = useApp();
+  const { login, DEMO_PASSWORD, currentUser, resetToSeedData } = useApp();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
@@ -51,6 +51,13 @@ export default function LoginScreen({ navigation }) {
   const quickLogin = (email) => {
     setUsername(email);
     setPassword(DEMO_PASSWORD);
+  };
+
+  const handleResetSeed = async () => {
+    await resetToSeedData();
+    setUsername("");
+    setPassword("");
+    Alert.alert("تم", "تمت إعادة تعيين بيانات التجربة إلى الحالة الافتراضية");
   };
 
   return (
@@ -146,6 +153,17 @@ export default function LoginScreen({ navigation }) {
                 <Text style={styles.signupText}>ليس لديك حساب؟ </Text>
               </View>
             </View>
+
+            {__DEV__ ? (
+              <TouchableOpacity
+                onPress={handleResetSeed}
+                style={styles.devResetWrapper}
+              >
+                <Text style={styles.devResetText}>
+                  إعادة تعيين بيانات التجربة
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -289,5 +307,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginVertical: 16,
     alignSelf: "center",
+  },
+  devResetWrapper: { marginTop: 20, alignItems: "center" },
+  devResetText: {
+    fontSize: 12,
+    color: colors.placeholder,
+    writingDirection: "rtl",
   },
 });

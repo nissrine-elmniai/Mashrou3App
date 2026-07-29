@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import { ActivityIndicator, View, StyleSheet } from "react-native";
 import { DEMO_PASSWORD, emptyState, bootstrapUsers } from "../data/seed";
-import { loadAppState, saveAppState } from "../data/storage";
+import { loadAppState, saveAppState, clearAppState } from "../data/storage";
 import {
   DASHBOARD_BY_ROLE,
   REGISTRATION_STATUS,
@@ -117,6 +117,20 @@ export function AppProvider({ children }) {
   };
 
   const logout = () => setCurrentUser(null);
+
+  /** Dev only: efface AsyncStorage et remet l'état sur les données de seed.js */
+  const resetToSeedData = async () => {
+    await clearAppState();
+    setUsers(emptyState.users);
+    setSeasons(emptyState.seasons);
+    setRegistrations(emptyState.registrations);
+    setGroups(emptyState.groups);
+    setProgress(emptyState.progress);
+    setAttendance(emptyState.attendance);
+    setExams(emptyState.exams);
+    setNotifications(emptyState.notifications);
+    setCurrentUser(null);
+  };
 
   const registerAccount = ({
     firstName,
@@ -735,6 +749,7 @@ export function AppProvider({ children }) {
     DEMO_PASSWORD,
     login,
     logout,
+    resetToSeedData,
     registerAccount,
     resetPassword,
     createSeason,

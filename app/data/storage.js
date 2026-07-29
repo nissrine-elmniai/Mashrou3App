@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /** Bump version when seed/schema changes so old demo caches are dropped */
-const STORAGE_KEY = "@mashrou3/app_state_v2";
+const STORAGE_KEY = "@mashrou3/app_state_v3";
 
 export async function loadAppState() {
   try {
