@@ -1,4 +1,4 @@
-import { ROLES, SEASON_TYPES } from "../constants/roles";
+import { ACCOUNT_STATUS, ROLES, SEASON_TYPES } from "../constants/roles";
 
 /** Mot de passe du compte admin initial uniquement */
 export const DEMO_PASSWORD = "123456";
@@ -14,6 +14,7 @@ export const bootstrapUsers = [
     birthDate: "1985/05/12",
     gender: "ذكر",
     role: ROLES.ADMIN,
+    accountStatus: ACCOUNT_STATUS.ACTIVE,
   },
 ];
 

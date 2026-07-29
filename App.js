@@ -23,7 +23,9 @@ import {
 } from "./app/constants/rtl";
 
 import LoginScreen from "./app/screens/LoginScreen";
+import SupervisorLoginScreen from "./app/screens/supervisor/SupervisorLoginScreen";
 import RegisterScreen from "./app/screens/RegisterScreen";
+import ActivateAccountScreen from "./app/screens/ActivateAccountScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
 
 import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
@@ -93,8 +95,18 @@ export default function App() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
+            name="SupervisorLogin"
+            component={SupervisorLoginScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
             name="Register"
             component={RegisterScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ActivateAccount"
+            component={ActivateAccountScreen}
             options={{ headerShown: false }}
           />
           <Stack.Screen

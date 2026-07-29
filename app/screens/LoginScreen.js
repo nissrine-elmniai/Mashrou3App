@@ -123,10 +123,6 @@ export default function LoginScreen({ navigation }) {
                 admin@mosque.ma — {ROLE_LABELS.admin} ({DEMO_PASSWORD})
               </Text>
             </TouchableOpacity>
-            <Text style={styles.hintStart}>
-              أضف المشرفين والأعضاء والمواسم من لوحة الإدارة. المنخرطون
-              الجدد ينشئون حساباً ثم يملؤون استمارة التسجيل.
-            </Text>
 
             <View style={styles.linksContainer}>
               <TouchableOpacity
@@ -141,10 +137,15 @@ export default function LoginScreen({ navigation }) {
                 <TouchableOpacity
                   onPress={() => navigation.navigate("Register")}
                 >
-                  <Text style={styles.signupLink}>إنشاء حساب جديد</Text>
+                  <Text style={styles.signupLink}>عضو جديد</Text>
                 </TouchableOpacity>
-                <Text style={styles.signupText}>ليس لديك حساب؟ </Text>
               </View>
+              <TouchableOpacity
+                onPress={() => navigation.navigate("SupervisorLogin")}
+                style={{ marginTop: 14 }}
+              >
+                <Text style={styles.signupLink}>تسجيل دخول المشرف</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
@@ -249,14 +250,6 @@ const styles = StyleSheet.create({
     borderColor: colors.borderGreen,
   },
   demoText: { textAlign: "center", color: colors.primaryDark, fontSize: 13 },
-  hintStart: {
-    ...rtlText,
-    color: colors.muted,
-    fontSize: 13,
-    marginTop: 8,
-    marginBottom: 4,
-    lineHeight: 20,
-  },
   signupContainer: {
     flexDirection: row,
     justifyContent: "center",

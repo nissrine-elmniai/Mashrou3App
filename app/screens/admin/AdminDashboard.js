@@ -20,6 +20,8 @@ import {
   FormInput,
   EmptyState,
 } from "../../components/ui";
+import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
+import { APP_EMAIL } from "../../constants/email";
 const TABS = [
   { key: "home", label: "الرئيسية" },
   { key: "supervisors", label: "المشرفين" },
@@ -169,7 +171,11 @@ export default function AdminDashboard({ navigation }) {
             <QuickButton
               color={colors.primaryDark}
               icon="document-text-outline"
-              label="طلبات التسجيل"
+              label={
+                stats.pendingRegs > 0
+                  ? `طلبات التسجيل (${stats.pendingRegs})`
+                  : "طلبات التسجيل"
+              }
               onPress={() =>
                 navigation.navigate("AdminRegistrations", {
                   seasonType: SEASON_TYPES.REGULAR,
@@ -247,36 +253,51 @@ function SupervisorsTab({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("123456");
   const [groupName, setGroupName] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!groupName.trim()) {
       Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
       return;
     }
 
+    setSending(true);
     const result = addSupervisor({
       firstName,
       lastName,
       email,
-      password,
       groupName: groupName.trim(),
     });
     if (!result.ok) {
+      setSending(false);
       Alert.alert("خطأ", result.error);
       return;
     }
-    Alert.alert(
-      "تم",
-      result.created
-        ? `تم إنشاء المجموعة «${result.group?.name}» وربطها بالمشرف`
-        : `تمت إضافة المشرف وتعيينه على المجموعة: ${result.group?.name || "—"}`
-    );
+
+    const fullName = `${firstName.trim()} ${lastName.trim()}`;
+    const mail = await sendSupervisorInviteEmail({
+      toEmail: email.trim(),
+      fullName,
+      groupName: result.groupName,
+    });
+    setSending(false);
+
+    if (mail.ok) {
+      Alert.alert(
+        "تمت الإضافة",
+        `تمت إضافة ${fullName} وإرسال الرسالة إلى:\n${email.trim()}`
+      );
+    } else {
+      Alert.alert(
+        "تمت الإضافة — فشل إرسال البريد",
+        `${mail.error || ""}\n\nأبلغ المشرف أنه يمكنه إنشاء حسابه من التطبيق.`
+      );
+    }
+
     setFirstName("");
     setLastName("");
     setEmail("");
-    setPassword("123456");
     setGroupName("");
   };
 
@@ -284,7 +305,7 @@ function SupervisorsTab({
     <View>
       <SectionCard
         title="إضافة مشرف"
-        subtitle="اكتب اسم المجموعة — تُربط إن وُجدت أو تُنشأ تلقائياً"
+        subtitle="الاسم، البريد الإلكتروني، والمجموعة المكلف بها"
       >
         <FormInput
           placeholder="الاسم"
@@ -303,12 +324,6 @@ function SupervisorsTab({
           autoCapitalize="none"
           keyboardType="email-address"
         />
-        <FormInput
-          placeholder="كلمة المرور"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
 
         <Text style={styles.fieldLabel}>اسم المجموعة</Text>
         <FormInput
@@ -317,14 +332,15 @@ function SupervisorsTab({
           onChangeText={setGroupName}
         />
         <Text style={styles.hintInline}>
-          إذا كان الاسم موجوداً يُربط بالمشرف، وإلا تُنشأ مجموعة جديدة تلقائياً
+          تُحاكى رسالة من بريد التطبيق ({APP_EMAIL.fromEmail}) — بدون إرسال
+          حقيقي حالياً. لاحقاً تُربط بالخادم.
         </Text>
 
         <QuickButton
           color={colors.primary}
-          icon="person-add-outline"
-          label="إضافة المشرف وربطه بالمجموعة"
-          onPress={handleAdd}
+          icon="mail-outline"
+          label={sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
+          onPress={sending ? undefined : handleAdd}
         />
       </SectionCard>
 
@@ -334,6 +350,7 @@ function SupervisorsTab({
       ) : (
         supervisors.map((s) => {
           const supervised = getSupervisorGroups(s.id);
+          const pending = s.accountStatus === "invited";
           return (
             <PersonCard
               key={s.id}
@@ -344,8 +361,9 @@ function SupervisorsTab({
                 `المجموعات: ${
                   supervised.map((g) => g.name).join("، ") || "—"
                 }`,
+                pending ? "بانتظار إنشاء الحساب" : "مفعّل",
               ]}
-              pill={ROLE_LABELS.supervisor}
+              pill={pending ? "بانتظار التفعيل" : ROLE_LABELS.supervisor}
             />
           );
         })
@@ -411,6 +429,21 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     lineHeight: 20,
   },
+  seasonChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: colors.bg,
+  },
+  seasonChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.soft,
+  },
+  seasonChipText: { ...rtlText, color: colors.muted },
+  seasonChipTextActive: { color: colors.primaryDark, fontWeight: "700" },
   alertInput: {
     borderWidth: 1,
     borderColor: colors.border,
