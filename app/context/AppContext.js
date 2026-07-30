@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import { ActivityIndicator, View, StyleSheet } from "react-native";
 import { DEMO_PASSWORD, emptyState, bootstrapUsers } from "../data/seed";
-import { loadAppState, saveAppState } from "../data/storage";
+import { loadAppState, saveAppState, clearAppState } from "../data/storage";
 import {
   ACCOUNT_STATUS,
   DASHBOARD_BY_ROLE,
@@ -75,6 +75,10 @@ export function AppProvider({ children }) {
   const [exams, setExams] = useState(emptyState.exams);
   const [notifications, setNotifications] = useState(emptyState.notifications);
   const [currentUser, setCurrentUser] = useState(null);
+  /** Session Supabase Auth, alimentée en best-effort par login() quand le compte est
+   *  aussi seedé côté Supabase. null tant qu'aucun lien n'a réussi — ne conditionne
+   *  jamais le login mock existant. */
+  const [supabaseSession, setSupabaseSession] = useState(null);
   const skipNextSave = useRef(true);
 
   useEffect(() => {
@@ -268,6 +272,22 @@ export function AppProvider({ children }) {
 
   const logout = async () => {
     await signOutAuth();
+    setSupabaseSession(null);
+    setCurrentUser(null);
+  };
+
+  /** Dev only: efface AsyncStorage et remet l'état sur les données de seed.js */
+  const resetToSeedData = async () => {
+    await clearAppState();
+    setUsers(emptyState.users);
+    setSeasons(emptyState.seasons);
+    setRegistrations(emptyState.registrations);
+    setGroups(emptyState.groups);
+    setProgress(emptyState.progress);
+    setAttendance(emptyState.attendance);
+    setExams(emptyState.exams);
+    setNotifications(emptyState.notifications);
+    setSupabaseSession(null);
     setCurrentUser(null);
   };
 
@@ -1430,6 +1450,7 @@ export function AppProvider({ children }) {
   const value = {
     hydrated,
     currentUser,
+    supabaseSession,
     users,
     seasons,
     registrations,
@@ -1443,6 +1464,7 @@ export function AppProvider({ children }) {
     isSupabaseConfigured: isSupabaseConfigured(),
     login,
     logout,
+    resetToSeedData,
     registerAccount,
     submitMemberApplication,
     activateInvite,

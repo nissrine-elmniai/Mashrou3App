@@ -47,7 +47,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "e516fd4c-2f64-4062-a2f6-0af20da9fc64"
+        "projectId": "169c3088-003d-4709-9727-dfc55f44d6ef"
       }
     },
     "updates": {
@@ -56,6 +56,7 @@
     "plugins": [
       "@react-native-community/datetimepicker",
       "expo-font"
-    ]
+    ],
+    "owner": "oumeyma_elaammari"
   }
 }

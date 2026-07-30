@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   View,
   ActivityIndicator,
@@ -6,8 +6,10 @@ import {
   Alert,
   Linking,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import {
   useFonts,
   Cairo_400Regular,
@@ -38,12 +40,7 @@ import MemberProfileScreen from "./app/screens/member/MemberProfileScreen";
 import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen";
 
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
-import PresenceScreen from "./app/screens/supervisor/PresenceScreen";
-import StatisticsScreen from "./app/screens/supervisor/StatisticsScreen";
-import AddMember from "./app/screens/supervisor/AddMember";
-import SupervisorProfileScreen from "./app/screens/supervisor/SupervisorProfileScreen";
-import SupervisorTrackingScreen from "./app/screens/supervisor/SupervisorTrackingScreen";
-import SupervisorExamsScreen from "./app/screens/supervisor/SupervisorExamsScreen";
+import ChatConversationScreen from "./app/screens/supervisor/ChatConversationScreen";
 
 import AdminDashboard from "./app/screens/admin/AdminDashboard";
 import AdminSeasonsScreen from "./app/screens/admin/AdminSeasonsScreen";
@@ -52,6 +49,7 @@ import AdminRegistrationsScreen from "./app/screens/admin/AdminRegistrationsScre
 import AdminGroupsScreen from "./app/screens/admin/AdminGroupsScreen";
 import AdminSupervisorsScreen from "./app/screens/admin/AdminSupervisorsScreen";
 import AdminStatsScreen from "./app/screens/admin/AdminStatsScreen";
+import AdminTestsScreen from "./app/screens/admin/AdminTestsScreen";
 
 const Stack = createStackNavigator();
 
@@ -191,6 +189,11 @@ function RootNavigator() {
           component={AdminStatsScreen}
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="AdminTests"
+          component={AdminTestsScreen}
+          options={{ headerShown: false }}
+        />
 
         <Stack.Screen
           name="MemberDashboardScreen"
@@ -214,33 +217,8 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
-          name="SupervisorProfileScreen"
-          component={SupervisorProfileScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="SupervisorTracking"
-          component={SupervisorTrackingScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="SupervisorExams"
-          component={SupervisorExamsScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="Presence"
-          component={PresenceScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="Statistics"
-          component={StatisticsScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="AddMember"
-          component={AddMember}
+          name="ChatConversation"
+          component={ChatConversationScreen}
           options={{ headerShown: false }}
         />
       </Stack.Navigator>
@@ -255,6 +233,7 @@ export default function App() {
     Cairo_600SemiBold,
     Cairo_700Bold,
   });
+
   useEffect(() => {
     if (fontsLoaded) {
       setCairoLoaded(true);
@@ -271,9 +250,13 @@ export default function App() {
   }
 
   return (
-    <AppProvider>
-      <RootNavigator />
-    </AppProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AppProvider>
+          <RootNavigator />
+        </AppProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

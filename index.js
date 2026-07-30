@@ -1,3 +1,4 @@
+import 'react-native-gesture-handler';
 import { I18nManager, Alert } from 'react-native';
 import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
