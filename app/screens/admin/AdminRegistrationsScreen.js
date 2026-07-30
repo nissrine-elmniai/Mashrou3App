@@ -1,278 +1,353 @@
-import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Alert } from "react-native";
-import { useApp } from "../../context/AppContext";
+import React, { useState } from "react";
 import {
-  AppShell,
-  SectionCard,
-  QuickButton,
-  EmptyState,
-  SoftButton,
-} from "../../components/ui";
-import {
-  REGISTRATION_STATUS,
-  REGISTRATION_STATUS_LABELS,
-  SEASON_TYPES,
-  SEASON_TYPE_LABELS,
-} from "../../constants/roles";
-import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
-import RegistrationStepper, {
-  statusToStepper,
-} from "../../components/RegistrationStepper";
-import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+} from "react-native";
+import { Clock, Check, X } from "lucide-react-native";
+import { rtlText, row } from "../../constants/rtl";
 
-export default function AdminRegistrationsScreen({ navigation, route }) {
-  const seasonType = route?.params?.seasonType || SEASON_TYPES.REGULAR;
-  const isSummer = seasonType === SEASON_TYPES.SUMMER;
+const palette = {
+  primary: "#2E7D32",
+  gold: "#FBC02D",
+  red: "#D32F2F",
+  softGreen: "#E8F5E9",
+  blue: "#1976D2",
+  background: "#F5F5F5",
+  textSecondary: "#666666",
+  textPrimary: "#333333",
+  placeholder: "#999999",
+  border: "#E0E0E0",
+};
 
-  const {
-    registrations,
-    seasons,
-    getUserById,
-    reviewRegistration,
-  } = useApp();
-  const [filter, setFilter] = useState("pending");
+const levelColors = {
+  مبتدئ: "#FBC02D",
+  متوسط: "#1976D2",
+  متقدم: "#2E7D32",
+};
 
-  const list = useMemo(() => {
-    return registrations
-      .filter((r) => {
-        const season = seasons.find((s) => s.id === r.seasonId);
-        // Demandes sans saison : visibles dans la liste saison régulière
-        if (r.seasonId && season && season.type !== seasonType) return false;
-        if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
-        if (filter === "all") return true;
-        if (filter === "pending") {
-          return r.status === REGISTRATION_STATUS.PENDING;
-        }
-        if (filter === "accepted") {
-          return (
-            r.status === REGISTRATION_STATUS.ACCEPTED ||
-            r.status === REGISTRATION_STATUS.INVITED ||
-            r.status === REGISTRATION_STATUS.ACTIVATED
-          );
-        }
-        if (filter === "rejected") {
-          return r.status === REGISTRATION_STATUS.REJECTED;
-        }
-        return r.status === filter;
-      })
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }, [registrations, filter, seasons, seasonType]);
+const members = [
+  { name: "أحمد خالد", level: "مبتدئ", session: "جلسة الفجر", progress: 25, status: "نشط" },
+  { name: "محمد علي", level: "متوسط", session: "جلسة المغرب", progress: 60, status: "نشط" },
+  { name: "عمر حسن", level: "متقدم", session: "جلسة العصر", progress: 85, status: "غير نشط" },
+];
 
-  const pendingCount = useMemo(
-    () =>
-      registrations.filter((r) => {
-        const season = seasons.find((s) => s.id === r.seasonId);
-        if (r.seasonId && season && season.type !== seasonType) return false;
-        if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
-        return r.status === REGISTRATION_STATUS.PENDING;
-      }).length,
-    [registrations, seasons, seasonType]
-  );
+const pendingRequests = [
+  { name: "سعد محمود", age: 25, level: "مبتدئ", phone: "0501234567" },
+  { name: "فهد أحمد", age: 30, level: "متوسط", phone: "0507654321" },
+];
 
-  const [sendingId, setSendingId] = useState(null);
-
-  const acceptAndInvite = async (reg) => {
-    if (!reg.email) {
-      Alert.alert(
-        "تنبيه",
-        "لا يوجد بريد إلكتروني لهذا الطلب. لا يمكن إرسال الدعوة."
-      );
-      return;
-    }
-
-    const result = reviewRegistration(reg.id, REGISTRATION_STATUS.ACCEPTED);
-    if (!result?.ok) {
-      Alert.alert("خطأ", result?.error || "تعذر قبول الطلب");
-      return;
-    }
-
-    setSendingId(reg.id);
-    const mail = await sendMemberAcceptEmail({
-      toEmail: reg.email,
-      fullName: reg.fullName,
-    });
-    setSendingId(null);
-
-    if (mail.ok) {
-      Alert.alert(
-        "تم القبول",
-        `تم قبول الطلب وإرسال الرسالة إلى:\n${reg.email}\n\nيمكن للمترشح إنشاء حسابه من التطبيق.`
-      );
-    } else {
-      Alert.alert(
-        "تم القبول — فشل إرسال البريد",
-        `${mail.error || ""}\n\nشارك رمز الدعوة يدوياً: ${result.inviteToken}`
-      );
-    }
-  };
-
-  const rejectRegistration = (reg) => {
-    Alert.alert("تأكيد الرفض", `هل تريد رفض طلب ${reg.fullName}؟`, [
-      { text: "إلغاء", style: "cancel" },
-      {
-        text: "رفض",
-        style: "destructive",
-        onPress: () => {
-          reviewRegistration(reg.id, REGISTRATION_STATUS.REJECTED);
-        },
-      },
-    ]);
-  };
-
-  const accent = isSummer ? colors.orange : colors.primary;
+export default function AdminRegistrationsScreen({ navigation }) {
+  const [activeTab, setActiveTab] = useState("all");
 
   return (
-    <AppShell
-      title={isSummer ? "طلبات التسجيل الصيفي" : "طلبات التسجيل"}
-      subtitle={
-        pendingCount > 0
-          ? `${pendingCount} طلب بانتظار قرارك — القبول يحاكي إرسال رسالة`
-          : "قبول الطلب يحاكي رسالة من بريد التطبيق (وضع الواجهات)"
-      }
-      icon="document-text"
-      onBack={() => navigation.goBack()}
-    >
-      <SectionCard title="تصفية الطلبات" subtitle="اختر حالة العرض">
-        {[
-          ["pending", `قيد الانتظار (${pendingCount})`],
-          ["accepted", "المقبولة / الدعوات"],
-          ["rejected", "المرفوضة"],
-          ["all", "الكل"],
-        ].map(([key, label]) => (
-          <SoftButton
-            key={key}
-            label={label}
-            active={filter === key}
-            onPress={() => setFilter(key)}
-          />
-        ))}
-      </SectionCard>
+    <View style={styles.container}>
+      <View style={styles.tabRow}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "all" && styles.tabActive]}
+          onPress={() => setActiveTab("all")}
+        >
+          <Text style={[styles.tabText, activeTab === "all" && styles.tabTextActive]}>
+            جميع الأعضاء
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "pending" && styles.tabActive]}
+          onPress={() => setActiveTab("pending")}
+        >
+          <Text style={[styles.tabText, activeTab === "pending" && styles.tabTextActive]}>
+            قيد الانتظار
+          </Text>
+          <View style={styles.tabBadge}>
+            <Text style={styles.tabBadgeText}>{pendingRequests.length}</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
 
-      {list.length === 0 ? (
-        <EmptyState text="لا توجد طلبات في هذا التصنيف" />
-      ) : (
-        list.map((reg) => {
-          const user = reg.userId ? getUserById(reg.userId) : null;
-          const season = seasons.find((s) => s.id === reg.seasonId);
-          const title =
-            reg.fullName ||
-            (user ? `${user.firstName} ${user.lastName}` : "مترشح");
-          const step = statusToStepper(reg.status);
-          return (
-            <SectionCard
-              key={reg.id}
-              title={title}
-              primary={accent}
-              borderColor={isSummer ? "#FDE68A" : colors.borderBlue}
-            >
-              <RegistrationStepper
-                activeStep={step.activeStep}
-                rejected={step.rejected}
-              />
-              {season ? (
-                <Text style={styles.meta}>
-                  {season.name} • {SEASON_TYPE_LABELS[season.type] || ""}
-                </Text>
-              ) : (
-                <Text style={styles.meta}>طلب انضمام عام</Text>
-              )}
-              {reg.email ? (
-                <Text style={styles.meta}>البريد: {reg.email}</Text>
-              ) : null}
-              {reg.phone ? (
-                <Text style={styles.meta}>الهاتف: {reg.phone}</Text>
-              ) : null}
-              {reg.school ? (
-                <Text style={styles.meta}>المدرسة/الكلية: {reg.school}</Text>
-              ) : null}
-              {reg.level ? (
-                <Text style={styles.meta}>مستوى الحفظ: {reg.level}</Text>
-              ) : null}
-              {reg.hifzAmount ? (
-                <Text style={styles.meta}>مقدار الحفظ: {reg.hifzAmount}</Text>
-              ) : null}
-              {reg.inviteToken ? (
-                <Text style={[styles.meta, styles.token]}>
-                  رمز الدعوة: {reg.inviteToken}
-                </Text>
-              ) : null}
-              <Text style={[styles.status, { color: accent }]}>
-                {REGISTRATION_STATUS_LABELS[reg.status]}
-              </Text>
-              {reg.status === REGISTRATION_STATUS.PENDING ? (
-                <View>
-                  <QuickButton
-                    label={
-                      sendingId === reg.id
-                        ? "جاري الإرسال..."
-                        : "قبول وإرسال الرسالة"
-                    }
-                    color={accent}
-                    icon="mail"
-                    onPress={
-                      sendingId === reg.id
-                        ? undefined
-                        : () => acceptAndInvite(reg)
-                    }
-                  />
-                  <QuickButton
-                    label="رفض"
-                    color={colors.red}
-                    icon="close"
-                    onPress={() => rejectRegistration(reg)}
-                  />
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
+        {activeTab === "all" ? (
+          <>
+            {members.map((member, index) => {
+              const lvlColor = levelColors[member.level] || palette.primary;
+              const isActive = member.status === "نشط";
+              return (
+                <View key={index} style={styles.memberCard}>
+                  <View style={styles.memberTop}>
+                    <View style={styles.memberAvatar}>
+                      <Text style={styles.memberAvatarText}>{member.name.charAt(0)}</Text>
+                    </View>
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberName}>{member.name}</Text>
+                      <View style={styles.memberMeta}>
+                        <View style={[styles.levelBadge, { backgroundColor: lvlColor + "20" }]}>
+                          <Text style={[styles.levelText, { color: lvlColor }]}>{member.level}</Text>
+                        </View>
+                        <Text style={styles.memberSession}>{member.session}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.statusBadge, isActive ? styles.statusActive : styles.statusInactive]}>
+                      <Text style={[styles.statusText, { color: isActive ? palette.primary : palette.placeholder }]}>
+                        {member.status}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.progressRow}>
+                    <View style={styles.progressTrack}>
+                      <View style={[styles.progressFill, { width: member.progress + "%" }]} />
+                    </View>
+                    <Text style={styles.progressPct}>{member.progress}%</Text>
+                  </View>
                 </View>
-              ) : null}
-              {reg.status === REGISTRATION_STATUS.INVITED && reg.email ? (
-                <QuickButton
-                  label={
-                    sendingId === reg.id
-                      ? "جاري الإرسال..."
-                      : "إعادة إرسال الرسالة"
-                  }
-                  color={colors.teal}
-                  icon="mail-outline"
-                  onPress={
-                    sendingId === reg.id
-                      ? undefined
-                      : async () => {
-                          setSendingId(reg.id);
-                          const mail = await sendMemberAcceptEmail({
-                            toEmail: reg.email,
-                            fullName: reg.fullName,
-                          });
-                          setSendingId(null);
-                          if (mail.ok) {
-                            Alert.alert(
-                              "تم الإرسال",
-                              `أُرسلت الرسالة إلى:\n${reg.email}`
-                            );
-                          } else {
-                            Alert.alert(
-                              "تنبيه",
-                              mail.error || "تعذر إرسال البريد"
-                            );
-                          }
-                        }
-                  }
-                />
-              ) : null}
-            </SectionCard>
-          );
-        })
-      )}
-    </AppShell>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {pendingRequests.map((request, index) => (
+              <View key={index} style={styles.pendingCard}>
+                <View style={styles.pendingTop}>
+                  <View style={styles.pendingIcon}>
+                    <Clock size={20} color={palette.gold} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pendingName}>{request.name}</Text>
+                    <Text style={styles.pendingMeta}>
+                      العمر: {request.age} | {request.level}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.pendingActions}>
+                  <TouchableOpacity style={styles.acceptBtn}>
+                    <Check size={16} color="#fff" />
+                    <Text style={styles.acceptText}>قبول</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.rejectBtn}>
+                    <X size={16} color="#fff" />
+                    <Text style={styles.rejectText}>رفض</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  meta: { ...rtlText, color: colors.muted, marginTop: 4 },
-  token: { color: colors.primaryDark, fontWeight: "700", marginTop: 8 },
-  status: {
+  container: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  tabRow: {
+    flexDirection: row,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: row,
+    gap: 6,
+  },
+  tabActive: {
+    borderBottomWidth: 2,
+    borderBottomColor: palette.primary,
+  },
+  tabText: {
+    fontWeight: "500",
+    color: palette.textSecondary,
+    fontSize: 14,
     ...rtlText,
-    marginTop: 8,
-    marginBottom: 8,
+  },
+  tabTextActive: {
+    color: palette.primary,
+  },
+  tabBadge: {
+    width: 20,
+    height: 20,
+    backgroundColor: palette.red,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  tabBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "bold",
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 32,
+  },
+  memberCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  memberTop: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  memberAvatar: {
+    width: 40,
+    height: 40,
+    backgroundColor: palette.softGreen,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  memberAvatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 16,
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberName: {
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 15,
+    ...rtlText,
+  },
+  memberMeta: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    marginTop: 2,
+  },
+  levelBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  levelText: {
+    fontSize: 12,
+  },
+  memberSession: {
+    color: palette.textSecondary,
+    fontSize: 12,
+    ...rtlText,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusActive: {
+    backgroundColor: palette.softGreen,
+  },
+  statusInactive: {
+    backgroundColor: palette.background,
+  },
+  statusText: {
+    fontSize: 12,
+  },
+  progressRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  progressTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: palette.border,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    backgroundColor: palette.primary,
+    borderRadius: 4,
+  },
+  progressPct: {
+    color: palette.textSecondary,
+    fontSize: 12,
+  },
+  pendingCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  pendingTop: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  pendingIcon: {
+    width: 40,
+    height: 40,
+    backgroundColor: "#FFF8E1",
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pendingName: {
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 15,
+    ...rtlText,
+  },
+  pendingMeta: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    marginTop: 2,
+    ...rtlText,
+  },
+  pendingActions: {
+    flexDirection: row,
+    gap: 8,
+  },
+  acceptBtn: {
+    flex: 1,
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 10,
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+  },
+  acceptText: {
+    color: "#fff",
     fontWeight: "600",
+    fontSize: 14,
+  },
+  rejectBtn: {
+    flex: 1,
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 10,
+    backgroundColor: palette.red,
+    borderRadius: 12,
+  },
+  rejectText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 14,
   },
 });

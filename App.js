@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -69,9 +70,11 @@ export default function App() {
   }
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <AppProvider>
-      <NavigationContainer direction="rtl">
-        <Stack.Navigator
+      <SafeAreaProvider>
+        <NavigationContainer direction="rtl">
+          <Stack.Navigator
           initialRouteName="Login"
           screenOptions={{
             headerStyle: { backgroundColor: colors.primary },
@@ -177,6 +180,7 @@ export default function App() {
         </NavigationContainer>
       </SafeAreaProvider>
     </AppProvider>
+    </GestureHandlerRootView>
   );
 }
 

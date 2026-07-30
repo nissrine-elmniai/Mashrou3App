@@ -1,164 +1,235 @@
 import React, { useState } from "react";
-import { Text, StyleSheet, Alert } from "react-native";
-import { useApp } from "../../context/AppContext";
 import {
-  AppShell,
-  SectionCard,
-  QuickButton,
-  FormInput,
-  EmptyState,
-  PersonCard,
-} from "../../components/ui";
-import { ACCOUNT_STATUS, ROLES, ROLE_LABELS } from "../../constants/roles";
-import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+} from "react-native";
+import { Search, Edit, Trash2, Plus } from "lucide-react-native";
+import { rtlText, row } from "../../constants/rtl";
 
-import { APP_EMAIL } from "../../constants/email";
-import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
+const palette = {
+  primary: "#2E7D32",
+  gold: "#FBC02D",
+  red: "#D32F2F",
+  softGreen: "#E8F5E9",
+  blue: "#1976D2",
+  background: "#F5F5F5",
+  textSecondary: "#666666",
+  textPrimary: "#333333",
+  placeholder: "#999999",
+  border: "#E0E0E0",
+};
+
+const supervisors = [
+  { name: "أحمد محمد", email: "ahmed@example.com", sessions: 2 },
+  { name: "خالد علي", email: "khaled@example.com", sessions: 1 },
+  { name: "محمود حسن", email: "mahmoud@example.com", sessions: 3 },
+];
 
 export default function AdminSupervisorsScreen({ navigation }) {
-  const { users, addSupervisor, getSupervisorGroups } = useApp();
-  const supervisors = users.filter((u) => u.role === ROLES.SUPERVISOR);
-
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [groupName, setGroupName] = useState("");
-  const [sending, setSending] = useState(false);
-
-  const handleAdd = async () => {
-    if (!groupName.trim()) {
-      Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
-      return;
-    }
-    setSending(true);
-    const result = addSupervisor({
-      firstName,
-      lastName,
-      email,
-      groupName: groupName.trim(),
-    });
-    if (!result.ok) {
-      setSending(false);
-      Alert.alert("خطأ", result.error);
-      return;
-    }
-
-    const fullName = `${firstName.trim()} ${lastName.trim()}`;
-    const mail = await sendSupervisorInviteEmail({
-      toEmail: email.trim(),
-      fullName,
-      groupName: result.groupName,
-    });
-    setSending(false);
-
-    if (mail.ok) {
-      Alert.alert(
-        "تمت الإضافة",
-        `تمت إضافة ${fullName} وإرسال الرسالة إلى:\n${email.trim()}`
-      );
-    } else {
-      Alert.alert(
-        "تمت الإضافة — فشل إرسال البريد",
-        `${mail.error || ""}\n\nتمت إضافة المشرف. أبلغه أنه يمكنه إنشاء حسابه من التطبيق.`
-      );
-    }
-
-    setFirstName("");
-    setLastName("");
-    setEmail("");
-    setGroupName("");
-  };
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
 
   return (
-    <AppShell
-      title="إدارة المشرفين"
-      subtitle="إضافة مشرف بالاسم والبريد والمجموعة — ثم إرسال رسالة تلقائية"
-      icon="shield-checkmark"
-      onBack={() => navigation.goBack()}
-    >
-      <SectionCard
-        title="إضافة مشرف"
-        subtitle="الاسم، البريد الإلكتروني، والمجموعة المكلف بها"
-      >
-        <FormInput
-          placeholder="الاسم"
-          value={firstName}
-          onChangeText={setFirstName}
-        />
-        <FormInput
-          placeholder="اللقب"
-          value={lastName}
-          onChangeText={setLastName}
-        />
-        <FormInput
-          placeholder="البريد الإلكتروني"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.searchContainer}>
+          <Search size={20} color={palette.placeholder} style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="بحث..."
+            placeholderTextColor={palette.placeholder}
+            value={search}
+            onChangeText={setSearch}
+            textAlign="right"
+          />
+        </View>
 
-        <Text style={styles.label}>اسم المجموعة</Text>
-        <FormInput
-          placeholder="مثال: مجموعة الفجر"
-          value={groupName}
-          onChangeText={setGroupName}
-        />
-        <Text style={styles.hint}>
-          تُحاكى رسالة من بريد التطبيق ({APP_EMAIL.fromEmail}) — بدون إرسال
-          حقيقي حالياً. لاحقاً تُربط بالخادم.
-        </Text>
+        <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={[styles.filterChip, filter === "all" && styles.filterChipActive]}
+            onPress={() => setFilter("all")}
+          >
+            <Text style={[styles.filterChipText, filter === "all" && styles.filterChipTextActive]}>
+              الكل
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterChip, filter === "weekdays" && styles.filterChipActive]}
+            onPress={() => setFilter("weekdays")}
+          >
+            <Text style={[styles.filterChipText, filter === "weekdays" && styles.filterChipTextActive]}>
+              أيام الأسبوع
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-        <QuickButton
-          color={colors.primary}
-          icon="mail-outline"
-          label={sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
-          onPress={sending ? undefined : handleAdd}
-        />
-      </SectionCard>
+        {supervisors.map((supervisor, index) => (
+          <View key={index} style={styles.card}>
+            <View style={styles.cardAvatar}>
+              <Text style={styles.cardAvatarText}>
+                {supervisor.name.charAt(0)}
+              </Text>
+            </View>
+            <View style={styles.cardInfo}>
+              <Text style={styles.cardName}>{supervisor.name}</Text>
+              <Text style={styles.cardEmail}>{supervisor.email}</Text>
+              <View style={styles.sessionBadge}>
+                <Text style={styles.sessionBadgeText}>
+                  {supervisor.sessions} جلسة
+                </Text>
+              </View>
+            </View>
+            <View style={styles.cardActions}>
+              <TouchableOpacity style={styles.actionBtn}>
+                <Edit size={20} color={palette.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#FFEBEE" }]}>
+                <Trash2 size={20} color={palette.red} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </ScrollView>
 
-      <Text style={styles.section}>المشرفون الحاليون</Text>
-      {supervisors.length === 0 ? (
-        <EmptyState text="لا يوجد مشرفون بعد" />
-      ) : (
-        supervisors.map((s) => {
-          const myGroups = getSupervisorGroups(s.id);
-          const pending = s.accountStatus === ACCOUNT_STATUS.INVITED;
-          return (
-            <PersonCard
-              key={s.id}
-              initials={`${s.firstName?.[0] || ""}${s.lastName?.[0] || ""}`}
-              name={`${s.firstName} ${s.lastName}`}
-              meta={[
-                s.email,
-                `المجموعات: ${myGroups.map((g) => g.name).join("، ") || "—"}`,
-                pending ? "بانتظار إنشاء الحساب" : "مفعّل",
-              ]}
-              pill={pending ? "بانتظار التفعيل" : ROLE_LABELS.supervisor}
-            />
-          );
-        })
-      )}
-    </AppShell>
+      <TouchableOpacity style={styles.fab}>
+        <Plus size={24} color={palette.textPrimary} />
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  label: { ...rtlText, color: colors.muted, marginTop: 8, marginBottom: 6 },
-  hint: {
-    ...rtlText,
-    color: colors.orange,
-    marginBottom: 10,
-    lineHeight: 20,
-    fontSize: 13,
+  container: {
+    flex: 1,
+    backgroundColor: palette.background,
   },
-  picker: { width: "100%", marginBottom: 8 },
-  section: {
-    fontSize: 17,
-    fontWeight: "bold",
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 80,
+  },
+  searchContainer: {
+    position: "relative",
+    marginBottom: 12,
+  },
+  searchIcon: {
+    position: "absolute",
+    right: 12,
+    top: 12,
+    zIndex: 1,
+  },
+  searchInput: {
+    width: "100%",
+    paddingRight: 40,
+    paddingLeft: 16,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    fontSize: 15,
+    color: palette.textPrimary,
     ...rtlText,
-    marginVertical: 10,
-    color: colors.text,
+  },
+  filterRow: {
+    flexDirection: row,
+    gap: 8,
+    marginBottom: 16,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: palette.background,
+    borderRadius: 20,
+  },
+  filterChipActive: {
+    backgroundColor: palette.primary,
+  },
+  filterChipText: {
+    fontSize: 14,
+    color: palette.textSecondary,
+  },
+  filterChipTextActive: {
+    color: "#fff",
+  },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  cardAvatar: {
+    width: 48,
+    height: 48,
+    backgroundColor: palette.softGreen,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cardAvatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 18,
+  },
+  cardInfo: {
+    flex: 1,
+  },
+  cardName: {
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 15,
+    ...rtlText,
+  },
+  cardEmail: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    ...rtlText,
+  },
+  sessionBadge: {
+    alignSelf: "flex-start",
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    backgroundColor: palette.softGreen,
+    borderRadius: 12,
+  },
+  sessionBadgeText: {
+    color: palette.primary,
+    fontSize: 12,
+  },
+  cardActions: {
+    flexDirection: row,
+    gap: 8,
+  },
+  actionBtn: {
+    padding: 8,
+    borderRadius: 8,
+  },
+  fab: {
+    position: "absolute",
+    bottom: 20,
+    left: 16,
+    width: 56,
+    height: 56,
+    backgroundColor: palette.gold,
+    borderRadius: 28,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
   },
 });

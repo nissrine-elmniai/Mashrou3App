@@ -1,480 +1,546 @@
-import React, { useMemo, useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
-  TextInput,
-  Alert,
   TouchableOpacity,
+  ScrollView,
+  Animated,
+  Modal,
+  Dimensions,
 } from "react-native";
-import { useApp } from "../../context/AppContext";
-import { ROLES, ROLE_LABELS, SEASON_TYPES } from "../../constants/roles";
-import { colors } from "../../constants/theme";
-import { rtlText, arrowBack, textAlignStart } from "../../constants/rtl";
 import {
-  AppShell,
-  StatCard,
-  SectionCard,
-  QuickButton,
-  PersonCard,
-  FormInput,
-  EmptyState,
-} from "../../components/ui";
-import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
-import { APP_EMAIL } from "../../constants/email";
-const TABS = [
-  { key: "home", label: "الرئيسية" },
-  { key: "supervisors", label: "المشرفين" },
-  { key: "exams", label: "الاختبارات" },
-];
+  Menu,
+  X,
+  Home,
+  Users,
+  UserCog,
+  Calendar,
+  ClipboardList,
+  Bell,
+  MessageSquare,
+  Settings,
+  LogOut,
+  Plus,
+} from "lucide-react-native";
+import { useApp } from "../../context/AppContext";
+import { rtlText, row, textAlignStart } from "../../constants/rtl";
 
-export default function AdminDashboard({ navigation }) {
-  const {
-    stats,
-    exams,
-    users,
-    seasons,
-    logout,
-    addSupervisor,
-    getSupervisorGroups,
-    sendAlert,
-    getNotificationsForUser,
-    markNotificationRead,
-    currentUser,
-  } = useApp();
+const palette = {
+  primary: "#2E7D32",
+  gold: "#FBC02D",
+  red: "#D32F2F",
+  softGreen: "#E8F5E9",
+  blue: "#1976D2",
+  background: "#F5F5F5",
+  textSecondary: "#666666",
+  textPrimary: "#333333",
+  placeholder: "#999999",
+  border: "#E0E0E0",
+};
 
-  const myNotifications = getNotificationsForUser(currentUser);
+const SIDEBAR_WIDTH = 280;
 
-  const [tab, setTab] = useState("home");
-  const [alertText, setAlertText] = useState("");
+function DashboardHome() {
+  const stats = [
+    { label: "الأعضاء", value: 48, icon: "👥" },
+    { label: "المشرفون", value: 6, icon: "👨\u200d🏫" },
+    { label: "الجلسات", value: 4, icon: "📅" },
+    { label: "الاختبارات", value: 3, icon: "📋", badge: "2 معلق" },
+  ];
 
-  const supervisors = useMemo(
-    () => users.filter((u) => u.role === ROLES.SUPERVISOR),
-    [users]
-  );
-
-  const handleLogout = () => {
-    logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
-  };
-
-  const handleSendAlert = () => {
-    const result = sendAlert(alertText);
-    if (!result.ok) {
-      Alert.alert("تنبيه", result.error);
-      return;
-    }
-    Alert.alert("تم الإرسال", "تم حفظ التنبيه وإرساله للأعضاء والمشرفين");
-    setAlertText("");
-    setTab("home");
-  };
+  const activities = [
+    { color: palette.primary, text: "تم إضافة عضو جديد: أحمد محمد", time: "منذ 5 دقائق" },
+    { color: palette.gold, text: "اختبار جديد معلق للمراجعة", time: "منذ 15 دقيقة" },
+    { color: palette.blue, text: "تم تحديث بيانات الجلسة", time: "منذ ساعة" },
+    { color: palette.red, text: "تنبيه: عضو متغيب 3 مرات متتالية", time: "منذ ساعتين" },
+  ];
 
   return (
-    <AppShell
-      title="لوحة تحكم الإدارة"
-      subtitle="إدارة المشرفين والاختبارات"
-      icon="shield"
-      onLogout={handleLogout}
-      tabs={TABS}
-      activeTab={tab === "alert" ? "home" : tab}
-      onTabChange={setTab}
-    >
-      {tab === "home" && (
-        <>
-          <StatCard
-            icon="people"
-            iconColor={colors.primary}
-            borderColor={colors.borderBlue}
-            label="إجمالي المشرفين"
-            value={supervisors.length}
-            valueColor={colors.primary}
-          />
-          <StatCard
-            icon="person-outline"
-            iconColor={colors.green}
-            borderColor={colors.borderGreen}
-            label="إجمالي الأعضاء"
-            value={stats.members}
-            valueColor={colors.green}
-          />
-          <StatCard
-            icon="document-text-outline"
-            iconColor={colors.gold}
-            borderColor={colors.borderGold}
-            label="طلبات التسجيل المعلقة"
-            value={stats.pendingRegs}
-            valueColor={colors.gold}
-          />
+    <View style={dhStyles.wrapper}>
+      <View style={dhStyles.statsGrid}>
+        {stats.map((stat, index) => (
+          <View key={index} style={dhStyles.statCard}>
+            <Text style={dhStyles.statValue}>{stat.value}</Text>
+            <Text style={dhStyles.statLabel}>
+              {stat.icon}  {stat.label}
+            </Text>
+            {stat.badge && (
+              <View style={dhStyles.statBadge}>
+                <Text style={dhStyles.statBadgeText}>{stat.badge}</Text>
+              </View>
+            )}
+          </View>
+        ))}
+      </View>
 
-          {seasons.length === 0 ? (
-            <EmptyState text="ابدأ بإنشاء موسم أو مدرسة صيفية ثم أعلن استمارة التسجيل" />
-          ) : null}
-
-          {myNotifications.length > 0 ? (
-            <SectionCard
-              title="الإشعارات"
-              subtitle="آخر الطلبات والتنبيهات"
-            >
-              {myNotifications.slice(0, 5).map((n) => (
-                <TouchableOpacity
-                  key={n.id}
-                  style={styles.notifItem}
-                  onPress={() => markNotificationRead(n.id)}
-                >
-                  <Text style={styles.notifTitle}>{n.title}</Text>
-                  <Text style={styles.notifBody}>{n.body}</Text>
-                </TouchableOpacity>
-              ))}
-            </SectionCard>
-          ) : null}
-
-          <SectionCard
-            title="الإجراءات السريعة"
-            subtitle="الوصول السريع إلى الوظائف الرئيسية"
-          >
-            <QuickButton
-              color={colors.primary}
-              icon="people"
-              label="إدارة المشرفين"
-              onPress={() => setTab("supervisors")}
-            />
-            <QuickButton
-              color={colors.gold}
-              icon="clipboard-outline"
-              label="إدارة الاختبارات"
-              onPress={() => setTab("exams")}
-            />
-            <QuickButton
-              color={colors.orange}
-              icon="warning-outline"
-              label="إرسال تنبيه"
-              onPress={() => setTab("alert")}
-            />
-          </SectionCard>
-
-          <SectionCard
-            title="إدارة المشروع"
-            subtitle="المواسم والمدرسة الصيفية والمجموعات"
-          >
-            <QuickButton
-              color={colors.primary}
-              icon="calendar-outline"
-              label="المواسم العادية"
-              onPress={() => navigation.navigate("AdminSeasons")}
-            />
-            <QuickButton
-              color={colors.gold}
-              icon="sunny-outline"
-              label="المدرسة الصيفية"
-              onPress={() => navigation.navigate("AdminSummerSchool")}
-            />
-            <QuickButton
-              color={colors.primaryDark}
-              icon="document-text-outline"
-              label={
-                stats.pendingRegs > 0
-                  ? `طلبات التسجيل (${stats.pendingRegs})`
-                  : "طلبات التسجيل"
-              }
-              onPress={() =>
-                navigation.navigate("AdminRegistrations", {
-                  seasonType: SEASON_TYPES.REGULAR,
-                })
-              }
-            />
-            <QuickButton
-              color={colors.teal}
-              icon="people-outline"
-              label="إدارة المجموعات"
-              onPress={() =>
-                navigation.navigate("AdminGroups", {
-                  seasonType: SEASON_TYPES.REGULAR,
-                })
-              }
-            />
-            <QuickButton
-              color={colors.primary}
-              icon="stats-chart-outline"
-              label="الإحصائيات والتقارير"
-              onPress={() => navigation.navigate("AdminStats")}
-            />
-          </SectionCard>
-        </>
-      )}
-
-      {tab === "supervisors" && (
-        <SupervisorsTab
-          supervisors={supervisors}
-          getSupervisorGroups={getSupervisorGroups}
-          addSupervisor={addSupervisor}
-        />
-      )}
-
-      {tab === "exams" && <ExamsTab exams={exams} users={users} />}
-
-      {tab === "alert" && (
-        <SectionCard
-          title="إرسال تنبيه"
-          subtitle="سيتم إرسال التنبيه إلى المشرفين والأعضاء"
-          borderColor="#FFE0B2"
-        >
-          <TextInput
-            style={styles.alertInput}
-            placeholder="اكتب نص التنبيه هنا..."
-              placeholderTextColor={colors.placeholder}
-            value={alertText}
-            onChangeText={setAlertText}
-            multiline
-            textAlign={textAlignStart}
-          />
-            <QuickButton
-              color={colors.orange}
-              icon="send"
-              label="إرسال التنبيه الآن"
-              onPress={handleSendAlert}
-            />
-            <QuickButton
-              color={colors.primaryDark}
-              icon={arrowBack}
-              label="رجوع للرئيسية"
-              onPress={() => setTab("home")}
-            />
-        </SectionCard>
-      )}
-    </AppShell>
-  );
-}
-
-function SupervisorsTab({
-  supervisors,
-  getSupervisorGroups,
-  addSupervisor,
-}) {
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [groupName, setGroupName] = useState("");
-  const [sending, setSending] = useState(false);
-
-  const handleAdd = async () => {
-    if (!groupName.trim()) {
-      Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
-      return;
-    }
-
-    setSending(true);
-    const result = addSupervisor({
-      firstName,
-      lastName,
-      email,
-      groupName: groupName.trim(),
-    });
-    if (!result.ok) {
-      setSending(false);
-      Alert.alert("خطأ", result.error);
-      return;
-    }
-
-    const fullName = `${firstName.trim()} ${lastName.trim()}`;
-    const mail = await sendSupervisorInviteEmail({
-      toEmail: email.trim(),
-      fullName,
-      groupName: result.groupName,
-    });
-    setSending(false);
-
-    if (mail.ok) {
-      Alert.alert(
-        "تمت الإضافة",
-        `تمت إضافة ${fullName} وإرسال الرسالة إلى:\n${email.trim()}`
-      );
-    } else {
-      Alert.alert(
-        "تمت الإضافة — فشل إرسال البريد",
-        `${mail.error || ""}\n\nأبلغ المشرف أنه يمكنه إنشاء حسابه من التطبيق.`
-      );
-    }
-
-    setFirstName("");
-    setLastName("");
-    setEmail("");
-    setGroupName("");
-  };
-
-  return (
-    <View>
-      <SectionCard
-        title="إضافة مشرف"
-        subtitle="الاسم، البريد الإلكتروني، والمجموعة المكلف بها"
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={dhStyles.actionsScroll}
+        contentContainerStyle={dhStyles.actionsContent}
       >
-        <FormInput
-          placeholder="الاسم"
-          value={firstName}
-          onChangeText={setFirstName}
-        />
-        <FormInput
-          placeholder="اللقب"
-          value={lastName}
-          onChangeText={setLastName}
-        />
-        <FormInput
-          placeholder="البريد الإلكتروني"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
+        <TouchableOpacity style={[dhStyles.actionBtn, { backgroundColor: palette.gold }]}>
+          <Plus size={16} color={palette.textPrimary} />
+          <Text style={[dhStyles.actionBtnText, { color: palette.textPrimary }]}>إضافة مشرف</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[dhStyles.actionBtn, { backgroundColor: palette.primary }]}>
+          <Plus size={16} color="#fff" />
+          <Text style={[dhStyles.actionBtnText, { color: "#fff" }]}>إنشاء اختبار</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[dhStyles.actionBtn, dhStyles.actionBtnOutline]}>
+          <Plus size={16} color={palette.textSecondary} />
+          <Text style={[dhStyles.actionBtnText, { color: palette.textSecondary }]}>إشعار</Text>
+        </TouchableOpacity>
+      </ScrollView>
 
-        <Text style={styles.fieldLabel}>اسم المجموعة</Text>
-        <FormInput
-          placeholder="مثال: مجموعة الفجر"
-          value={groupName}
-          onChangeText={setGroupName}
-        />
-        <Text style={styles.hintInline}>
-          تُحاكى رسالة من بريد التطبيق ({APP_EMAIL.fromEmail}) — بدون إرسال
-          حقيقي حالياً. لاحقاً تُربط بالخادم.
-        </Text>
-
-        <QuickButton
-          color={colors.primary}
-          icon="mail-outline"
-          label={sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
-          onPress={sending ? undefined : handleAdd}
-        />
-      </SectionCard>
-
-      <Text style={styles.listTitle}>المشرفون الحاليون</Text>
-      {supervisors.length === 0 ? (
-        <EmptyState text="لا يوجد مشرفون بعد" />
-      ) : (
-        supervisors.map((s) => {
-          const supervised = getSupervisorGroups(s.id);
-          const pending = s.accountStatus === "invited";
-          return (
-            <PersonCard
-              key={s.id}
-              initials={`${s.firstName?.[0] || ""}${s.lastName?.[0] || ""}`}
-              name={`${s.firstName} ${s.lastName}`}
-              meta={[
-                s.email,
-                `المجموعات: ${
-                  supervised.map((g) => g.name).join("، ") || "—"
-                }`,
-                pending ? "بانتظار إنشاء الحساب" : "مفعّل",
-              ]}
-              pill={pending ? "بانتظار التفعيل" : ROLE_LABELS.supervisor}
-            />
-          );
-        })
-      )}
+      <View style={dhStyles.activityCard}>
+        <Text style={dhStyles.activityTitle}>النشاط الأخير</Text>
+        {activities.map((activity, index) => (
+          <View key={index} style={dhStyles.activityItem}>
+            <View style={[dhStyles.activityDot, { backgroundColor: activity.color }]} />
+            <View style={{ flex: 1 }}>
+              <Text style={dhStyles.activityText}>{activity.text}</Text>
+              <Text style={dhStyles.activityTime}>{activity.time}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
-function ExamsTab({ exams, users }) {
-  const getUser = (id) => users.find((u) => u.id === id);
+function AdminSidebar({ isOpen, onClose, navigation }) {
+  const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (isOpen) {
+      Animated.parallel([
+        Animated.timing(translateX, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(overlayOpacity, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(translateX, {
+          toValue: SIDEBAR_WIDTH,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(overlayOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [isOpen]);
+
+  const menuItems = [
+    { id: "home", label: "الرئيسية", icon: Home },
+    { id: "supervisors", label: "المشرفون", icon: UserCog },
+    { id: "members", label: "الأعضاء", icon: Users },
+    { id: "sessions", label: "الجلسات", icon: Calendar },
+    { id: "tests", label: "الاختبارات", icon: ClipboardList },
+    { id: "notifications", label: "التنبيهات", icon: Bell },
+    { id: "chat", label: "الدردشة", icon: MessageSquare },
+    { id: "settings", label: "الإعدادات", icon: Settings },
+  ];
+
+  const routeMap = {
+    supervisors: "AdminSupervisors",
+    members: "AdminRegistrations",
+    sessions: "AdminSeasons",
+    tests: "AdminTests",
+    chat: "ChatConversation",
+  };
+
+  const handlePress = (id) => {
+    if (id === "home") {
+      onClose();
+      return;
+    }
+    onClose();
+    if (routeMap[id]) {
+      navigation.navigate(routeMap[id]);
+    }
+  };
 
   return (
-    <View>
-      <Text style={styles.listTitle}>الاختبارات المسجّلة</Text>
-      {exams.length === 0 ? (
-        <EmptyState text="لا توجد اختبارات بعد" />
-      ) : (
-        exams.map((e) => {
-          const user = getUser(e.memberId);
-          return (
-            <StatCard
-              key={e.id}
-              icon="school-outline"
-              iconColor={colors.gold}
-              borderColor={colors.borderGold}
-              label={
-                user
-                  ? `${user.firstName} ${user.lastName} • ${e.level}`
-                  : e.level
-              }
-              value={e.score}
-              valueColor={colors.gold}
-            />
-          );
-        })
-      )}
-      <Text style={styles.hint}>
-        يسجّل المسؤولون الفرعيون نتائج الاختبارات من لوحاتهم، وتظهر هنا للإدارة.
-      </Text>
+    <Modal visible={isOpen} transparent animationType="none" onRequestClose={onClose}>
+      <View style={sbStyles.modalContainer}>
+        <Animated.View
+          style={[
+            sbStyles.overlay,
+            { opacity: overlayOpacity },
+          ]}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={onClose}
+          />
+        </Animated.View>
+
+        <Animated.View
+          style={[
+            sbStyles.sidebar,
+            { transform: [{ translateX }] },
+          ]}
+        >
+          <View style={sbStyles.header}>
+            <View style={sbStyles.avatar}>
+              <Text style={sbStyles.avatarText}>م</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={sbStyles.role}>مشرف عام</Text>
+              <Text style={sbStyles.name}>محمد أحمد</Text>
+            </View>
+            <TouchableOpacity onPress={onClose}>
+              <X size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={sbStyles.menuList}>
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = item.id === "home";
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  onPress={() => handlePress(item.id)}
+                  style={[
+                    sbStyles.menuItem,
+                    isActive && sbStyles.menuItemActive,
+                  ]}
+                >
+                  <Icon
+                    size={20}
+                    color={isActive ? palette.primary : palette.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      sbStyles.menuItemText,
+                      isActive && sbStyles.menuItemTextActive,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={sbStyles.logoutWrap}>
+            <TouchableOpacity style={sbStyles.logoutBtn}>
+              <LogOut size={20} color={palette.red} />
+              <Text style={sbStyles.logoutText}>تسجيل الخروج</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+export default function AdminDashboard({ navigation }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.topBar}>
+        <TouchableOpacity onPress={() => setSidebarOpen(true)}>
+          <Menu size={24} color={palette.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle}>لوحة التحكم</Text>
+        <View style={styles.topBarAvatar}>
+          <Text style={styles.topBarAvatarText}>م</Text>
+        </View>
+        <TouchableOpacity>
+          <Bell size={24} color={palette.textSecondary} />
+          <View style={styles.bellBadge}>
+            <Text style={styles.bellBadgeText}>3</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+        <DashboardHome />
+      </ScrollView>
+
+      <AdminSidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        navigation={navigation}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  listTitle: {
-    fontSize: 17,
+  container: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  topBar: {
+    backgroundColor: "#fff",
+    padding: 16,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  topBarTitle: {
+    flex: 1,
     fontWeight: "bold",
-    ...rtlText,
-    color: colors.text,
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  fieldLabel: {
-    ...rtlText,
-    color: colors.muted,
-    marginTop: 8,
-    marginBottom: 6,
-    fontWeight: "600",
-  },
-  hintInline: {
-    ...rtlText,
-    color: colors.orange,
-    marginBottom: 10,
-    lineHeight: 20,
-  },
-  seasonChip: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-    backgroundColor: colors.bg,
-  },
-  seasonChipActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.soft,
-  },
-  seasonChipText: { ...rtlText, color: colors.muted },
-  seasonChipTextActive: { color: colors.primaryDark, fontWeight: "700" },
-  alertInput: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: 14,
-    minHeight: 110,
-    backgroundColor: "#F9FAFB",
-    marginBottom: 12,
-    textAlignVertical: "top",
-    fontSize: 15,
+    color: palette.textPrimary,
+    fontSize: 16,
     ...rtlText,
   },
-  hint: {
-    textAlign: "center",
-    color: "#9CA3AF",
-    marginTop: 8,
-    lineHeight: 20,
+  topBarAvatar: {
+    width: 32,
+    height: 32,
+    backgroundColor: palette.softGreen,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  notifItem: {
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-    backgroundColor: colors.bg,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-  },
-  notifTitle: {
-    ...rtlText,
+  topBarAvatarText: {
+    color: palette.primary,
     fontWeight: "bold",
-    color: colors.primary,
+    fontSize: 14,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 16,
+    height: 16,
+    backgroundColor: palette.red,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  bellBadgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "bold",
+  },
+});
+
+const sbStyles = StyleSheet.create({
+  modalContainer: {
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  sidebar: {
+    width: SIDEBAR_WIDTH,
+    height: "100%",
+    backgroundColor: "#fff",
+    elevation: 10,
+  },
+  header: {
+    backgroundColor: palette.primary,
+    padding: 16,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    backgroundColor: "#fff",
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  avatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 18,
+  },
+  role: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 12,
+    ...rtlText,
+  },
+  name: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 16,
+    ...rtlText,
+  },
+  menuList: {
+    padding: 8,
+  },
+  menuItem: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
     marginBottom: 4,
   },
-  notifBody: { ...rtlText, color: colors.muted, fontSize: 13 },
+  menuItemActive: {
+    backgroundColor: palette.softGreen,
+    borderRightWidth: 3,
+    borderRightColor: palette.primary,
+  },
+  menuItemText: {
+    fontWeight: "500",
+    color: palette.textSecondary,
+    fontSize: 14,
+    ...rtlText,
+  },
+  menuItemTextActive: {
+    color: palette.primary,
+  },
+  logoutWrap: {
+    position: "absolute",
+    bottom: 16,
+    left: 16,
+    right: 16,
+  },
+  logoutBtn: {
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    backgroundColor: "#FFEBEE",
+    borderRadius: 12,
+  },
+  logoutText: {
+    color: palette.red,
+    fontWeight: "600",
+    ...rtlText,
+  },
+});
+
+const dhStyles = StyleSheet.create({
+  wrapper: {
+    padding: 16,
+  },
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  statCard: {
+    width: "48%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    position: "relative",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  statValue: {
+    fontSize: 32,
+    fontWeight: "bold",
+    color: palette.primary,
+    marginBottom: 4,
+  },
+  statLabel: {
+    color: palette.textSecondary,
+    fontSize: 14,
+    ...rtlText,
+  },
+  statBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: palette.gold,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  statBadgeText: {
+    fontSize: 12,
+    color: palette.textPrimary,
+  },
+  actionsScroll: {
+    marginBottom: 16,
+  },
+  actionsContent: {
+    flexDirection: row,
+    gap: 8,
+  },
+  actionBtn: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  actionBtnOutline: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "transparent",
+  },
+  actionBtnText: {
+    fontWeight: "600",
+    fontSize: 14,
+    ...rtlText,
+  },
+  activityCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  activityTitle: {
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    marginBottom: 12,
+    fontSize: 16,
+    ...rtlText,
+  },
+  activityItem: {
+    flexDirection: row,
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 12,
+  },
+  activityDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 6,
+  },
+  activityText: {
+    color: palette.textPrimary,
+    fontSize: 14,
+    ...rtlText,
+  },
+  activityTime: {
+    color: palette.placeholder,
+    fontSize: 12,
+    ...rtlText,
+  },
 });
