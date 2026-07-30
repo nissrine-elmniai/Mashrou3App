@@ -9,6 +9,7 @@ import React, {
 import { ActivityIndicator, View, StyleSheet } from "react-native";
 import { DEMO_PASSWORD, emptyState, bootstrapUsers } from "../data/seed";
 import { loadAppState, saveAppState, clearAppState } from "../data/storage";
+import { supabase } from "../lib/supabase";
 import {
   DASHBOARD_BY_ROLE,
   REGISTRATION_STATUS,
@@ -36,6 +37,10 @@ export function AppProvider({ children }) {
   const [exams, setExams] = useState(emptyState.exams);
   const [notifications, setNotifications] = useState(emptyState.notifications);
   const [currentUser, setCurrentUser] = useState(null);
+  /** Session Supabase Auth, alimentée en best-effort par login() quand le compte est
+   *  aussi seedé côté Supabase. null tant qu'aucun lien n'a réussi — ne conditionne
+   *  jamais le login mock existant. */
+  const [supabaseSession, setSupabaseSession] = useState(null);
   const skipNextSave = useRef(true);
 
   useEffect(() => {
@@ -113,10 +118,39 @@ export function AppProvider({ children }) {
       return { ok: false, error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" };
     }
     setCurrentUser(user);
+
+    // Tentative de connexion Supabase Auth en parallèle, en best-effort : ne bloque
+    // jamais le login mock et n'affecte pas sa valeur de retour (non attendue ici).
+    // Échoue silencieusement pour tout compte non seedé côté Supabase (cas normal
+    // aujourd'hui pour admin/autres superviseurs/membres mock).
+    supabase.auth
+      .signInWithPassword({ email, password })
+      .then(({ data, error }) => {
+        if (error) {
+          console.warn(
+            "Supabase Auth: connexion ignorée (compte probablement non seedé côté Supabase) —",
+            error.message
+          );
+          setSupabaseSession(null);
+          return;
+        }
+        setSupabaseSession(data.session || data);
+      })
+      .catch((e) => {
+        console.warn("Supabase Auth: exception ignorée lors de signInWithPassword —", e?.message);
+        setSupabaseSession(null);
+      });
+
     return { ok: true, user, dashboard: DASHBOARD_BY_ROLE[user.role] };
   };
 
-  const logout = () => setCurrentUser(null);
+  const logout = () => {
+    setCurrentUser(null);
+    setSupabaseSession(null);
+    supabase.auth.signOut().catch((e) => {
+      console.warn("Supabase Auth: exception ignorée lors de signOut —", e?.message);
+    });
+  };
 
   /** Dev only: efface AsyncStorage et remet l'état sur les données de seed.js */
   const resetToSeedData = async () => {
@@ -737,6 +771,7 @@ export function AppProvider({ children }) {
   const value = {
     hydrated,
     currentUser,
+    supabaseSession,
     users,
     seasons,
     registrations,
