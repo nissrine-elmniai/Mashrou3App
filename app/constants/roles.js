@@ -26,17 +26,64 @@ export const SEASON_TYPE_LABELS = {
   summer: "مدرسة صيفية",
 };
 
+/** Statuts du parcours d’inscription membre */
 export const REGISTRATION_STATUS = {
   PENDING: "pending",
   ACCEPTED: "accepted",
   REJECTED: "rejected",
+  INVITED: "invited",
+  ACTIVATED: "activated",
 };
 
 export const REGISTRATION_STATUS_LABELS = {
-  pending: "في انتظار المعالجة",
+  pending: "قيد المراجعة",
   accepted: "مقبول",
   rejected: "مرفوض",
+  invited: "تم إرسال الدعوة",
+  activated: "تم إنشاء الحساب",
 };
+
+/** Étapes UI du stepper (1-based) */
+export const REGISTRATION_STEPS = [
+  { key: "register", label: "التسجيل" },
+  { key: "review", label: "المراجعة" },
+  { key: "accepted", label: "مقبول" },
+  { key: "invite", label: "الدعوة" },
+  { key: "account", label: "إنشاء حساب" },
+];
+
+export function registrationStepIndex(status) {
+  switch (status) {
+    case REGISTRATION_STATUS.PENDING:
+      return 2;
+    case REGISTRATION_STATUS.ACCEPTED:
+      return 3;
+    case REGISTRATION_STATUS.INVITED:
+      return 4;
+    case REGISTRATION_STATUS.ACTIVATED:
+      return 5;
+    case REGISTRATION_STATUS.REJECTED:
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+/** Compte pas encore activé (invitation) */
+export const ACCOUNT_STATUS = {
+  INVITED: "invited",
+  ACTIVE: "active",
+};
+
+/** مستويات حفظ القرآن */
+export const LEVEL_OPTIONS = [
+  "مبتدئ",
+  "متوسط",
+  "متمكن",
+  "متقدم",
+  "حافظ أجزاء",
+  "حافظ القرآن",
+];
 
 export const ATTENDANCE_STATUS = {
   PRESENT: "present",

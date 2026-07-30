@@ -1,17 +1,17 @@
-/** Thème aligné sur l’écran de connexion */
+/** Thème aligné sur l’écran d’inscription (vert #337D3D) */
 export const colors = {
-  primary: "#16A34A",
-  primaryDark: "#166534",
-  primarySoft: "#F0FDF4",
+  primary: "#337D3D",
+  primaryDark: "#2A6632",
+  primarySoft: "#E8F3EA",
   gold: "#EAB308",
   accent: "#EAB308",
   orange: "#D97706",
   blue: "#2563EB",
-  green: "#16A34A",
+  green: "#337D3D",
   indigo: "#5C6BC0",
   teal: "#0D9488",
   red: "#DC2626",
-  bg: "#F9FAFB",
+  bg: "#FFFFFF",
   card: "#FFFFFF",
   text: "#1F2937",
   textSecondary: "#374151",
@@ -21,7 +21,8 @@ export const colors = {
   borderGreen: "#BBF7D0",
   borderBlue: "#BBF7D0",
   borderGold: "#FDE68A",
-  soft: "#F0FDF4",
+  soft: "#E8F3EA",
+  inputBg: "#F2F2F2",
 };
 
 export const radii = {
