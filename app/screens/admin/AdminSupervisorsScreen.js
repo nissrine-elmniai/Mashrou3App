@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Text, StyleSheet, Alert } from "react-native";
+import { Text, StyleSheet, Alert, TouchableOpacity } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import {
   AppShell,
@@ -9,7 +10,7 @@ import {
   EmptyState,
   PersonCard,
 } from "../../components/ui";
-import { ACCOUNT_STATUS, ROLES, ROLE_LABELS } from "../../constants/roles";
+import { ACCOUNT_STATUS, ROLES, ROLE_LABELS, userHasRole } from "../../constants/roles";
 import { colors } from "../../constants/theme";
 import { rtlText } from "../../constants/rtl";
 
@@ -17,8 +18,9 @@ import { APP_EMAIL } from "../../constants/email";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
 
 export default function AdminSupervisorsScreen({ navigation }) {
-  const { users, addSupervisor, getSupervisorGroups } = useApp();
-  const supervisors = users.filter((u) => u.role === ROLES.SUPERVISOR);
+  const { users, addSupervisor, removeSupervisor, getSupervisorGroups } =
+    useApp();
+  const supervisors = users.filter((u) => userHasRole(u, ROLES.SUPERVISOR));
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -68,6 +70,25 @@ export default function AdminSupervisorsScreen({ navigation }) {
     setLastName("");
     setEmail("");
     setGroupName("");
+  };
+
+  const confirmRemove = (supervisor) => {
+    const fullName = `${supervisor.firstName} ${supervisor.lastName}`;
+    Alert.alert("حذف المشرف", `هل تريد حذف «${fullName}»؟`, [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "حذف",
+        style: "destructive",
+        onPress: () => {
+          const result = removeSupervisor(supervisor.id);
+          if (!result.ok) {
+            Alert.alert("خطأ", result.error);
+            return;
+          }
+          Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
+        },
+      },
+    ]);
   };
 
   return (
@@ -136,6 +157,16 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 pending ? "بانتظار إنشاء الحساب" : "مفعّل",
               ]}
               pill={pending ? "بانتظار التفعيل" : ROLE_LABELS.supervisor}
+              trailing={
+                <TouchableOpacity
+                  onPress={() => confirmRemove(s)}
+                  accessibilityLabel="حذف المشرف"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.deleteBtn}
+                >
+                  <Ionicons name="trash-outline" size={20} color={colors.red} />
+                </TouchableOpacity>
+              }
             />
           );
         })
@@ -160,5 +191,10 @@ const styles = StyleSheet.create({
     ...rtlText,
     marginVertical: 10,
     color: colors.text,
+  },
+  deleteBtn: {
+    padding: 6,
+    justifyContent: "center",
+    alignItems: "center",
   },
 });

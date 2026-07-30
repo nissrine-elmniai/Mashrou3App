@@ -2,6 +2,7 @@
   "expo": {
     "name": "مهندس حامل لكتاب الله",
     "slug": "Mashrou3App",
+    "scheme": "mashrou3app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./app/assets/icon.png",
@@ -27,7 +28,19 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.nissrineelmniai.Mashrou3App",
-      "supportsRtl": true
+      "supportsRtl": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "mashrou3app"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./app/assets/favicon.png"

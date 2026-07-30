@@ -13,31 +13,86 @@ import {
   Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../constants/theme";
 import { useApp } from "../context/AppContext";
-import { rtlText, textAlignStart } from "../constants/rtl";
+import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function ForgotPasswordScreen({ navigation }) {
-  const { resetPassword } = useApp();
+  const { resetPassword, confirmPasswordReset, isSupabaseConfigured } =
+    useApp();
+  const [step, setStep] = useState("email"); // email | code
   const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleResetPassword = () => {
+  const handleSendCode = async () => {
     if (!email) {
       Alert.alert("خطأ", "الرجاء إدخال البريد الإلكتروني");
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setSubmitting(true);
+      const result = await resetPassword(email);
+      setSubmitting(false);
+      if (!result.ok) {
+        Alert.alert("خطأ", result.error);
+        return;
+      }
+      setStep("code");
+      Alert.alert(
+        "تم",
+        "تم إرسال رمز التحقق إلى بريدك. أدخله مع كلمة المرور الجديدة."
+      );
+      return;
+    }
+
+    if (password !== confirm) {
+      Alert.alert("خطأ", "كلمة المرور غير متطابقة");
+      return;
+    }
+    setSubmitting(true);
+    const result = await resetPassword(email, password);
+    setSubmitting(false);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
+      return;
+    }
+    Alert.alert("تم", "تم تحديث كلمة المرور. يمكنك تسجيل الدخول الآن.");
+    navigation.navigate("Login");
+  };
+
+  const handleConfirmReset = async () => {
+    if (!otp.trim()) {
+      Alert.alert("خطأ", "أدخل رمز التحقق المرسل إلى بريدك");
+      return;
+    }
+    if (!password || !confirm) {
+      Alert.alert("خطأ", "الرجاء إدخال كلمة المرور الجديدة وتأكيدها");
       return;
     }
     if (password !== confirm) {
       Alert.alert("خطأ", "كلمة المرور غير متطابقة");
       return;
     }
-    const result = resetPassword(email, password);
+    if (password.length < 6) {
+      Alert.alert("خطأ", "كلمة المرور قصيرة جداً (6 أحرف على الأقل)");
+      return;
+    }
+
+    setSubmitting(true);
+    const result = await confirmPasswordReset(email, otp, password);
+    setSubmitting(false);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
     }
-    Alert.alert("تم", "تم تحديث كلمة المرور. يمكنك تسجيل الدخول الآن.");
+    Alert.alert("تم", "تم تحديث كلمة المرور. سجّل الدخول بكلمة المرور الجديدة.");
     navigation.navigate("Login");
   };
 
@@ -51,6 +106,7 @@ export default function ForgotPasswordScreen({ navigation }) {
         <ScrollView
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           <View style={styles.logoContainer}>
             <Image
@@ -63,7 +119,11 @@ export default function ForgotPasswordScreen({ navigation }) {
           <View style={styles.card}>
             <Text style={styles.title}>استعادة كلمة المرور</Text>
             <Text style={styles.subtitle}>
-              أدخل بريدك وكلمة مرور جديدة لحسابك المسجّل في التطبيق
+              {!isSupabaseConfigured
+                ? "أدخل بريدك وكلمة مرور جديدة لحسابك المسجّل في التطبيق"
+                : step === "email"
+                  ? "أدخل بريدك الإلكتروني لإرسال رمز التحقق"
+                  : "أدخل الرمز المستلم من البريد ثم كلمة المرور الجديدة"}
             </Text>
             <View style={styles.divider} />
 
@@ -76,43 +136,159 @@ export default function ForgotPasswordScreen({ navigation }) {
                 value={email}
                 onChangeText={setEmail}
                 autoCapitalize="none"
-                  keyboardType="email-address"
-                  textAlign={textAlignStart}
-                />
-            </View>
-
-            <Text style={styles.label}>كلمة المرور الجديدة</Text>
-            <View style={styles.inputWrapper}>
-              <TextInput
-                style={styles.input}
-                placeholder="********"
-                placeholderTextColor={colors.placeholder}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                textAlign={textAlignStart}
-                />
-            </View>
-
-            <Text style={styles.label}>تأكيد كلمة المرور</Text>
-            <View style={styles.inputWrapper}>
-              <TextInput
-                style={styles.input}
-                placeholder="********"
-                placeholderTextColor={colors.placeholder}
-                value={confirm}
-                onChangeText={setConfirm}
-                secureTextEntry
+                keyboardType="email-address"
+                editable={!(isSupabaseConfigured && step === "code")}
                 textAlign={textAlignStart}
               />
             </View>
 
+            {isSupabaseConfigured && step === "code" && (
+              <>
+                <Text style={styles.label}>رمز التحقق</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="123456"
+                    placeholderTextColor={colors.placeholder}
+                    value={otp}
+                    onChangeText={setOtp}
+                    keyboardType="number-pad"
+                    maxLength={8}
+                    textAlign={textAlignStart}
+                  />
+                </View>
+
+                <Text style={styles.label}>كلمة المرور الجديدة</Text>
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="********"
+                    placeholderTextColor={colors.placeholder}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    textAlign={textAlignStart}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword((v) => !v)}
+                  >
+                    <Ionicons
+                      name={showPassword ? "eye-off-outline" : "eye-outline"}
+                      size={22}
+                      color={colors.muted}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.label}>تأكيد كلمة المرور</Text>
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="********"
+                    placeholderTextColor={colors.placeholder}
+                    value={confirm}
+                    onChangeText={setConfirm}
+                    secureTextEntry={!showConfirm}
+                    textAlign={textAlignStart}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeButton}
+                    onPress={() => setShowConfirm((v) => !v)}
+                  >
+                    <Ionicons
+                      name={showConfirm ? "eye-off-outline" : "eye-outline"}
+                      size={22}
+                      color={colors.muted}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {!isSupabaseConfigured && (
+              <>
+                <Text style={styles.label}>كلمة المرور الجديدة</Text>
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="********"
+                    placeholderTextColor={colors.placeholder}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    textAlign={textAlignStart}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeButton}
+                    onPress={() => setShowPassword((v) => !v)}
+                  >
+                    <Ionicons
+                      name={showPassword ? "eye-off-outline" : "eye-outline"}
+                      size={22}
+                      color={colors.muted}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.label}>تأكيد كلمة المرور</Text>
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={styles.passwordInput}
+                    placeholder="********"
+                    placeholderTextColor={colors.placeholder}
+                    value={confirm}
+                    onChangeText={setConfirm}
+                    secureTextEntry={!showConfirm}
+                    textAlign={textAlignStart}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeButton}
+                    onPress={() => setShowConfirm((v) => !v)}
+                  >
+                    <Ionicons
+                      name={showConfirm ? "eye-off-outline" : "eye-outline"}
+                      size={22}
+                      color={colors.muted}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
             <TouchableOpacity
-              style={styles.resetButton}
-              onPress={handleResetPassword}
+              style={[styles.resetButton, submitting && { opacity: 0.7 }]}
+              onPress={
+                isSupabaseConfigured && step === "code"
+                  ? handleConfirmReset
+                  : handleSendCode
+              }
+              disabled={submitting}
             >
-              <Text style={styles.resetButtonText}>حفظ كلمة المرور</Text>
+              <Text style={styles.resetButtonText}>
+                {submitting
+                  ? "جارٍ..."
+                  : isSupabaseConfigured && step === "code"
+                    ? "حفظ كلمة المرور"
+                    : isSupabaseConfigured
+                      ? "إرسال رمز التحقق"
+                      : "حفظ كلمة المرور"}
+              </Text>
             </TouchableOpacity>
+
+            {isSupabaseConfigured && step === "code" && (
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => {
+                  setStep("email");
+                  setOtp("");
+                  setPassword("");
+                  setConfirm("");
+                }}
+              >
+                <Text style={styles.backButtonText}>إعادة إرسال الرمز</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={styles.backButton}
@@ -188,12 +364,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     marginBottom: 14,
   },
+  passwordWrapper: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    backgroundColor: colors.bg,
+    marginBottom: 14,
+    flexDirection: row,
+    alignItems: "center",
+  },
   input: {
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
     color: colors.text,
     ...rtlText,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: colors.text,
+    ...rtlText,
+  },
+  eyeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   resetButton: {
     backgroundColor: colors.primary,

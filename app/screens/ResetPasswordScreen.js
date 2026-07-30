@@ -13,8 +13,10 @@ import {
   Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../constants/theme";
 import { supabase, mapSupabaseAuthError } from "../lib/supabase";
+import { row } from "../constants/rtl";
 
 /**
  * Écran atteint via le lien "mot de passe oublié" reçu par e-mail
@@ -24,6 +26,8 @@ import { supabase, mapSupabaseAuthError } from "../lib/supabase";
 export default function ResetPasswordScreen({ navigation }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const backToLogin = async () => {
@@ -88,29 +92,49 @@ export default function ResetPasswordScreen({ navigation }) {
             <View style={styles.divider} />
 
             <Text style={styles.label}>كلمة المرور الجديدة</Text>
-            <View style={styles.inputWrapper}>
+            <View style={styles.passwordWrapper}>
               <TextInput
-                style={styles.input}
+                style={styles.passwordInput}
                 placeholder="********"
                 placeholderTextColor={colors.placeholder}
                 value={password}
                 onChangeText={setPassword}
-                secureTextEntry
+                secureTextEntry={!showPassword}
                 textAlign="right"
               />
+              <TouchableOpacity
+                style={styles.eyeButton}
+                onPress={() => setShowPassword((v) => !v)}
+              >
+                <Ionicons
+                  name={showPassword ? "eye-off-outline" : "eye-outline"}
+                  size={22}
+                  color={colors.muted}
+                />
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.label}>تأكيد كلمة المرور</Text>
-            <View style={styles.inputWrapper}>
+            <View style={styles.passwordWrapper}>
               <TextInput
-                style={styles.input}
+                style={styles.passwordInput}
                 placeholder="********"
                 placeholderTextColor={colors.placeholder}
                 value={confirm}
                 onChangeText={setConfirm}
-                secureTextEntry
+                secureTextEntry={!showConfirm}
                 textAlign="right"
               />
+              <TouchableOpacity
+                style={styles.eyeButton}
+                onPress={() => setShowConfirm((v) => !v)}
+              >
+                <Ionicons
+                  name={showConfirm ? "eye-off-outline" : "eye-outline"}
+                  size={22}
+                  color={colors.muted}
+                />
+              </TouchableOpacity>
             </View>
 
             <TouchableOpacity
@@ -194,12 +218,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     marginBottom: 14,
   },
+  passwordWrapper: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    backgroundColor: colors.bg,
+    marginBottom: 14,
+    flexDirection: row,
+    alignItems: "center",
+  },
   input: {
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
     color: colors.text,
     textAlign: "right",
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: colors.text,
+    textAlign: "right",
+  },
+  eyeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   resetButton: {
     backgroundColor: colors.primary,

@@ -7,8 +7,9 @@ import {
   Alert,
   TouchableOpacity,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
-import { ROLES, ROLE_LABELS, SEASON_TYPES } from "../../constants/roles";
+import { ROLES, ROLE_LABELS, SEASON_TYPES, userHasRole } from "../../constants/roles";
 import { colors } from "../../constants/theme";
 import { rtlText, arrowBack, textAlignStart } from "../../constants/rtl";
 import {
@@ -36,6 +37,7 @@ export default function AdminDashboard({ navigation }) {
     seasons,
     logout,
     addSupervisor,
+    removeSupervisor,
     getSupervisorGroups,
     sendAlert,
     getNotificationsForUser,
@@ -49,7 +51,7 @@ export default function AdminDashboard({ navigation }) {
   const [alertText, setAlertText] = useState("");
 
   const supervisors = useMemo(
-    () => users.filter((u) => u.role === ROLES.SUPERVISOR),
+    () => users.filter((u) => userHasRole(u, ROLES.SUPERVISOR)),
     [users]
   );
 
@@ -207,6 +209,7 @@ export default function AdminDashboard({ navigation }) {
           supervisors={supervisors}
           getSupervisorGroups={getSupervisorGroups}
           addSupervisor={addSupervisor}
+          removeSupervisor={removeSupervisor}
         />
       )}
 
@@ -249,6 +252,7 @@ function SupervisorsTab({
   supervisors,
   getSupervisorGroups,
   addSupervisor,
+  removeSupervisor,
 }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -299,6 +303,25 @@ function SupervisorsTab({
     setLastName("");
     setEmail("");
     setGroupName("");
+  };
+
+  const confirmRemove = (supervisor) => {
+    const fullName = `${supervisor.firstName} ${supervisor.lastName}`;
+    Alert.alert("حذف المشرف", `هل تريد حذف «${fullName}»؟`, [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "حذف",
+        style: "destructive",
+        onPress: () => {
+          const result = removeSupervisor(supervisor.id);
+          if (!result.ok) {
+            Alert.alert("خطأ", result.error);
+            return;
+          }
+          Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
+        },
+      },
+    ]);
   };
 
   return (
@@ -364,6 +387,20 @@ function SupervisorsTab({
                 pending ? "بانتظار إنشاء الحساب" : "مفعّل",
               ]}
               pill={pending ? "بانتظار التفعيل" : ROLE_LABELS.supervisor}
+              trailing={
+                <TouchableOpacity
+                  onPress={() => confirmRemove(s)}
+                  accessibilityLabel="حذف المشرف"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.deleteBtn}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={20}
+                    color={colors.red}
+                  />
+                </TouchableOpacity>
+              }
             />
           );
         })
@@ -461,6 +498,11 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     marginTop: 8,
     lineHeight: 20,
+  },
+  deleteBtn: {
+    padding: 6,
+    justifyContent: "center",
+    alignItems: "center",
   },
   notifItem: {
     borderWidth: 1,
