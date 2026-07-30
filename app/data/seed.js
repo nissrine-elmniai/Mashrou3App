@@ -36,6 +36,19 @@ export const bootstrapUsers = [
     gender: "ذكر",
     role: ROLES.MEMBER,
   },
+  {
+    // Compte superviseur seedé côté Supabase (voir scripts/seed-supervisor-test.js) —
+    // dupliqué ici pour que la recherche mock de login() réussisse avec les mêmes
+    // identifiants, ce qui déclenche ensuite la tentative supabase.auth.signInWithPassword.
+    id: "u_supervisor_supabase",
+    email: "elaammarioumeima@gmail.com",
+    password: "Test1234!",
+    firstName: "Oumeyma",
+    lastName: "Elaammari",
+    birthDate: "1990/01/01",
+    gender: "أنثى",
+    role: ROLES.SUPERVISOR,
+  },
 ];
 
 /** Saison + groupe minimaux pour que le superviseur de test ait une séance assignée */
