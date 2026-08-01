@@ -154,17 +154,6 @@ export default function LoginScreen({ navigation }) {
                 <Text style={styles.signupLink}>عضو جديد</Text>
               </TouchableOpacity>
             </View>
-
-            {__DEV__ ? (
-              <TouchableOpacity
-                onPress={handleResetSeed}
-                style={styles.devResetWrapper}
-              >
-                <Text style={styles.devResetText}>
-                  إعادة تعيين بيانات التجربة
-                </Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -313,11 +302,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginVertical: 16,
     alignSelf: "center",
-  },
-  devResetWrapper: { marginTop: 20, alignItems: "center" },
-  devResetText: {
-    fontSize: 12,
-    color: colors.placeholder,
-    writingDirection: "rtl",
   },
 });
