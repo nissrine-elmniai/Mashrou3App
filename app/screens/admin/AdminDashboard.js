@@ -102,7 +102,7 @@ function DashboardHome({ navigation, stats }) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[dhStyles.actionBtn, dhStyles.actionBtnOutline]}
-          onPress={() => navigation.navigate("AdminRegistrations")}
+          onPress={() => navigation.navigate("AdminNotifications")}
         >
           <Plus size={16} color={palette.textSecondary} />
           <Text style={[dhStyles.actionBtnText, { color: palette.textSecondary }]}>إشعار</Text>
@@ -181,6 +181,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
     members: "AdminMembers",
     sessions: "AdminSeasons",
     tests: "AdminTests",
+    notifications: "AdminNotifications",
     chat: "ChatConversation",
     settings: "AdminProfile",
   };
@@ -339,7 +340,7 @@ export default function AdminDashboard({ navigation }) {
           <Text style={styles.topBarAvatarText}>{initial}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => navigation.navigate("AdminRegistrations")}
+          onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="التنبيهات"

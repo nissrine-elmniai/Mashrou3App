@@ -10,7 +10,7 @@ import {
   Modal,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Search, Trash2, Plus, X } from "lucide-react-native";
+import { Search, Trash2, Plus, X, Menu, Bell, SquarePen } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { ACCOUNT_STATUS, ROLES, userHasRole } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
@@ -29,12 +29,30 @@ const palette = {
   border: "#E0E0E0",
 };
 
+function hissaLabel(count) {
+  if (count <= 0) return "بدون حصة";
+  if (count === 1) return "1 حصة";
+  return `${count} حصص`;
+}
+
 export default function AdminSupervisorsScreen({ navigation }) {
-  const { users, addSupervisor, removeSupervisor, getSupervisorGroups } =
-    useApp();
+  const {
+    users,
+    addSupervisor,
+    removeSupervisor,
+    getSupervisorGroups,
+    currentUser,
+    stats,
+  } = useApp();
   const insets = useSafeAreaInsets();
   const fabBottom = Math.max(insets.bottom, 16) + 16;
   const supervisors = users.filter((u) => userHasRole(u, ROLES.SUPERVISOR));
+
+  const displayName = currentUser
+    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
+    : "";
+  const initial = displayName.charAt(0) || "م";
+  const pendingCount = stats?.pendingRegs ?? 0;
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -57,6 +75,13 @@ export default function AdminSupervisorsScreen({ navigation }) {
       return true;
     });
   }, [supervisors, search, filter]);
+
+  const resetForm = () => {
+    setFirstName("");
+    setLastName("");
+    setEmail("");
+    setGroupName("");
+  };
 
   const handleAdd = async () => {
     if (!groupName.trim()) {
@@ -96,10 +121,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
       );
     }
 
-    setFirstName("");
-    setLastName("");
-    setEmail("");
-    setGroupName("");
+    resetForm();
     setShowAdd(false);
   };
 
@@ -122,13 +144,56 @@ export default function AdminSupervisorsScreen({ navigation }) {
     ]);
   };
 
+  const openEdit = (supervisor) => {
+    const groups = getSupervisorGroups(supervisor.id);
+    Alert.alert(
+      "تعديل المشرف",
+      `${supervisor.firstName || ""} ${supervisor.lastName || ""}\n${supervisor.email || ""}\n${hissaLabel(groups.length)}`,
+      [{ text: "حسناً", style: "cancel" }]
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="رجوع"
+        >
+          <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle}>المشرفون</Text>
+        <TouchableOpacity
+          style={styles.topBarAvatar}
+          onPress={() => navigation.navigate("AdminProfile")}
+          hitSlop={8}
+        >
+          <Text style={styles.topBarAvatarText}>{initial}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("AdminRegistrations")}
+          hitSlop={12}
+        >
+          <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
+          {pendingCount > 0 ? (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>
+                {pendingCount > 9 ? "9+" : pendingCount}
+              </Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: fabBottom + 72 },
         ]}
+        showsVerticalScrollIndicator={false}
       >
         <View style={styles.searchContainer}>
           <Search size={20} color={palette.placeholder} style={styles.searchIcon} />
@@ -147,15 +212,28 @@ export default function AdminSupervisorsScreen({ navigation }) {
             style={[styles.filterChip, filter === "all" && styles.filterChipActive]}
             onPress={() => setFilter("all")}
           >
-            <Text style={[styles.filterChipText, filter === "all" && styles.filterChipTextActive]}>
+            <Text
+              style={[
+                styles.filterChipText,
+                filter === "all" && styles.filterChipTextActive,
+              ]}
+            >
               الكل
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.filterChip, filter === "pending" && styles.filterChipActive]}
+            style={[
+              styles.filterChip,
+              filter === "pending" && styles.filterChipActive,
+            ]}
             onPress={() => setFilter("pending")}
           >
-            <Text style={[styles.filterChipText, filter === "pending" && styles.filterChipTextActive]}>
+            <Text
+              style={[
+                styles.filterChipText,
+                filter === "pending" && styles.filterChipTextActive,
+              ]}
+            >
               بانتظار التفعيل
             </Text>
           </TouchableOpacity>
@@ -180,21 +258,26 @@ export default function AdminSupervisorsScreen({ navigation }) {
                   <Text style={styles.cardEmail}>{supervisor.email}</Text>
                   <View style={styles.sessionBadge}>
                     <Text style={styles.sessionBadgeText}>
-                      {groups.length > 0
-                        ? groups.map((g) => g.name).join("، ")
-                        : pending
-                          ? "بانتظار التفعيل"
-                          : "بدون مجموعة"}
+                      {pending && groups.length === 0
+                        ? "بانتظار التفعيل"
+                        : hissaLabel(groups.length)}
                     </Text>
                   </View>
                 </View>
                 <View style={styles.cardActions}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: "#FFEBEE" }]}
+                    style={[styles.actionBtn, styles.editBtn]}
+                    onPress={() => openEdit(supervisor)}
+                    accessibilityLabel="تعديل المشرف"
+                  >
+                    <SquarePen size={18} color={palette.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.deleteBtn]}
                     onPress={() => confirmRemove(supervisor)}
                     accessibilityLabel="حذف المشرف"
                   >
-                    <Trash2 size={20} color={palette.red} />
+                    <Trash2 size={18} color={palette.red} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -205,7 +288,10 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
       <TouchableOpacity
         style={[styles.fab, { bottom: fabBottom }]}
-        onPress={() => setShowAdd(true)}
+        onPress={() => {
+          resetForm();
+          setShowAdd(true);
+        }}
       >
         <Plus size={24} color={palette.textPrimary} />
       </TouchableOpacity>
@@ -216,7 +302,12 @@ export default function AdminSupervisorsScreen({ navigation }) {
         animationType="slide"
         onRequestClose={() => setShowAdd(false)}
       >
-        <View style={[styles.modalOverlay, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View
+          style={[
+            styles.modalOverlay,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+          ]}
+        >
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>إضافة مشرف</Text>
@@ -278,9 +369,58 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  topBar: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  topBarTitle: {
+    flex: 1,
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 16,
+    ...rtlText,
+  },
+  topBarAvatar: {
+    width: 32,
+    height: 32,
+    backgroundColor: palette.softGreen,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  topBarAvatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: -4,
+    end: -6,
+    backgroundColor: palette.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "bold",
+  },
+  scroll: {
+    flex: 1,
+  },
   scrollContent: {
     padding: 16,
-    paddingBottom: 80,
   },
   searchContainer: {
     position: "relative",
@@ -313,15 +453,19 @@ const styles = StyleSheet.create({
   filterChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: palette.background,
+    backgroundColor: "#fff",
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   filterChipActive: {
     backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   filterChipText: {
     fontSize: 14,
     color: palette.textSecondary,
+    ...rtlText,
   },
   filterChipTextActive: {
     color: "#fff",
@@ -371,11 +515,12 @@ const styles = StyleSheet.create({
   cardEmail: {
     color: palette.textSecondary,
     fontSize: 13,
+    marginTop: 2,
     ...rtlText,
   },
   sessionBadge: {
     alignSelf: "flex-start",
-    marginTop: 4,
+    marginTop: 6,
     paddingHorizontal: 8,
     paddingVertical: 2,
     backgroundColor: palette.softGreen,
@@ -384,6 +529,7 @@ const styles = StyleSheet.create({
   sessionBadgeText: {
     color: palette.primary,
     fontSize: 12,
+    ...rtlText,
   },
   cardActions: {
     flexDirection: row,
@@ -392,6 +538,12 @@ const styles = StyleSheet.create({
   actionBtn: {
     padding: 8,
     borderRadius: 8,
+  },
+  editBtn: {
+    backgroundColor: "#F5F5F5",
+  },
+  deleteBtn: {
+    backgroundColor: "#FFEBEE",
   },
   fab: {
     position: "absolute",

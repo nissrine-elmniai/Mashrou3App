@@ -1324,6 +1324,8 @@ export function AppProvider({ children }) {
       level,
       notes,
       date: todayStr(),
+      status: "completed",
+      title: level ? `نتيجة — ${level}` : "نتيجة اختبار",
     };
     setExams((prev) => [...prev, exam]);
     pushNotification({
@@ -1333,6 +1335,74 @@ export function AppProvider({ children }) {
       userId: memberId,
     });
     return exam;
+  };
+
+  const createExam = ({
+    title,
+    description,
+    date,
+    groupId,
+    memberIds,
+    notifyMembers = true,
+  }) => {
+    const cleanTitle = (title || "").trim();
+    const cleanDate = (date || "").trim();
+    const ids = Array.isArray(memberIds)
+      ? [...new Set(memberIds.filter(Boolean))]
+      : [];
+
+    if (!cleanTitle) return { ok: false, error: "أدخل عنوان الاختبار" };
+    if (!cleanDate) return { ok: false, error: "أدخل تاريخ الاختبار" };
+    if (ids.length === 0) {
+      return { ok: false, error: "اختر عضواً واحداً على الأقل" };
+    }
+
+    const exam = {
+      id: uid("e"),
+      title: cleanTitle,
+      description: (description || "").trim(),
+      date: cleanDate,
+      groupId: groupId || null,
+      memberIds: ids,
+      status: "planned",
+      createdAt: new Date().toISOString(),
+    };
+    setExams((prev) => [exam, ...prev]);
+
+    if (notifyMembers) {
+      ids.forEach((memberId) => {
+        pushNotification({
+          title: "اختبار جديد",
+          body: `${exam.title} — بتاريخ ${exam.date}`,
+          audience: "user",
+          userId: memberId,
+        });
+      });
+    }
+
+    return { ok: true, exam };
+  };
+
+  const cancelExam = (examId) => {
+    const target = exams.find((e) => e.id === examId);
+    if (!target) return { ok: false, error: "الاختبار غير موجود" };
+    setExams((prev) =>
+      prev.map((e) =>
+        e.id === examId ? { ...e, status: "cancelled" } : e
+      )
+    );
+    return { ok: true };
+  };
+
+  const markExamCompleted = (examId) => {
+    const target = exams.find((e) => e.id === examId);
+    if (!target) return { ok: false, error: "الاختبار غير موجود" };
+    setExams((prev) =>
+      prev.map((e) =>
+        e.id === examId ? { ...e, status: "completed" } : e
+      )
+    );
+    return { ok: true };
   };
 
   function pushNotification({ title, body, audience = "all", userId = null }) {
@@ -1348,15 +1418,22 @@ export function AppProvider({ children }) {
     setNotifications((prev) => [item, ...prev].slice(0, 100));
   }
 
-  const sendAlert = (text) => {
+  const sendAlert = (text, audience = "all") => {
     const body = (text || "").trim();
     if (!body) return { ok: false, error: "اكتب نص التنبيه أولاً" };
+    const allowed = ["all", "members", "supervisors"];
+    const target = allowed.includes(audience) ? audience : "all";
+    const titleByAudience = {
+      all: "تنبيه من الإدارة",
+      members: "تنبيه للأعضاء",
+      supervisors: "تنبيه للمشرفين",
+    };
     pushNotification({
-      title: "تنبيه من الإدارة",
+      title: titleByAudience[target] || "تنبيه من الإدارة",
       body,
-      audience: "all",
+      audience: target,
     });
-    return { ok: true };
+    return { ok: true, audience: target };
   };
 
   const getNotificationsForUser = (user = currentUser) => {
@@ -1364,13 +1441,13 @@ export function AppProvider({ children }) {
     return notifications.filter((n) => {
       if (n.audience === "all") return true;
       if (n.audience === "user" && n.userId === user.id) return true;
-      if (n.audience === "admin" && user.role === ROLES.ADMIN) return true;
-      if (n.audience === "members" && user.role === ROLES.MEMBER) {
+      if (n.audience === "admin" && userHasRole(user, ROLES.ADMIN)) return true;
+      if (n.audience === "members" && userHasRole(user, ROLES.MEMBER)) {
         return true;
       }
       if (
         n.audience === "supervisors" &&
-        user.role === ROLES.SUPERVISOR
+        userHasRole(user, ROLES.SUPERVISOR)
       ) {
         return true;
       }
@@ -1493,6 +1570,9 @@ export function AppProvider({ children }) {
     updateMemberProgress,
     addProgressNote,
     addExamResult,
+    createExam,
+    cancelExam,
+    markExamCompleted,
     sendAlert,
     getNotificationsForUser,
     markNotificationRead,
