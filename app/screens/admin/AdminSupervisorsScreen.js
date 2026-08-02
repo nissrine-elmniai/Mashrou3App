@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, Trash2, Plus, X } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { ACCOUNT_STATUS, ROLES, userHasRole } from "../../constants/roles";
@@ -31,6 +32,8 @@ const palette = {
 export default function AdminSupervisorsScreen({ navigation }) {
   const { users, addSupervisor, removeSupervisor, getSupervisorGroups } =
     useApp();
+  const insets = useSafeAreaInsets();
+  const fabBottom = Math.max(insets.bottom, 16) + 16;
   const supervisors = users.filter((u) => userHasRole(u, ROLES.SUPERVISOR));
 
   const [search, setSearch] = useState("");
@@ -120,8 +123,13 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: fabBottom + 72 },
+        ]}
+      >
         <View style={styles.searchContainer}>
           <Search size={20} color={palette.placeholder} style={styles.searchIcon} />
           <TextInput
@@ -195,7 +203,10 @@ export default function AdminSupervisorsScreen({ navigation }) {
         )}
       </ScrollView>
 
-      <TouchableOpacity style={styles.fab} onPress={() => setShowAdd(true)}>
+      <TouchableOpacity
+        style={[styles.fab, { bottom: fabBottom }]}
+        onPress={() => setShowAdd(true)}
+      >
         <Plus size={24} color={palette.textPrimary} />
       </TouchableOpacity>
 
@@ -205,7 +216,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
         animationType="slide"
         onRequestClose={() => setShowAdd(false)}
       >
-        <View style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>إضافة مشرف</Text>
@@ -258,7 +269,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -384,7 +395,6 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: "absolute",
-    bottom: 20,
     left: 16,
     width: 56,
     height: 56,

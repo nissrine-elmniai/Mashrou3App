@@ -8,6 +8,7 @@ import {
   Animated,
   Modal,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Menu,
   X,
@@ -24,7 +25,7 @@ import {
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { ROLES, userHasRole } from "../../constants/roles";
-import { rtlText, row } from "../../constants/rtl";
+import { rtlText, row, isRTL } from "../../constants/rtl";
 
 const palette = {
   primary: "#2E7D32",
@@ -45,7 +46,7 @@ function DashboardHome({ navigation, stats }) {
   const statCards = [
     { label: "الأعضاء", value: stats?.members ?? 0, icon: "👥" },
     { label: "المشرفون", value: stats?.supervisors ?? 0, icon: "👨\u200d🏫" },
-    { label: "الجلسات", value: stats?.groups ?? 0, icon: "📅" },
+    { label: "الحصص", value: stats?.groups ?? 0, icon: "📅" },
     {
       label: "الاختبارات",
       value: stats?.exams ?? 0,
@@ -57,7 +58,7 @@ function DashboardHome({ navigation, stats }) {
   const activities = [
     { color: palette.primary, text: "تم إضافة عضو جديد: أحمد محمد", time: "منذ 5 دقائق" },
     { color: palette.gold, text: "اختبار جديد معلق للمراجعة", time: "منذ 15 دقيقة" },
-    { color: palette.blue, text: "تم تحديث بيانات الجلسة", time: "منذ ساعة" },
+    { color: palette.blue, text: "تم تحديث بيانات الحصة", time: "منذ ساعة" },
     { color: palette.red, text: "تنبيه: عضو متغيب 3 مرات متتالية", time: "منذ ساعتين" },
   ];
 
@@ -127,6 +128,7 @@ function DashboardHome({ navigation, stats }) {
 function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
   const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (isOpen) {
@@ -167,7 +169,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
     { id: "home", label: "الرئيسية", icon: Home },
     { id: "supervisors", label: "المشرفون", icon: UserCog },
     { id: "members", label: "الأعضاء", icon: Users },
-    { id: "sessions", label: "الجلسات", icon: Calendar },
+    { id: "sessions", label: "الحصص", icon: Calendar },
     { id: "tests", label: "الاختبارات", icon: ClipboardList },
     { id: "notifications", label: "التنبيهات", icon: Bell },
     { id: "chat", label: "الدردشة", icon: MessageSquare },
@@ -176,10 +178,11 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
 
   const routeMap = {
     supervisors: "AdminSupervisors",
-    members: "AdminRegistrations",
+    members: "AdminMembers",
     sessions: "AdminSeasons",
     tests: "AdminTests",
     chat: "ChatConversation",
+    settings: "AdminProfile",
   };
 
   const handlePress = (id) => {
@@ -201,6 +204,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
             sbStyles.overlay,
             { opacity: overlayOpacity },
           ]}
+          pointerEvents="box-none"
         >
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
@@ -212,7 +216,13 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
         <Animated.View
           style={[
             sbStyles.sidebar,
-            { transform: [{ translateX }] },
+            isRTL ? { left: 0 } : { right: 0 },
+            {
+              top: insets.top,
+              // Au moins 16px en bas (souvent insets.bottom = 0 sur Android)
+              bottom: Math.max(insets.bottom, 16),
+              transform: [{ translateX }],
+            },
           ]}
         >
           <View style={sbStyles.header}>
@@ -223,12 +233,16 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
               <Text style={sbStyles.role}>مشرف عام</Text>
               <Text style={sbStyles.name}>{displayName}</Text>
             </View>
-            <TouchableOpacity onPress={onClose}>
+            <TouchableOpacity onPress={onClose} hitSlop={12}>
               <X size={24} color="#fff" />
             </TouchableOpacity>
           </View>
 
-          <View style={sbStyles.menuList}>
+          <ScrollView
+            style={sbStyles.menuScroll}
+            contentContainerStyle={sbStyles.menuList}
+            showsVerticalScrollIndicator={false}
+          >
             {menuItems.map((item) => {
               const Icon = item.icon;
               const isActive = item.id === "home";
@@ -244,6 +258,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
                   <Icon
                     size={20}
                     color={isActive ? palette.primary : palette.textSecondary}
+                    pointerEvents="none"
                   />
                   <Text
                     style={[
@@ -256,11 +271,15 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
                 </TouchableOpacity>
               );
             })}
-          </View>
+          </ScrollView>
 
           <View style={sbStyles.logoutWrap}>
-            <TouchableOpacity style={sbStyles.logoutBtn} onPress={onLogout}>
-              <LogOut size={20} color={palette.red} />
+            <TouchableOpacity
+              style={sbStyles.logoutBtn}
+              onPress={onLogout}
+              activeOpacity={0.7}
+            >
+              <LogOut size={20} color={palette.red} pointerEvents="none" />
               <Text style={sbStyles.logoutText}>تسجيل الخروج</Text>
             </TouchableOpacity>
           </View>
@@ -273,6 +292,8 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
 export default function AdminDashboard({ navigation }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { stats, logout, currentUser, users, exams, seasons } = useApp();
+  const insets = useSafeAreaInsets();
+  const bottomGap = Math.max(insets.bottom, 16);
 
   const derivedStats = {
     members:
@@ -286,8 +307,8 @@ export default function AdminDashboard({ navigation }) {
     pendingRegs: stats?.pendingRegs ?? 0,
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigation.reset({ index: 0, routes: [{ name: "Login" }] });
   };
 
@@ -297,17 +318,33 @@ export default function AdminDashboard({ navigation }) {
   const initial = displayName.charAt(0) || "م";
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => setSidebarOpen(true)}>
-          <Menu size={24} color={palette.textPrimary} />
+        <TouchableOpacity
+          onPress={() => setSidebarOpen(true)}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="فتح القائمة"
+        >
+          <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>لوحة التحكم</Text>
-        <View style={styles.topBarAvatar}>
+        <TouchableOpacity
+          style={styles.topBarAvatar}
+          onPress={() => navigation.navigate("AdminProfile")}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="الملف الشخصي"
+        >
           <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </View>
-        <TouchableOpacity>
-          <Bell size={24} color={palette.textSecondary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("AdminRegistrations")}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="التنبيهات"
+        >
+          <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
           {derivedStats.pendingRegs > 0 ? (
             <View style={styles.bellBadge}>
               <Text style={styles.bellBadgeText}>
@@ -318,7 +355,11 @@ export default function AdminDashboard({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
+        showsVerticalScrollIndicator={false}
+      >
         <DashboardHome navigation={navigation} stats={derivedStats} />
       </ScrollView>
 
@@ -329,7 +370,7 @@ export default function AdminDashboard({ navigation }) {
         currentUser={currentUser}
         onLogout={handleLogout}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -337,6 +378,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: palette.background,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 24,
   },
   topBar: {
     backgroundColor: "#fff",
@@ -388,22 +435,27 @@ const styles = StyleSheet.create({
 const sbStyles = StyleSheet.create({
   modalContainer: {
     flex: 1,
-    flexDirection: "row",
-    justifyContent: "flex-end",
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.5)",
   },
   sidebar: {
+    position: "absolute",
     width: SIDEBAR_WIDTH,
-    height: "100%",
     backgroundColor: "#fff",
     elevation: 10,
+    zIndex: 2,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: -2, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
   },
   header: {
     backgroundColor: palette.primary,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
     flexDirection: row,
     alignItems: "center",
     gap: 12,
@@ -432,8 +484,12 @@ const sbStyles = StyleSheet.create({
     fontSize: 16,
     ...rtlText,
   },
+  menuScroll: {
+    flex: 1,
+  },
   menuList: {
     padding: 8,
+    paddingBottom: 16,
   },
   menuItem: {
     flexDirection: row,
@@ -459,10 +515,12 @@ const sbStyles = StyleSheet.create({
     color: palette.primary,
   },
   logoutWrap: {
-    position: "absolute",
-    bottom: 16,
-    left: 16,
-    right: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    backgroundColor: "#fff",
   },
   logoutBtn: {
     flexDirection: row,
@@ -488,7 +546,7 @@ const dhStyles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    marginBottom: 16,
+    marginBottom: 24,
   },
   statCard: {
     width: "48%",
@@ -528,7 +586,8 @@ const dhStyles = StyleSheet.create({
     color: palette.textPrimary,
   },
   actionsScroll: {
-    marginBottom: 16,
+    flexGrow: 0,
+    marginBottom: 24,
   },
   actionsContent: {
     flexDirection: row,

@@ -6,12 +6,12 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
   Dimensions,
   TextInput,
   Alert,
   Modal,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { row, rtlText, textAlignStart, arrowBack } from "../../constants/rtl";
 
@@ -254,7 +254,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* --- Header avec bouton retour --- */}
         <View style={styles.header}>

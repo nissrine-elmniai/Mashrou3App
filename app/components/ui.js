@@ -4,12 +4,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   TextInput,
   I18nManager,
 } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../constants/theme";
 import {
@@ -20,6 +20,9 @@ import {
   textAlignStart,
   arrowBack,
 } from "../constants/rtl";
+
+/** Marge basse minimale (Android renvoie souvent 0 pour insets.bottom) */
+const MIN_BOTTOM_GAP = 16;
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -105,19 +108,22 @@ export function AppShell({
   children,
   scroll = true,
 }) {
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, MIN_BOTTOM_GAP);
+
   const body = scroll ? (
     <ScrollView
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.scroll}
+      contentContainerStyle={[styles.scroll, { paddingBottom: 32 + bottomPad }]}
     >
       {children}
     </ScrollView>
   ) : (
-    <View style={styles.flex}>{children}</View>
+    <View style={[styles.flex, { paddingBottom: bottomPad }]}>{children}</View>
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor={primary} />
       <AppHeader
         title={title}

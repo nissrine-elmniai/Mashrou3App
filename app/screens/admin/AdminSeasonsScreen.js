@@ -5,6 +5,7 @@ import {
   StyleSheet,
   ScrollView,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { rtlText } from "../../constants/rtl";
 
 const palette = {
@@ -21,14 +22,14 @@ const palette = {
 };
 
 const sessions = [
-  { name: "جلسة الفجر", day: "السبت - الاثنين - الأربعاء", time: "5:30 ص", supervisors: 2, members: 12 },
-  { name: "جلسة العصر", day: "الأحد - الثلاثاء - الخميس", time: "4:00 م", supervisors: 1, members: 8 },
-  { name: "جلسة المغرب", day: "يومياً", time: "6:30 م", supervisors: 3, members: 15 },
+  { name: "حصة الفجر", day: "السبت - الاثنين - الأربعاء", time: "5:30 ص", supervisors: 2, members: 12 },
+  { name: "حصة العصر", day: "الأحد - الثلاثاء - الخميس", time: "4:00 م", supervisors: 1, members: 8 },
+  { name: "حصة المغرب", day: "يومياً", time: "6:30 م", supervisors: 3, members: 15 },
 ];
 
 export default function AdminSeasonsScreen({ navigation }) {
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingBottom: 16 }]} edges={["top", "bottom"]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {sessions.map((session, index) => (
           <View key={index} style={styles.card}>
@@ -50,7 +51,7 @@ export default function AdminSeasonsScreen({ navigation }) {
           </View>
         ))}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

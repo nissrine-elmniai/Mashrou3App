@@ -50,6 +50,8 @@ import AdminGroupsScreen from "./app/screens/admin/AdminGroupsScreen";
 import AdminSupervisorsScreen from "./app/screens/admin/AdminSupervisorsScreen";
 import AdminStatsScreen from "./app/screens/admin/AdminStatsScreen";
 import AdminTestsScreen from "./app/screens/admin/AdminTestsScreen";
+import AdminProfileScreen from "./app/screens/admin/AdminProfileScreen";
+import AdminMembersScreen from "./app/screens/admin/AdminMembersScreen";
 
 const Stack = createStackNavigator();
 
@@ -192,6 +194,16 @@ function RootNavigator() {
         <Stack.Screen
           name="AdminTests"
           component={AdminTestsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminProfile"
+          component={AdminProfileScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminMembers"
+          component={AdminMembersScreen}
           options={{ headerShown: false }}
         />
 

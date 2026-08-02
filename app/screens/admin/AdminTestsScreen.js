@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 
 const palette = {
@@ -45,7 +46,8 @@ export default function AdminTestsScreen({ navigation }) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <SafeAreaView style={[styles.container, { paddingBottom: 16 }]} edges={["top", "bottom"]}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
       <Text style={styles.title}>إنشاء اختبار جديد</Text>
 
       <View style={styles.fieldGroup}>
@@ -82,9 +84,9 @@ export default function AdminTestsScreen({ navigation }) {
       </View>
 
       <View style={styles.fieldGroup}>
-        <Text style={styles.label}>الجلسة</Text>
+        <Text style={styles.label}>الحصة</Text>
         <View style={styles.picker}>
-          <Text style={styles.pickerPlaceholder}>اختر الجلسة</Text>
+          <Text style={styles.pickerPlaceholder}>اختر الحصة</Text>
         </View>
       </View>
 
@@ -130,6 +132,7 @@ export default function AdminTestsScreen({ navigation }) {
         <Text style={styles.submitText}>إنشاء الاختبار</Text>
       </TouchableOpacity>
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -137,6 +140,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: palette.background,
+  },
+  scroll: {
+    flex: 1,
   },
   scrollContent: {
     padding: 16,

@@ -271,9 +271,11 @@ export function AppProvider({ children }) {
   };
 
   const logout = async () => {
-    await signOutAuth();
-    setSupabaseSession(null);
+    // Vider la session locale d'abord pour éviter que LoginScreen
+    // redirige vers le dashboard tant que signOutAuth n'a pas fini.
     setCurrentUser(null);
+    setSupabaseSession(null);
+    await signOutAuth();
   };
 
   /** Dev only: efface AsyncStorage et remet l'état sur les données de seed.js */
