@@ -20,7 +20,7 @@ import { row, rtlText, rtlTextBold, fonts, arrowBack, textAlignStart } from "../
 const INITIAL_MESSAGES = [
   { id: "m1", text: "السلام عليكم، كيف تسير المراجعة هذا الأسبوع؟", sent: false, time: "10:30 ص" },
   { id: "m2", text: "وعليكم السلام، الحمد لله الأمور جيدة", sent: true, time: "10:31 ص" },
-  { id: "m3", text: "هل حضرت الجلسة أمس؟", sent: false, time: "10:32 ص" },
+  { id: "m3", text: "هل حضرت الحصة أمس؟", sent: false, time: "10:32 ص" },
   { id: "m4", text: "نعم، حضرت وأنهيت الحفظ المطلوب ✓", sent: true, time: "10:33 ص" },
 ];
 

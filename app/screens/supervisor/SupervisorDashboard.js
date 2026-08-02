@@ -48,7 +48,10 @@ export default function SupervisorDashboard({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={[styles.container, { paddingBottom: 16 }]}
+      edges={["top", "bottom"]}
+    >
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
       {tab === "home" && (
         <View style={styles.headerWrap}>

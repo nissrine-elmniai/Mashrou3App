@@ -31,7 +31,7 @@ export default function SupervisorMessagesScreen({ navigation }) {
         <View style={styles.memberInfo}>
           <Text style={styles.memberName}>الإدارة</Text>
           <Text style={styles.lastMessage} numberOfLines={1}>
-            تم تحديث جدول الجلسات
+            تم تحديث جدول الحصص
           </Text>
         </View>
         <View style={styles.msgMetaCol}>
@@ -43,7 +43,7 @@ export default function SupervisorMessagesScreen({ navigation }) {
       </TouchableOpacity>
 
       <View style={styles.messagesDivider}>
-        <Text style={styles.messagesDividerText}>أعضاء الجلسة</Text>
+        <Text style={styles.messagesDividerText}>أعضاء الحصة</Text>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>

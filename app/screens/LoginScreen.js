@@ -5,23 +5,25 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   Image,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../context/AppContext";
-import { ROLE_LABELS, DASHBOARD_BY_ROLE } from "../constants/roles";
+import { DASHBOARD_BY_ROLE } from "../constants/roles";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function LoginScreen({ navigation }) {
-  const { login, DEMO_PASSWORD, currentUser, resetToSeedData } = useApp();
+  const { login, currentUser } = useApp();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (currentUser?.role && DASHBOARD_BY_ROLE[currentUser.role]) {
@@ -32,12 +34,12 @@ export default function LoginScreen({ navigation }) {
     }
   }, [currentUser, navigation]);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!username || !password) {
       Alert.alert("تنبيه", "أدخل البريد وكلمة المرور");
       return;
     }
-    const result = login(username, password);
+    const result = await login(username, password);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
@@ -48,20 +50,8 @@ export default function LoginScreen({ navigation }) {
     });
   };
 
-  const quickLogin = (email) => {
-    setUsername(email);
-    setPassword(DEMO_PASSWORD);
-  };
-
-  const handleResetSeed = async () => {
-    await resetToSeedData();
-    setUsername("");
-    setPassword("");
-    Alert.alert("تم", "تمت إعادة تعيين بيانات التجربة إلى الحالة الافتراضية");
-  };
-
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <StatusBar style="dark" />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -104,31 +94,35 @@ export default function LoginScreen({ navigation }) {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>كلمة المرور</Text>
-              <View style={styles.inputWrapper}>
+              <View style={styles.passwordWrapper}>
                 <TextInput
-                  style={styles.input}
+                  style={styles.passwordInput}
                   placeholder="*********"
                   placeholderTextColor={colors.placeholder}
                   value={password}
                   onChangeText={setPassword}
-                  secureTextEntry
+                  secureTextEntry={!showPassword}
                   textAlign={textAlignStart}
                 />
+                <TouchableOpacity
+                  style={styles.eyeButton}
+                  onPress={() => setShowPassword((v) => !v)}
+                  accessibilityLabel={
+                    showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"
+                  }
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={22}
+                    color={colors.muted}
+                  />
+                </TouchableOpacity>
               </View>
             </View>
 
             <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
               <Text style={styles.loginButtonText}>تسجيل الدخول</Text>
-            </TouchableOpacity>
-
-            <Text style={styles.demoTitle}>حساب المسؤول الأول</Text>
-            <TouchableOpacity
-              style={styles.demoChip}
-              onPress={() => quickLogin("admin@mosque.ma")}
-            >
-              <Text style={styles.demoText}>
-                admin@mosque.ma — {ROLE_LABELS.admin} ({DEMO_PASSWORD})
-              </Text>
             </TouchableOpacity>
 
             <View style={styles.linksContainer}>
@@ -140,31 +134,26 @@ export default function LoginScreen({ navigation }) {
 
               <View style={styles.separator} />
 
-              <View style={styles.signupContainer}>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate("Register")}
-                >
-                  <Text style={styles.signupLink}>عضو جديد</Text>
-                </TouchableOpacity>
-              </View>
               <TouchableOpacity
-                onPress={() => navigation.navigate("SupervisorLogin")}
+                onPress={() => navigation.navigate("Register")}
+              >
+                <Text style={styles.signupLink}>طلب الانضمام</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() =>
+                  navigation.navigate("ActivateAccount", { role: "supervisor" })
+                }
                 style={{ marginTop: 14 }}
               >
-                <Text style={styles.signupLink}>تسجيل دخول المشرف</Text>
+                <Text style={styles.signupLink}>مشرف جديد</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => navigation.navigate("ActivateAccount")}
+                style={{ marginTop: 14 }}
+              >
+                <Text style={styles.signupLink}>عضو جديد</Text>
               </TouchableOpacity>
             </View>
-
-            {__DEV__ ? (
-              <TouchableOpacity
-                onPress={handleResetSeed}
-                style={styles.devResetWrapper}
-              >
-                <Text style={styles.devResetText}>
-                  إعادة تعيين بيانات التجربة
-                </Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -232,12 +221,34 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.bg,
   },
+  passwordWrapper: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.bg,
+    flexDirection: row,
+    alignItems: "center",
+  },
   input: {
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
     color: colors.text,
     ...rtlText,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.text,
+    ...rtlText,
+  },
+  eyeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    justifyContent: "center",
+    alignItems: "center",
   },
   loginButton: {
     backgroundColor: colors.primary,
@@ -252,22 +263,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textAlign: "center",
   },
-  demoTitle: {
-    textAlign: "center",
-    marginTop: 18,
-    marginBottom: 8,
-    color: colors.muted,
-    fontWeight: "600",
-  },
-  demoChip: {
-    backgroundColor: colors.soft,
-    borderRadius: radii.sm,
-    padding: 10,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-  },
-  demoText: { textAlign: "center", color: colors.primaryDark, fontSize: 13 },
   signupContainer: {
     flexDirection: row,
     justifyContent: "center",
@@ -282,6 +277,13 @@ const styles = StyleSheet.create({
     color: colors.primary,
     marginStart: 5,
     textDecorationLine: "underline",
+    writingDirection: "rtl",
+  },
+  activateHint: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: "center",
+    marginTop: 4,
     writingDirection: "rtl",
   },
   linksContainer: { marginTop: 24, alignItems: "center", width: "100%" },
@@ -300,11 +302,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginVertical: 16,
     alignSelf: "center",
-  },
-  devResetWrapper: { marginTop: 20, alignItems: "center" },
-  devResetText: {
-    fontSize: 12,
-    color: colors.placeholder,
-    writingDirection: "rtl",
   },
 });

@@ -97,12 +97,12 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     if (mail.ok) {
       Alert.alert(
         "تم القبول",
-        `تم قبول الطلب وإرسال الرسالة إلى:\n${reg.email}\n\nيمكن للمترشح إنشاء حسابه من التطبيق.`
+        `تم قبول الطلب وإرسال الرسالة إلى:\n${reg.email}`
       );
     } else {
       Alert.alert(
         "تم القبول — فشل إرسال البريد",
-        `${mail.error || ""}\n\nشارك رمز الدعوة يدوياً: ${result.inviteToken}`
+        `${mail.error || ""}\n\nأبلغ المترشح أنه يمكنه إنشاء حسابه من التطبيق بنفس البريد.`
       );
     }
   };
@@ -127,8 +127,8 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
       title={isSummer ? "طلبات التسجيل الصيفي" : "طلبات التسجيل"}
       subtitle={
         pendingCount > 0
-          ? `${pendingCount} طلب بانتظار قرارك — القبول يحاكي إرسال رسالة`
-          : "قبول الطلب يحاكي رسالة من بريد التطبيق (وضع الواجهات)"
+          ? `${pendingCount} طلب بانتظار قرارك — القبول يرسل دعوة بالبريد`
+          : "قبول الطلب يرسل رسالة دعوة إلى بريد المترشح"
       }
       icon="document-text"
       onBack={() => navigation.goBack()}
@@ -191,11 +191,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
               ) : null}
               {reg.hifzAmount ? (
                 <Text style={styles.meta}>مقدار الحفظ: {reg.hifzAmount}</Text>
-              ) : null}
-              {reg.inviteToken ? (
-                <Text style={[styles.meta, styles.token]}>
-                  رمز الدعوة: {reg.inviteToken}
-                </Text>
               ) : null}
               <Text style={[styles.status, { color: accent }]}>
                 {REGISTRATION_STATUS_LABELS[reg.status]}

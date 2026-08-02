@@ -1,0 +1,11 @@
+-- Compte admin de démarrage (à adapter)
+-- 1) Créer l'utilisateur dans Authentication → Users :
+--    email: admin@mosque.ma  password: 123456
+-- 2) Puis exécuter (remplacer l'UUID) :
+
+-- update public.profiles
+-- set role = 'admin',
+--     first_name = 'يوسف',
+--     last_name = 'العلوي',
+--     account_status = 'active'
+-- where email = 'admin@mosque.ma';

@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   View,
   ActivityIndicator,
   StyleSheet,
+  Alert,
+  Linking,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -22,12 +25,15 @@ import {
   setCairoLoaded,
   fonts,
 } from "./app/constants/rtl";
+import { handleAuthDeepLink } from "./app/lib/authLinking";
+import { supabase } from "./app/lib/supabase";
 
 import LoginScreen from "./app/screens/LoginScreen";
 import SupervisorLoginScreen from "./app/screens/supervisor/SupervisorLoginScreen";
 import RegisterScreen from "./app/screens/RegisterScreen";
 import ActivateAccountScreen from "./app/screens/ActivateAccountScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
+import ResetPasswordScreen from "./app/screens/ResetPasswordScreen";
 
 import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
 import MemberProfileScreen from "./app/screens/member/MemberProfileScreen";
@@ -43,8 +49,194 @@ import AdminRegistrationsScreen from "./app/screens/admin/AdminRegistrationsScre
 import AdminGroupsScreen from "./app/screens/admin/AdminGroupsScreen";
 import AdminSupervisorsScreen from "./app/screens/admin/AdminSupervisorsScreen";
 import AdminStatsScreen from "./app/screens/admin/AdminStatsScreen";
+import AdminTestsScreen from "./app/screens/admin/AdminTestsScreen";
+import AdminProfileScreen from "./app/screens/admin/AdminProfileScreen";
+import AdminMembersScreen from "./app/screens/admin/AdminMembersScreen";
 
 const Stack = createStackNavigator();
+
+const linking = {
+  prefixes: ["mashrou3app://"],
+  config: {
+    screens: {
+      ResetPassword: "reset-password",
+      Login: "login",
+    },
+  },
+};
+
+function RootNavigator() {
+  const navigationRef = useRef(null);
+
+  useEffect(() => {
+    const goResetPassword = () => {
+      if (navigationRef.current) {
+        navigationRef.current.navigate("ResetPassword");
+      }
+    };
+
+    const processUrl = async (url) => {
+      if (!url) return;
+      const result = await handleAuthDeepLink(url);
+      if (result.error) {
+        Alert.alert("خطأ", result.error);
+        return;
+      }
+      if (result.isRecovery) {
+        goResetPassword();
+      }
+    };
+
+    Linking.getInitialURL().then((url) => {
+      if (url) processUrl(url);
+    });
+
+    const linkSub = Linking.addEventListener("url", ({ url }) =>
+      processUrl(url)
+    );
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        goResetPassword();
+      }
+    });
+
+    return () => {
+      linkSub.remove();
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  return (
+    <NavigationContainer ref={navigationRef} linking={linking} direction="rtl">
+      <Stack.Navigator
+        initialRouteName="Login"
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.primary },
+          headerTintColor: "#fff",
+          headerTitleStyle: {
+            fontWeight: "bold",
+            fontFamily: fonts.bold,
+          },
+          headerTitleAlign: "center",
+          headerBackTitleVisible: false,
+          contentStyle: { backgroundColor: colors.bg },
+        }}
+      >
+        <Stack.Screen
+          name="Login"
+          component={LoginScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="SupervisorLogin"
+          component={SupervisorLoginScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Register"
+          component={RegisterScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ActivateAccount"
+          component={ActivateAccountScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ForgotPassword"
+          component={ForgotPasswordScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ResetPassword"
+          component={ResetPasswordScreen}
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="AdminDashboard"
+          component={AdminDashboard}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminSeasons"
+          component={AdminSeasonsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminSummerSchool"
+          component={AdminSummerSchoolScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminRegistrations"
+          component={AdminRegistrationsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminGroups"
+          component={AdminGroupsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminSupervisors"
+          component={AdminSupervisorsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminStats"
+          component={AdminStatsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminTests"
+          component={AdminTestsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminProfile"
+          component={AdminProfileScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminMembers"
+          component={AdminMembersScreen}
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="MemberDashboardScreen"
+          component={MemberDashboardScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="MemberProfileScreen"
+          component={MemberProfileScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ProgrammeDetails"
+          component={ProgrammeDetailsScreen}
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="SupervisorDashboard"
+          component={SupervisorDashboard}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ChatConversation"
+          component={ChatConversationScreen}
+          options={{ headerShown: false }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -53,6 +245,7 @@ export default function App() {
     Cairo_600SemiBold,
     Cairo_700Bold,
   });
+
   useEffect(() => {
     if (fontsLoaded) {
       setCairoLoaded(true);
@@ -177,7 +370,7 @@ export default function App() {
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>
-    </AppProvider>
+    </GestureHandlerRootView>
   );
 }
 

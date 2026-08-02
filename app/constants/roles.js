@@ -16,6 +16,30 @@ export const DASHBOARD_BY_ROLE = {
   member: "MemberDashboardScreen",
 };
 
+/** Liste des rôles d’un utilisateur (role principal + roles[]) */
+export function normalizeRoles(user) {
+  const set = new Set();
+  if (user?.role) set.add(user.role);
+  if (Array.isArray(user?.roles)) {
+    user.roles.forEach((r) => {
+      if (r) set.add(r);
+    });
+  }
+  return [...set];
+}
+
+export function userHasRole(user, role) {
+  return normalizeRoles(user).includes(role);
+}
+
+export function withMergedRoles(user, extraRole) {
+  const roles = normalizeRoles({
+    ...user,
+    roles: [...normalizeRoles(user), extraRole],
+  });
+  return { ...user, roles };
+}
+
 export const SEASON_TYPES = {
   REGULAR: "regular",
   SUMMER: "summer",
