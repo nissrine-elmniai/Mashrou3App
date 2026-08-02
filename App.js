@@ -70,8 +70,9 @@ export default function App() {
 
   return (
     <AppProvider>
-      <NavigationContainer direction="rtl">
-        <Stack.Navigator
+      <SafeAreaProvider>
+        <NavigationContainer direction="rtl">
+          <Stack.Navigator
           initialRouteName="Login"
           screenOptions={{
             headerStyle: { backgroundColor: colors.primary },
