@@ -268,113 +268,11 @@ export default function App() {
   }
 
   return (
-    <AppProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer direction="rtl">
-          <Stack.Navigator
-          initialRouteName="Login"
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.primary },
-            headerTintColor: "#fff",
-            headerTitleStyle: {
-              fontWeight: "bold",
-              fontFamily: fonts.bold,
-            },
-            headerTitleAlign: "center",
-            headerBackTitleVisible: false,
-            contentStyle: { backgroundColor: colors.bg },
-          }}
-        >
-          <Stack.Screen
-            name="Login"
-            component={LoginScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="SupervisorLogin"
-            component={SupervisorLoginScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="Register"
-            component={RegisterScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="ActivateAccount"
-            component={ActivateAccountScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="ForgotPassword"
-            component={ForgotPasswordScreen}
-            options={{ headerShown: false }}
-          />
-
-            <Stack.Screen
-              name="AdminDashboard"
-              component={AdminDashboard}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="AdminSeasons"
-              component={AdminSeasonsScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="AdminSummerSchool"
-              component={AdminSummerSchoolScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="AdminRegistrations"
-              component={AdminRegistrationsScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="AdminGroups"
-              component={AdminGroupsScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="AdminSupervisors"
-              component={AdminSupervisorsScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="AdminStats"
-              component={AdminStatsScreen}
-              options={{ headerShown: false }}
-            />
-
-            <Stack.Screen
-              name="MemberDashboardScreen"
-              component={MemberDashboardScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="MemberProfileScreen"
-              component={MemberProfileScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="ProgrammeDetails"
-              component={ProgrammeDetailsScreen}
-              options={{ headerShown: false }}
-            />
-
-            <Stack.Screen
-              name="SupervisorDashboard"
-              component={SupervisorDashboard}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="ChatConversation"
-              component={ChatConversationScreen}
-              options={{ headerShown: false }}
-            />
-          </Stack.Navigator>
-        </NavigationContainer>
+        <AppProvider>
+          <RootNavigator />
+        </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
