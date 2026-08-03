@@ -121,6 +121,7 @@ export async function signUpWithProfile({
   firstName,
   lastName,
   accountStatus = ACCOUNT_STATUS.ACTIVE,
+  signOutAfter = true,
 }) {
   const mail = String(email || "").trim().toLowerCase();
   const { data, error } = await supabase.auth.signUp({
@@ -180,6 +181,20 @@ export async function signUpWithProfile({
     firstName,
     lastName,
   });
+
+  // Lier la demande d'inscription (si existante) tant que la session signup est active
+  if (data.session && role === ROLES.MEMBER) {
+    await supabase
+      .from("member_applications")
+      .update({
+        status: "activated",
+        user_id: data.user.id,
+        activated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("email", mail)
+      .in("status", ["invited", "pending"]);
+  }
 
   // Ne pas laisser une session "signup" ouverte : l'utilisateur se connecte ensuite
   if (data.session) {

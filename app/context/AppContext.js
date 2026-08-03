@@ -30,6 +30,10 @@ import {
   fetchProfile,
   profileToAppUser,
 } from "../lib/auth";
+import {
+  upsertMemberApplication,
+  markMemberApplicationActivated,
+} from "../lib/memberApplicationsApi";
 
 const AppContext = createContext(null);
 
@@ -538,51 +542,83 @@ export function AppProvider({ children }) {
     return { ok: true, registration };
   };
 
-  const reviewRegistration = (registrationId, status) => {
-    const reg = registrations.find((r) => r.id === registrationId);
-    if (!reg) return { ok: false, error: "الطلب غير موجود" };
+  const reviewRegistration = async (registrationId, status) => {
+    try {
+      const reg = registrations.find((r) => r.id === registrationId);
+      if (!reg) return { ok: false, error: "الطلب غير موجود" };
 
-    if (status === REGISTRATION_STATUS.REJECTED) {
+      if (status === REGISTRATION_STATUS.REJECTED) {
+        const sync = await upsertMemberApplication(
+          reg,
+          REGISTRATION_STATUS.REJECTED
+        );
+        if (!sync.ok) {
+          return {
+            ok: false,
+            error: sync.error || "تعذر حفظ الرفض في Supabase",
+          };
+        }
+
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === registrationId
+              ? { ...r, status: REGISTRATION_STATUS.REJECTED }
+              : r
+          )
+        );
+        pushNotification({
+          title: "تم رفض طلب تسجيل",
+          body: `رُفض طلب: ${reg.fullName || reg.phone}`,
+          audience: "admin",
+        });
+        return { ok: true };
+      }
+
+      if (status === REGISTRATION_STATUS.ACCEPTED) {
+        const acceptedAt = todayStr();
+        const sync = await upsertMemberApplication(
+          { ...reg, acceptedAt },
+          REGISTRATION_STATUS.INVITED
+        );
+        if (!sync.ok) {
+          return {
+            ok: false,
+            error:
+              sync.error ||
+              "تعذر حفظ بيانات العضو في Supabase — نفّذ member_applications.sql وتأكد من جلسة الأدمن",
+          };
+        }
+
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === registrationId
+              ? {
+                  ...r,
+                  status: REGISTRATION_STATUS.INVITED,
+                  inviteToken: null,
+                  acceptedAt,
+                }
+              : r
+          )
+        );
+        pushNotification({
+          title: "دعوة انضمام",
+          body: `تم قبول طلب ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
+          audience: "admin",
+        });
+        return { ok: true, registration: reg };
+      }
+
       setRegistrations((prev) =>
-        prev.map((r) =>
-          r.id === registrationId
-            ? { ...r, status: REGISTRATION_STATUS.REJECTED }
-            : r
-        )
+        prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
       );
-      pushNotification({
-        title: "تم رفض طلب تسجيل",
-        body: `رُفض طلب: ${reg.fullName || reg.phone}`,
-        audience: "admin",
-      });
       return { ok: true };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e?.message || "حدث خطأ أثناء مراجعة الطلب",
+      };
     }
-
-    if (status === REGISTRATION_STATUS.ACCEPTED) {
-      setRegistrations((prev) =>
-        prev.map((r) =>
-          r.id === registrationId
-            ? {
-                ...r,
-                status: REGISTRATION_STATUS.INVITED,
-                inviteToken: null,
-                acceptedAt: todayStr(),
-              }
-            : r
-        )
-      );
-      pushNotification({
-        title: "دعوة انضمام",
-        body: `تم قبول طلب ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
-        audience: "admin",
-      });
-      return { ok: true, registration: reg };
-    }
-
-    setRegistrations((prev) =>
-      prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
-    );
-    return { ok: true };
   };
 
   /** إنشاء حساب العضو بعد قبول الطلب (بالبريد، بدون رمز دعوة) */
@@ -700,6 +736,10 @@ export function AppProvider({ children }) {
             };
           }
           authId = authResult.authUser.id;
+          await markMemberApplicationActivated({
+            email: mail,
+            userId: authId,
+          });
           await signOutAuth();
         } else {
           const authResult = await signUpWithProfile({

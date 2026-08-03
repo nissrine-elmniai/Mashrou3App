@@ -1,18 +1,16 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Menu, Bell, Clock, Check, X } from "lucide-react-native";
+import { Menu, Bell, ClipboardList } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import {
   ACCOUNT_STATUS,
-  REGISTRATION_STATUS,
   ROLES,
   userHasRole,
 } from "../../constants/roles";
@@ -22,15 +20,12 @@ import {
   deriveLevel,
   initials,
 } from "../supervisor/supervisorHelpers";
-import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
 
 const palette = {
   primary: "#2E7D32",
-  gold: "#FBC02D",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
   softGold: "#FFF8E1",
-  blue: "#1976D2",
   background: "#F5F5F5",
   textSecondary: "#666666",
   textPrimary: "#333333",
@@ -54,104 +49,16 @@ function levelColor(level) {
   return LEVEL_COLORS[level] || palette.primary;
 }
 
-function computeAge(birthDate) {
-  if (!birthDate) return null;
-  const parts = String(birthDate).split(/[/-]/).map(Number);
-  if (parts.length < 3 || parts.some((n) => !n)) return null;
-  // Formats possibles: YYYY/MM/DD ou DD/MM/YYYY
-  let year;
-  let month;
-  let day;
-  if (parts[0] > 31) {
-    [year, month, day] = parts;
-  } else if (parts[2] > 31) {
-    [day, month, year] = parts;
-  } else {
-    return null;
-  }
-  const today = new Date();
-  let age = today.getFullYear() - year;
-  if (
-    today.getMonth() + 1 < month ||
-    (today.getMonth() + 1 === month && today.getDate() < day)
-  ) {
-    age -= 1;
-  }
-  return age >= 0 && age < 120 ? age : null;
-}
-
 export default function AdminMembersScreen({ navigation }) {
   const {
     users,
     groups,
     progress,
-    registrations,
     stats,
     currentUser,
     getMemberGroup,
     getMemberProgress,
-    reviewRegistration,
   } = useApp();
-  const [tab, setTab] = useState(() =>
-    (stats?.pendingRegs ?? 0) > 0 ? "pending" : "all"
-  );
-  const [sendingId, setSendingId] = useState(null);
-
-  const pendingRegs = useMemo(
-    () =>
-      registrations
-        .filter((r) => r.status === REGISTRATION_STATUS.PENDING)
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
-    [registrations]
-  );
-
-  const acceptAndInvite = async (reg) => {
-    if (!reg.email) {
-      Alert.alert(
-        "تنبيه",
-        "لا يوجد بريد إلكتروني لهذا الطلب. لا يمكن إرسال الدعوة."
-      );
-      return;
-    }
-
-    const result = reviewRegistration(reg.id, REGISTRATION_STATUS.ACCEPTED);
-    if (!result?.ok) {
-      Alert.alert("خطأ", result?.error || "تعذر قبول الطلب");
-      return;
-    }
-
-    setSendingId(reg.id);
-    const mail = await sendMemberAcceptEmail({
-      toEmail: reg.email,
-      fullName: reg.fullName,
-    });
-    setSendingId(null);
-
-    if (mail.ok) {
-      Alert.alert(
-        "تم القبول",
-        `تم قبول الطلب وإرسال الرسالة إلى:\n${reg.email}`
-      );
-    } else {
-      Alert.alert(
-        "تم القبول — فشل إرسال البريد",
-        `${mail.error || ""}\n\nأبلغ المترشح أنه يمكنه إنشاء حسابه من التطبيق بنفس البريد.`
-      );
-    }
-  };
-
-  const rejectRegistration = (reg) => {
-    Alert.alert("تأكيد الرفض", `هل تريد رفض طلب ${reg.fullName}؟`, [
-      { text: "إلغاء", style: "cancel" },
-      {
-        text: "رفض",
-        style: "destructive",
-        onPress: () => {
-          reviewRegistration(reg.id, REGISTRATION_STATUS.REJECTED);
-        },
-      },
-    ]);
-  };
 
   const members = useMemo(() => {
     return users
@@ -193,10 +100,13 @@ export default function AdminMembersScreen({ navigation }) {
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
     : "";
   const initial = displayName.charAt(0) || "م";
-  const pendingCount = stats?.pendingRegs ?? pendingRegs.length;
+  const pendingCount = stats?.pendingRegs ?? 0;
 
   return (
-    <SafeAreaView style={[styles.container, { paddingBottom: 16 }]} edges={["top", "bottom"]}>
+    <SafeAreaView
+      style={[styles.container, { paddingBottom: 16 }]}
+      edges={["top", "bottom"]}
+    >
       <View style={styles.topBar}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -229,61 +139,42 @@ export default function AdminMembersScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          style={[styles.tab, tab === "all" && styles.tabActive]}
-          onPress={() => setTab("all")}
-        >
-          <Text style={[styles.tabText, tab === "all" && styles.tabTextActive]}>
-            جميع الأعضاء
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, tab === "pending" && styles.tabActive]}
-          onPress={() => setTab("pending")}
-        >
-          <View style={styles.tabPendingRow}>
-            <Text
-              style={[
-                styles.tabText,
-                tab === "pending" && styles.tabTextActive,
-              ]}
-            >
-              قيد الانتظار
-            </Text>
-            {pendingCount > 0 ? (
-              <View style={styles.tabBadge}>
-                <Text style={styles.tabBadgeText}>{pendingCount}</Text>
-              </View>
-            ) : null}
-          </View>
-        </TouchableOpacity>
-      </View>
-
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {tab === "all" ? (
-          members.length === 0 ? (
-            <Text style={styles.emptyText}>لا يوجد أعضاء بعد</Text>
-          ) : (
-            members.map((member) => (
-              <MemberCard key={member.id} member={member} />
-            ))
-          )
-        ) : pendingRegs.length === 0 ? (
-          <Text style={styles.emptyText}>لا توجد طلبات قيد الانتظار</Text>
+        {pendingCount > 0 ? (
+          <TouchableOpacity
+            style={styles.pendingBanner}
+            onPress={() => navigation.navigate("AdminRegistrations")}
+            activeOpacity={0.8}
+          >
+            <View style={styles.pendingBannerIcon}>
+              <ClipboardList
+                size={20}
+                color={palette.primary}
+                pointerEvents="none"
+              />
+            </View>
+            <View style={styles.pendingBannerTextWrap}>
+              <Text style={styles.pendingBannerTitle}>
+                طلبات تسجيل بانتظار المراجعة
+              </Text>
+              <Text style={styles.pendingBannerSub}>
+                {pendingCount} طلب — افتح طلبات التسجيل للقبول أو الرفض
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
+        <Text style={styles.sectionTitle}>جميع الأعضاء</Text>
+
+        {members.length === 0 ? (
+          <Text style={styles.emptyText}>لا يوجد أعضاء بعد</Text>
         ) : (
-          pendingRegs.map((reg) => (
-            <PendingCard
-              key={reg.id}
-              reg={reg}
-              sending={sendingId === reg.id}
-              onAccept={() => acceptAndInvite(reg)}
-              onReject={() => rejectRegistration(reg)}
-            />
+          members.map((member) => (
+            <MemberCard key={member.id} member={member} />
           ))
         )}
       </ScrollView>
@@ -338,62 +229,10 @@ function MemberCard({ member }) {
       <View style={styles.progressRow}>
         <View style={styles.progressTrack}>
           <View
-            style={[
-              styles.progressFill,
-              { width: `${member.pct}%` },
-            ]}
+            style={[styles.progressFill, { width: `${member.pct}%` }]}
           />
         </View>
         <Text style={styles.progressPct}>{member.pct}%</Text>
-      </View>
-    </View>
-  );
-}
-
-function PendingCard({ reg, sending, onAccept, onReject }) {
-  const name = reg.fullName || "مترشح";
-  const level = reg.level || "مبتدئ";
-  const age = computeAge(reg.birthDate);
-  const detail =
-    age != null
-      ? `العمر: ${age} | ${level}`
-      : reg.school
-        ? `${reg.school} | ${level}`
-        : `المستوى: ${level}`;
-
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardTop}>
-        <View style={styles.clockWrap}>
-          <Clock size={22} color={palette.gold} pointerEvents="none" />
-        </View>
-        <View style={styles.cardInfo}>
-          <Text style={styles.cardName}>{name}</Text>
-          <Text style={styles.pendingDetail}>{detail}</Text>
-        </View>
-      </View>
-
-      <View style={styles.actionRow}>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.acceptBtn]}
-          onPress={sending ? undefined : onAccept}
-          activeOpacity={0.75}
-          disabled={!!sending}
-        >
-          <Check size={18} color="#fff" pointerEvents="none" />
-          <Text style={styles.actionBtnText}>
-            {sending ? "جاري..." : "قبول"}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.rejectBtn]}
-          onPress={sending ? undefined : onReject}
-          activeOpacity={0.75}
-          disabled={!!sending}
-        >
-          <X size={18} color="#fff" pointerEvents="none" />
-          <Text style={styles.actionBtnText}>رفض</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -450,55 +289,51 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "bold",
   },
-  tabs: {
-    flexDirection: row,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: palette.border,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-  },
-  tabActive: {
-    borderBottomColor: palette.primary,
-  },
-  tabText: {
-    fontSize: 14,
-    color: palette.textSecondary,
-    fontWeight: "500",
-    ...rtlText,
-  },
-  tabTextActive: {
-    color: palette.primary,
-    fontWeight: "700",
-  },
-  tabPendingRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 6,
-  },
-  tabBadge: {
-    backgroundColor: palette.red,
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 5,
-  },
-  tabBadgeText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "bold",
-  },
   scroll: { flex: 1 },
   scrollContent: {
     padding: 16,
     paddingBottom: 28,
+  },
+  pendingBanner: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: palette.softGold,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#FFE082",
+  },
+  pendingBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pendingBannerTextWrap: {
+    flex: 1,
+  },
+  pendingBannerTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: palette.textPrimary,
+    marginBottom: 2,
+    ...rtlText,
+  },
+  pendingBannerSub: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    ...rtlText,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: palette.textPrimary,
+    marginBottom: 12,
+    ...rtlText,
   },
   emptyText: {
     textAlign: "center",
@@ -596,44 +431,5 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     minWidth: 36,
     textAlign: "left",
-  },
-  clockWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: palette.softGold,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  pendingDetail: {
-    fontSize: 13,
-    color: palette.textSecondary,
-    ...rtlText,
-  },
-  actionRow: {
-    flexDirection: row,
-    gap: 10,
-    marginTop: 14,
-  },
-  actionBtn: {
-    flex: 1,
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  acceptBtn: {
-    backgroundColor: palette.primary,
-  },
-  rejectBtn: {
-    backgroundColor: palette.red,
-  },
-  actionBtnText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-    ...rtlText,
   },
 });

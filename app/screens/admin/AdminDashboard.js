@@ -17,6 +17,7 @@ import {
   UserCog,
   Calendar,
   ClipboardList,
+  FileText,
   Bell,
   MessageSquare,
   Settings,
@@ -169,6 +170,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
     { id: "home", label: "الرئيسية", icon: Home },
     { id: "supervisors", label: "المشرفون", icon: UserCog },
     { id: "members", label: "الأعضاء", icon: Users },
+    { id: "registrations", label: "طلبات التسجيل", icon: FileText },
     { id: "sessions", label: "الحصص", icon: Calendar },
     { id: "tests", label: "الاختبارات", icon: ClipboardList },
     { id: "notifications", label: "التنبيهات", icon: Bell },
@@ -179,6 +181,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
   const routeMap = {
     supervisors: "AdminSupervisors",
     members: "AdminMembers",
+    registrations: "AdminRegistrations",
     sessions: "AdminSeasons",
     tests: "AdminTests",
     notifications: "AdminNotifications",
