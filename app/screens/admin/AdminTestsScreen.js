@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Menu, Bell, Plus, Calendar, Users, Check, X } from "lucide-react-native";
+import { Menu, Bell, Plus, Calendar, Users, Check, X, ClipboardList, Clock } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { ROLES, userHasRole } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
@@ -17,8 +17,10 @@ import { rtlText, row, textAlignStart } from "../../constants/rtl";
 const palette = {
   primary: "#2E7D32",
   gold: "#FBC02D",
+  softGold: "#FFF8E1",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
+  softBlue: "#E3F2FD",
   blue: "#1976D2",
   background: "#F5F5F5",
   textSecondary: "#666666",
@@ -56,7 +58,7 @@ function statusMeta(kind) {
   return { label: "ملغى", color: palette.red, bg: "#FFEBEE" };
 }
 
-export default function AdminTestsScreen({ navigation }) {
+export default function AdminTestsScreen({ navigation, route }) {
   const {
     currentUser,
     stats,
@@ -71,7 +73,7 @@ export default function AdminTestsScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
-  const [tab, setTab] = useState("all");
+  const [tab, setTab] = useState(route?.params?.initialTab || "all");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -79,6 +81,11 @@ export default function AdminTestsScreen({ navigation }) {
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
   const [notifyMembers, setNotifyMembers] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const next = route?.params?.initialTab;
+    if (next) setTab(next);
+  }, [route?.params?.initialTab]);
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -226,42 +233,50 @@ export default function AdminTestsScreen({ navigation }) {
     return (
       <View key={exam.id} style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>
-            {exam.title || exam.level || "اختبار"}
-          </Text>
-          <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
-            <Text style={[styles.statusBadgeText, { color: meta.color }]}>
-              {meta.label}
+          <View style={styles.cardIconWrap}>
+            <ClipboardList size={20} color={palette.primary} pointerEvents="none" />
+          </View>
+          <View style={styles.cardHeaderInfo}>
+            <Text style={styles.cardTitle}>
+              {exam.title || exam.level || "اختبار"}
             </Text>
+            <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
+              <Text style={[styles.statusBadgeText, { color: meta.color }]}>
+                {meta.label}
+              </Text>
+            </View>
           </View>
         </View>
 
         {exam.description ? (
-          <Text style={styles.cardDesc}>{exam.description}</Text>
-        ) : null}
-
-        <View style={styles.metaRow}>
-          <Calendar size={14} color={palette.textSecondary} />
-          <Text style={styles.metaText}>{exam.date || "—"}</Text>
-        </View>
-
-        {group ? (
-          <View style={styles.metaRow}>
-            <Text style={styles.metaText}>الحصة: {group.name}</Text>
-          </View>
-        ) : null}
-
-        <View style={styles.metaRow}>
-          <Users size={14} color={palette.textSecondary} />
-          <Text style={styles.metaText}>
-            {participantCount} مشارك
-            {participantNames.length
-              ? ` — ${participantNames.join("، ")}${
-                  participantCount > participantNames.length ? "…" : ""
-                }`
-              : ""}
+          <Text style={styles.cardDesc} numberOfLines={2}>
+            {exam.description}
           </Text>
+        ) : null}
+
+        <View style={styles.metaPills}>
+          <View style={styles.metaPill}>
+            <Calendar size={13} color={palette.textSecondary} />
+            <Text style={styles.metaPillText}>{exam.date || "—"}</Text>
+          </View>
+          {group ? (
+            <View style={styles.metaPill}>
+              <Clock size={13} color={palette.textSecondary} />
+              <Text style={styles.metaPillText}>{group.name}</Text>
+            </View>
+          ) : null}
+          <View style={styles.metaPill}>
+            <Users size={13} color={palette.textSecondary} />
+            <Text style={styles.metaPillText}>{participantCount} مشارك</Text>
+          </View>
         </View>
+
+        {participantNames.length ? (
+          <Text style={styles.participantsText} numberOfLines={1}>
+            {participantNames.join("، ")}
+            {participantCount > participantNames.length ? "…" : ""}
+          </Text>
+        ) : null}
 
         {exam.score != null ? (
           <Text style={styles.scoreText}>
@@ -329,10 +344,10 @@ export default function AdminTestsScreen({ navigation }) {
       <View style={styles.tabs}>
         {TABS.map((t) => {
           const active = tab === t.key;
-          let countLabel = "";
-          if (t.key === "all") countLabel = ` (${counts.all})`;
-          if (t.key === "upcoming") countLabel = ` (${counts.upcoming})`;
-          if (t.key === "past") countLabel = ` (${counts.past})`;
+          let count = null;
+          if (t.key === "all") count = counts.all;
+          if (t.key === "upcoming") count = counts.upcoming;
+          if (t.key === "past") count = counts.past;
           return (
             <TouchableOpacity
               key={t.key}
@@ -341,8 +356,30 @@ export default function AdminTestsScreen({ navigation }) {
             >
               <Text style={[styles.tabText, active && styles.tabTextActive]}>
                 {t.label}
-                {t.key !== "create" ? countLabel : ""}
               </Text>
+              {count != null ? (
+                <View
+                  style={[
+                    styles.tabCount,
+                    active && styles.tabCountActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.tabCountText,
+                      active && styles.tabCountTextActive,
+                    ]}
+                  >
+                    {count}
+                  </Text>
+                </View>
+              ) : (
+                <Plus
+                  size={14}
+                  color={active ? palette.primary : palette.textSecondary}
+                  style={{ marginTop: 2 }}
+                />
+              )}
             </TouchableOpacity>
           );
         })}
@@ -359,7 +396,17 @@ export default function AdminTestsScreen({ navigation }) {
       >
         {tab === "create" ? (
           <View style={styles.formCard}>
-            <Text style={styles.formTitle}>إنشاء اختبار جديد</Text>
+            <View style={styles.formHeader}>
+              <View style={styles.formHeaderIcon}>
+                <Plus size={20} color={palette.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.formTitle}>إنشاء اختبار جديد</Text>
+                <Text style={styles.formSubtitle}>
+                  حدّد العنوان والتاريخ والمشاركين
+                </Text>
+              </View>
+            </View>
 
             <Text style={styles.label}>عنوان الاختبار</Text>
             <TextInput
@@ -512,12 +559,27 @@ export default function AdminTestsScreen({ navigation }) {
           </View>
         ) : filteredExams.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>لا توجد اختبارات في هذا التصنيف</Text>
+            <View style={styles.emptyIconWrap}>
+              <ClipboardList
+                size={36}
+                color={palette.primary}
+                pointerEvents="none"
+              />
+            </View>
+            <Text style={styles.emptyTitle}>لا توجد اختبارات هنا</Text>
+            <Text style={styles.emptyText}>
+              {tab === "upcoming"
+                ? "لا توجد اختبارات قادمة حالياً"
+                : tab === "past"
+                  ? "لا توجد اختبارات سابقة بعد"
+                  : "ابدأ بإنشاء أول اختبار للأعضاء"}
+            </Text>
             <TouchableOpacity
               style={styles.emptyCreateBtn}
               onPress={() => setTab("create")}
+              activeOpacity={0.8}
             >
-              <Plus size={16} color="#fff" />
+              <Plus size={18} color="#fff" />
               <Text style={styles.emptyCreateText}>إنشاء اختبار</Text>
             </TouchableOpacity>
           </View>
@@ -586,11 +648,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
+    paddingHorizontal: 4,
   },
   tab: {
     flex: 1,
     paddingVertical: 12,
     alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
     borderBottomWidth: 2,
     borderBottomColor: "transparent",
   },
@@ -607,63 +672,109 @@ const styles = StyleSheet.create({
     color: palette.primary,
     fontWeight: "700",
   },
+  tabCount: {
+    minWidth: 20,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: "#EEEEEE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabCountActive: {
+    backgroundColor: palette.softGreen,
+  },
+  tabCountText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: palette.textSecondary,
+  },
+  tabCountTextActive: {
+    color: palette.primary,
+  },
   scroll: { flex: 1 },
   scrollContent: { padding: 16 },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    padding: 14,
     marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   cardHeader: {
     flexDirection: row,
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 8,
+    gap: 10,
+    marginBottom: 10,
+  },
+  cardIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: palette.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cardHeaderInfo: {
+    flex: 1,
+    gap: 6,
   },
   cardTitle: {
-    flex: 1,
-    fontWeight: "bold",
-    fontSize: 16,
+    fontWeight: "700",
+    fontSize: 15,
     color: palette.textPrimary,
     ...rtlText,
   },
   statusBadge: {
+    alignSelf: "flex-start",
     borderRadius: 12,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 3,
   },
   statusBadgeText: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 11,
+    fontWeight: "700",
     ...rtlText,
   },
   cardDesc: {
     color: palette.textSecondary,
     fontSize: 13,
-    marginBottom: 8,
+    marginBottom: 10,
+    lineHeight: 20,
     ...rtlText,
   },
-  metaRow: {
+  metaPills: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  metaPill: {
     flexDirection: row,
     alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
+    gap: 5,
+    backgroundColor: palette.background,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
-  metaText: {
+  metaPillText: {
     color: palette.textSecondary,
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: "500",
+    ...rtlText,
+  },
+  participantsText: {
+    marginTop: 8,
+    color: palette.textSecondary,
+    fontSize: 12,
     ...rtlText,
   },
   scoreText: {
     marginTop: 8,
-    color: palette.gold,
+    color: "#F9A825",
     fontWeight: "700",
     fontSize: 14,
     ...rtlText,
@@ -679,8 +790,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 11,
+    borderRadius: 12,
   },
   completeBtn: { backgroundColor: palette.primary },
   cancelBtn: { backgroundColor: palette.red },
@@ -692,44 +803,83 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 28,
+    borderRadius: 16,
+    paddingVertical: 36,
+    paddingHorizontal: 24,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: palette.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: palette.textPrimary,
+    marginBottom: 6,
+    ...rtlText,
   },
   emptyText: {
     color: palette.textSecondary,
-    marginBottom: 12,
+    marginBottom: 18,
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
     ...rtlText,
   },
   emptyCreateBtn: {
     flexDirection: row,
     alignItems: "center",
-    gap: 6,
+    gap: 8,
     backgroundColor: palette.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 14,
   },
   emptyCreateText: {
     color: "#fff",
-    fontWeight: "600",
+    fontWeight: "700",
+    fontSize: 14,
     ...rtlText,
   },
   formCard: {
     backgroundColor: "#fff",
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  formHeader: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 18,
+  },
+  formHeaderIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: palette.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
   },
   formTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
+    fontSize: 16,
+    fontWeight: "700",
     color: palette.textPrimary,
-    marginBottom: 16,
+    ...rtlText,
+  },
+  formSubtitle: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    marginTop: 2,
     ...rtlText,
   },
   label: {

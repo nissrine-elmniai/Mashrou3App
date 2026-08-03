@@ -51,6 +51,7 @@ import AdminSupervisorsScreen from "./app/screens/admin/AdminSupervisorsScreen";
 import AdminStatsScreen from "./app/screens/admin/AdminStatsScreen";
 import AdminTestsScreen from "./app/screens/admin/AdminTestsScreen";
 import AdminProfileScreen from "./app/screens/admin/AdminProfileScreen";
+import AdminSettingsScreen from "./app/screens/admin/AdminSettingsScreen";
 import AdminMembersScreen from "./app/screens/admin/AdminMembersScreen";
 import AdminNotificationsScreen from "./app/screens/admin/AdminNotificationsScreen";
 
@@ -200,6 +201,11 @@ function RootNavigator() {
         <Stack.Screen
           name="AdminProfile"
           component={AdminProfileScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="AdminSettings"
+          component={AdminSettingsScreen}
           options={{ headerShown: false }}
         />
         <Stack.Screen

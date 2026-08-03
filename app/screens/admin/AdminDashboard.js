@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -25,7 +25,12 @@ import {
   Plus,
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { ROLES, userHasRole } from "../../constants/roles";
+import {
+  ROLES,
+  userHasRole,
+  REGISTRATION_STATUS,
+  ACCOUNT_STATUS,
+} from "../../constants/roles";
 import { rtlText, row, isRTL } from "../../constants/rtl";
 
 const palette = {
@@ -43,7 +48,156 @@ const palette = {
 
 const SIDEBAR_WIDTH = 280;
 
-function DashboardHome({ navigation, stats }) {
+function parseActivityDate(value) {
+  if (!value) return null;
+  if (typeof value === "number") return new Date(value);
+  const raw = String(value).trim();
+  if (!raw) return null;
+  // ISO
+  const iso = new Date(raw);
+  if (!Number.isNaN(iso.getTime())) return iso;
+  // YYYY/MM/DD or DD/MM/YYYY
+  const parts = raw.split(/[/-]/).map(Number);
+  if (parts.length === 3 && parts.every((n) => n > 0)) {
+    if (parts[0] > 31) {
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+    if (parts[2] > 31) {
+      return new Date(parts[2], parts[1] - 1, parts[0]);
+    }
+  }
+  return null;
+}
+
+function formatRelativeTime(date) {
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return "الآن";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "الآن";
+  if (mins < 60) return `منذ ${mins} دقيقة`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `منذ ${hours} ساعة`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "منذ يوم";
+  if (days < 7) return `منذ ${days} أيام`;
+  return date.toLocaleDateString("ar-MA", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function buildRecentActivities({
+  registrations = [],
+  exams = [],
+  users = [],
+  notifications = [],
+}) {
+  const items = [];
+
+  registrations.forEach((r) => {
+    const name = r.fullName || r.email || "مترشح";
+    if (r.status === REGISTRATION_STATUS.PENDING) {
+      items.push({
+        id: `reg-pending-${r.id}`,
+        color: palette.gold,
+        text: `طلب تسجيل جديد: ${name}`,
+        at: parseActivityDate(r.createdAt) || new Date(0),
+      });
+    } else if (
+      r.status === REGISTRATION_STATUS.INVITED ||
+      r.status === REGISTRATION_STATUS.ACCEPTED
+    ) {
+      items.push({
+        id: `reg-accepted-${r.id}`,
+        color: palette.primary,
+        text: `تم قبول طلب: ${name}`,
+        at:
+          parseActivityDate(r.acceptedAt) ||
+          parseActivityDate(r.createdAt) ||
+          new Date(0),
+      });
+    } else if (r.status === REGISTRATION_STATUS.ACTIVATED) {
+      items.push({
+        id: `reg-activated-${r.id}`,
+        color: palette.primary,
+        text: `تم إنشاء حساب العضو: ${name}`,
+        at:
+          parseActivityDate(r.acceptedAt) ||
+          parseActivityDate(r.createdAt) ||
+          new Date(0),
+      });
+    } else if (r.status === REGISTRATION_STATUS.REJECTED) {
+      items.push({
+        id: `reg-rejected-${r.id}`,
+        color: palette.red,
+        text: `تم رفض طلب: ${name}`,
+        at: parseActivityDate(r.createdAt) || new Date(0),
+      });
+    }
+  });
+
+  exams.forEach((e) => {
+    const title = e.title || "اختبار";
+    if (e.status === "cancelled") {
+      items.push({
+        id: `exam-cancel-${e.id}`,
+        color: palette.red,
+        text: `تم إلغاء الاختبار: ${title}`,
+        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
+      });
+    } else if (e.status === "completed") {
+      items.push({
+        id: `exam-done-${e.id}`,
+        color: palette.blue,
+        text: `تم إنجاز الاختبار: ${title}`,
+        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
+      });
+    } else {
+      items.push({
+        id: `exam-${e.id}`,
+        color: palette.blue,
+        text: `اختبار جديد: ${title}`,
+        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
+      });
+    }
+  });
+
+  users.forEach((u) => {
+    if (!userHasRole(u, ROLES.SUPERVISOR)) return;
+    if (u.accountStatus !== ACCOUNT_STATUS.INVITED) return;
+    const name = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email;
+    items.push({
+      id: `sup-invite-${u.id}`,
+      color: palette.gold,
+      text: `تعيين مشرف جديد: ${name}`,
+      at: parseActivityDate(u.createdAt) || new Date(0),
+    });
+  });
+
+  notifications.forEach((n) => {
+    const title = String(n.title || "");
+    if (!title.includes("تنبيه")) return;
+    items.push({
+      id: `notif-${n.id}`,
+      color: palette.red,
+      text: n.body ? `${title}: ${n.body}` : title,
+      at: parseActivityDate(n.createdAt) || new Date(0),
+    });
+  });
+
+  return items
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 12)
+    .map((item) => ({
+      id: item.id,
+      color: item.color,
+      text: item.text,
+      time: formatRelativeTime(item.at),
+    }));
+}
+
+function DashboardHome({ navigation, stats, activities }) {
   const statCards = [
     { label: "الأعضاء", value: stats?.members ?? 0, icon: "👥" },
     { label: "المشرفون", value: stats?.supervisors ?? 0, icon: "👨\u200d🏫" },
@@ -54,13 +208,6 @@ function DashboardHome({ navigation, stats }) {
       icon: "📋",
       badge: stats?.pendingRegs > 0 ? `${stats.pendingRegs} معلق` : null,
     },
-  ];
-
-  const activities = [
-    { color: palette.primary, text: "تم إضافة عضو جديد: أحمد محمد", time: "منذ 5 دقائق" },
-    { color: palette.gold, text: "اختبار جديد معلق للمراجعة", time: "منذ 15 دقيقة" },
-    { color: palette.blue, text: "تم تحديث بيانات الحصة", time: "منذ ساعة" },
-    { color: palette.red, text: "تنبيه: عضو متغيب 3 مرات متتالية", time: "منذ ساعتين" },
   ];
 
   return (
@@ -96,7 +243,9 @@ function DashboardHome({ navigation, stats }) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[dhStyles.actionBtn, { backgroundColor: palette.primary }]}
-          onPress={() => navigation.navigate("AdminTests")}
+          onPress={() =>
+            navigation.navigate("AdminTests", { initialTab: "create" })
+          }
         >
           <Plus size={16} color="#fff" />
           <Text style={[dhStyles.actionBtnText, { color: "#fff" }]}>إنشاء اختبار</Text>
@@ -112,15 +261,26 @@ function DashboardHome({ navigation, stats }) {
 
       <View style={dhStyles.activityCard}>
         <Text style={dhStyles.activityTitle}>النشاط الأخير</Text>
-        {activities.map((activity, index) => (
-          <View key={index} style={dhStyles.activityItem}>
-            <View style={[dhStyles.activityDot, { backgroundColor: activity.color }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={dhStyles.activityText}>{activity.text}</Text>
-              <Text style={dhStyles.activityTime}>{activity.time}</Text>
+        {activities.length === 0 ? (
+          <Text style={dhStyles.activityEmpty}>لا يوجد نشاط بعد</Text>
+        ) : (
+          activities.map((activity) => (
+            <View key={activity.id} style={dhStyles.activityItem}>
+              <View
+                style={[
+                  dhStyles.activityDot,
+                  { backgroundColor: activity.color },
+                ]}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={dhStyles.activityText}>{activity.text}</Text>
+                {activity.time ? (
+                  <Text style={dhStyles.activityTime}>{activity.time}</Text>
+                ) : null}
+              </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
       </View>
     </View>
   );
@@ -186,7 +346,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
     tests: "AdminTests",
     notifications: "AdminNotifications",
     chat: "ChatConversation",
-    settings: "AdminProfile",
+    settings: "AdminSettings",
   };
 
   const handlePress = (id) => {
@@ -295,7 +455,16 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
 
 export default function AdminDashboard({ navigation }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { stats, logout, currentUser, users, exams, seasons } = useApp();
+  const {
+    stats,
+    logout,
+    currentUser,
+    users,
+    exams,
+    seasons,
+    registrations,
+    notifications,
+  } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
@@ -310,6 +479,17 @@ export default function AdminDashboard({ navigation }) {
     exams: stats?.exams ?? exams?.length ?? 0,
     pendingRegs: stats?.pendingRegs ?? 0,
   };
+
+  const recentActivities = useMemo(
+    () =>
+      buildRecentActivities({
+        registrations,
+        exams,
+        users,
+        notifications,
+      }),
+    [registrations, exams, users, notifications]
+  );
 
   const handleLogout = async () => {
     await logout();
@@ -364,7 +544,11 @@ export default function AdminDashboard({ navigation }) {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
         showsVerticalScrollIndicator={false}
       >
-        <DashboardHome navigation={navigation} stats={derivedStats} />
+        <DashboardHome
+          navigation={navigation}
+          stats={derivedStats}
+          activities={recentActivities}
+        />
       </ScrollView>
 
       <AdminSidebar
@@ -652,6 +836,13 @@ const dhStyles = StyleSheet.create({
   activityTime: {
     color: palette.placeholder,
     fontSize: 12,
+    ...rtlText,
+  },
+  activityEmpty: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 12,
     ...rtlText,
   },
 });

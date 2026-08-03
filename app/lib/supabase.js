@@ -38,14 +38,25 @@ export const supabase = createClient(
 export function mapSupabaseAuthError(error) {
   const msg = error?.message || "";
   const code = error?.code || error?.status || "";
-  const blob = `${msg} ${code} ${error?.name || ""}`;
+  let raw = "";
+  try {
+    raw = typeof error === "string" ? error : JSON.stringify(error);
+  } catch {
+    raw = "";
+  }
+  const blob = `${msg} ${code} ${error?.name || ""} ${raw}`;
 
   // Erreur SMTP / envoi e-mail (souvent après activation Custom SMTP)
+  // ou échec update email (Supabase envoie un mail de confirmation)
   if (
-    /unexpected_failure|error sending|smtp|500/i.test(blob) ||
-    (typeof msg === "string" && msg.trim().startsWith("{") && /sb-error-code/i.test(msg))
+    /unexpected_failure|error sending|smtp|\b500\b|AuthRetryableFetchError/i.test(
+      blob
+    ) ||
+    (typeof msg === "string" &&
+      msg.trim().startsWith("{") &&
+      /sb-error-code/i.test(msg))
   ) {
-    return "تعذر إرسال البريد. تحقق من إعدادات SMTP في Supabase (Resend).";
+    return "تعذر إرسال بريد التأكيد. تحقق من إعدادات SMTP في Supabase (Resend) ثم أعد المحاولة.";
   }
   if (/invalid login credentials/i.test(msg)) {
     return "البريد الإلكتروني أو كلمة المرور غير صحيحة";
@@ -66,7 +77,10 @@ export function mapSupabaseAuthError(error) {
     return "رمز التحقق غير صالح أو منتهٍ. أعد إرسال الرمز.";
   }
   // Ne jamais afficher un dump JSON brut à l'utilisateur
-  if (typeof msg === "string" && msg.trim().startsWith("{")) {
+  if (
+    (typeof msg === "string" && msg.trim().startsWith("{")) ||
+    /sb-error-code|__isAuthError/i.test(blob)
+  ) {
     return "حدث خطأ في الخادم. حاول مرة أخرى.";
   }
   return msg || "حدث خطأ غير متوقع";
