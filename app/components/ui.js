@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import Svg, { Circle } from "react-native-svg";
 import { colors, radii, shadows } from "../constants/theme";
 import {
   rtlText,
@@ -310,6 +311,104 @@ export function StatRow({ label, value, color = colors.primary }) {
   );
 }
 
+/** Anneau de progression circulaire (react-native-svg), % centré par défaut */
+export function ProgressRing({
+  size = 120,
+  stroke = 10,
+  progress = 0,
+  color = colors.primary,
+  trackColor = colors.border,
+  children,
+}) {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clamped = Math.max(0, Math.min(100, Number(progress) || 0));
+  const offset = circumference - (clamped / 100) * circumference;
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
+      <Svg width={size} height={size}>
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={trackColor}
+          strokeWidth={stroke}
+          fill="none"
+        />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={color}
+          strokeWidth={stroke}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={`${circumference}`}
+          strokeDashoffset={offset}
+          rotation="-90"
+          origin={`${size / 2}, ${size / 2}`}
+        />
+      </Svg>
+      <View style={styles.ringCenter}>
+        {children || <Text style={[styles.ringText, { color }]}>{clamped}%</Text>}
+      </View>
+    </View>
+  );
+}
+
+/** Barre d'onglets basse interne (icônes lucide passées via tabs[].icon) */
+export function MemberBottomTabBar({ tabs, activeKey, onChange }) {
+  return (
+    <View style={styles.bottomBar}>
+      {tabs.map((t) => {
+        const active = t.key === activeKey;
+        const Icon = t.icon;
+        return (
+          <TouchableOpacity
+            key={t.key}
+            style={styles.bottomTab}
+            onPress={() => onChange(t.key)}
+            activeOpacity={0.7}
+          >
+            <Icon
+              size={22}
+              color={active ? colors.primary : colors.muted}
+              strokeWidth={active ? 2.4 : 2}
+            />
+            <Text
+              style={[
+                styles.bottomTabLabel,
+                active && styles.bottomTabLabelActive,
+              ]}
+            >
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+/** Petite pill de statistique (fond clair + couleur d'accent) */
+export function StatChip({ icon, label, value, color = colors.primary }) {
+  return (
+    <View style={[styles.statChip, { borderColor: color }]}>
+      {icon ? <Ionicons name={icon} size={16} color={color} /> : null}
+      <Text style={styles.statChipLabel}>{label}</Text>
+      <Text style={[styles.statChipValue, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
@@ -567,5 +666,69 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontFamily: fonts.regular,
     writingDirection: "rtl",
+  },
+
+  ringCenter: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  ringText: {
+    fontSize: 24,
+    fontFamily: fonts.bold,
+    ...rtlText,
+    textAlign: "center",
+  },
+
+  bottomBar: {
+    flexDirection: row,
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+    paddingBottom: 8,
+    ...shadows.card,
+  },
+  bottomTab: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  bottomTabLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
+  },
+  bottomTabLabelActive: {
+    color: colors.primary,
+    fontFamily: fonts.bold,
+  },
+
+  statChip: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    backgroundColor: colors.soft,
+    marginEnd: 8,
+    marginBottom: 8,
+  },
+  statChipLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  statChipValue: {
+    fontSize: 14,
+    fontFamily: fonts.bold,
+    ...rtlText,
   },
 });
