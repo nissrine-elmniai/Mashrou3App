@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { row, rtlText, arrowBack } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
+import { addProgressEntry } from "../../lib/progressApi";
 
 const { width } = Dimensions.get("window");
 
@@ -59,7 +60,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     ? new Date(String(rawDate).replace(/\//g, "-"))
     : null;
 
-  // Calcul des jours (simulé - à remplacer par Firebase)
+  // Calcul des jours (dates portées par le programme affiché — pas d'entité backend)
   const aujourdhui = new Date();
   const joursEcoules = dateDebut
     ? Math.min(
@@ -103,7 +104,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     : "Date non définie";
 
   // Gestion de la sauvegarde du progrès
-  const handleSaveProgress = () => {
+  const handleSaveProgress = async () => {
     const newProgress = parseInt(tempProgress);
     if (isNaN(newProgress) || newProgress < 0 || newProgress > 100) {
       Alert.alert("خطأ", "الرجاء إدخال قيمة بين 0 و 100");
@@ -117,9 +118,22 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
     setShowProgressModal(false);
     setIsEditing(false);
-    Alert.alert("تم", "تم تحديث التقدم بنجاح");
 
-    // Ici vous ajouterez la logique pour sauvegarder dans Firebase
+    // Persistance Supabase (table progression). Le programme affiché est
+    // « جزء عم » → juze 30 ; le pourcentage du modal est traduit en tumun
+    // (1..8) de ce juz. Mapping provisoire — à affiner quand le CDC
+    // définira la saisie détaillée.
+    const result = await addProgressEntry({
+      juze: 30,
+      tumun: Math.max(1, Math.min(8, Math.ceil((newProgress / 100) * 8))),
+      note: null,
+    });
+
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error || "تعذر حفظ التقدم");
+      return;
+    }
+    Alert.alert("تم", "تم تحديث التقدم بنجاح");
   };
 
   // 🆕 FONCTION POUR SUPPRIMER LE PROGRAMME
@@ -143,8 +157,8 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
   const confirmDelete = async () => {
     try {
-      // Ici vous ferez l'appel Firebase pour supprimer
-      // await deleteDoc(doc(db, "programmes", programData.id));
+      // Pas d'entité « programme » côté backend (le Mushaf reste un asset
+      // statique embarqué) — suppression locale uniquement.
 
       console.log("Programme supprimé:", programData.id);
 

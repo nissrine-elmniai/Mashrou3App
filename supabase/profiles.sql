@@ -1,3 +1,4 @@
+-- MIGRÉ : voir supabase/migrations/0001_baseline.sql
 -- À exécuter dans Supabase → SQL Editor
 -- Table profils liée à auth.users (rôles de l'app)
 

@@ -1,3 +1,4 @@
+-- MIGRÉ : voir supabase/migrations/0001_baseline.sql
 -- À exécuter dans Supabase → SQL Editor
 -- Demandes d’inscription membres (stockées à la validation admin)
 
@@ -89,32 +90,5 @@ $$;
 
 drop trigger if exists on_profile_link_member_application on public.profiles;
 create trigger on_profile_link_member_application
-  after insert or update of email, role on public.profiles
-  for each row execute function public.link_member_application_on_profile();
-
--- À la création du profil membre (Auth), lier automatiquement la demande acceptée
-create or replace function public.link_member_application_on_profile()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if new.role = 'member' and new.email is not null then
-    update public.member_applications
-    set
-      status = 'activated',
-      user_id = new.id,
-      activated_at = coalesce(activated_at, now()),
-      updated_at = now()
-    where lower(email) = lower(new.email)
-      and status in ('invited', 'pending');
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_profile_member_link on public.profiles;
-create trigger on_profile_member_link
   after insert or update of email, role on public.profiles
   for each row execute function public.link_member_application_on_profile();

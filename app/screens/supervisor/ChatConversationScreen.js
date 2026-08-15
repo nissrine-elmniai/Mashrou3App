@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,33 +10,129 @@ import {
   Platform,
   StatusBar,
   Image,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { Paperclip, Send } from "lucide-react-native";
 import { colors, radii } from "../../constants/theme";
 import { row, rtlText, rtlTextBold, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
+import { useApp } from "../../context/AppContext";
+import { ROLES } from "../../constants/roles";
+import { getSupervisorActiveSeance } from "../../lib/membersApi";
+import {
+  getMySeance,
+  resolveAdminProfile,
+  getConversation,
+  sendMessage,
+  subscribeConversation,
+} from "../../lib/messagesApi";
 
-const INITIAL_MESSAGES = [
-  { id: "m1", text: "السلام عليكم، كيف تسير المراجعة هذا الأسبوع؟", sent: false, time: "10:30 ص" },
-  { id: "m2", text: "وعليكم السلام، الحمد لله الأمور جيدة", sent: true, time: "10:31 ص" },
-  { id: "m3", text: "هل حضرت الحصة أمس؟", sent: false, time: "10:32 ص" },
-  { id: "m4", text: "نعم، حضرت وأنهيت الحفظ المطلوب ✓", sent: true, time: "10:33 ص" },
-];
+function formatTime(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" });
+}
+
+function normalizeMessage(m, myAuthId) {
+  return {
+    id: m.id,
+    text: m.contenu || "",
+    sent: m.sender_id === myAuthId,
+    time: formatTime(m.created_at),
+    image: m.image_url || null,
+  };
+}
 
 export default function ChatConversationScreen({ navigation, route }) {
   const { contactId, contactName, contactAvatarLetter } = route.params || {};
+  const { currentUser, supabaseSession } = useApp();
   const isAdmin = contactId === "admin";
 
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
+  const [conversation, setConversation] = useState({ otherId: null, seanceId: null });
 
-  const handleSend = () => {
+  const authId = supabaseSession?.user?.id || currentUser?.authId || null;
+  const role = currentUser?.role;
+  const isSupervisor = role === ROLES.SUPERVISOR;
+  const isMember = role === ROLES.MEMBER;
+
+  // Chargement de la conversation réelle (au lieu de l'ancien mock
+  // INITIAL_MESSAGES) : résolution du correspondant + séance selon le rôle.
+  useEffect(() => {
+    if (!authId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        let otherId = contactId;
+        let seanceId = null;
+
+        if (isAdmin && isSupervisor) {
+          // Chat superviseur <-> admin : résoudre l'id du compte admin
+          const admin = await resolveAdminProfile();
+          otherId = admin?.id || null;
+        } else if (isAdmin && isMember) {
+          // Chat membre <-> son superviseur : séance du membre + son superviseur
+          const mySeance = await getMySeance();
+          if (mySeance?.ok && mySeance.seance) {
+            seanceId = mySeance.seance.id;
+            otherId = mySeance.seance.superviseur_id;
+          }
+        } else if (isSupervisor) {
+          // Chat superviseur <-> membre : séance active du superviseur
+          const mySeance = await getSupervisorActiveSeance(authId);
+          seanceId = mySeance?.id || null;
+        }
+
+        if (cancelled) return;
+        setConversation({ otherId, seanceId });
+        if (!otherId) return;
+
+        const res = await getConversation({ otherUserId: otherId, seanceId });
+        if (cancelled || !res.ok) return;
+        setMessages((res.messages || []).map((m) => normalizeMessage(m, authId)));
+      } catch (e) {
+        console.warn(
+          "ChatConversationScreen: échec de chargement —",
+          e?.message || e
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authId, contactId, isAdmin, isSupervisor, isMember]);
+
+  // Abonnement Realtime aux nouveaux messages du binôme
+  useEffect(() => {
+    if (!authId || !conversation.otherId) return;
+    const unsubscribe = subscribeConversation(
+      { otherUserId: conversation.otherId },
+      (msg) => {
+        setMessages((prev) =>
+          prev.some((m) => m.id === msg.id)
+            ? prev
+            : [...prev, normalizeMessage(msg, authId)]
+        );
+      }
+    );
+    return unsubscribe;
+  }, [authId, conversation.otherId]);
+
+  const handleSend = async () => {
     const trimmed = inputText.trim();
     if (!trimmed) return;
-    const time = new Date().toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" });
-    setMessages((prev) => [...prev, { id: `local_${Date.now()}`, text: trimmed, sent: true, time }]);
+    if (!conversation.otherId || !authId) return;
     setInputText("");
+    const res = await sendMessage({
+      recipientId: conversation.otherId,
+      seanceId: conversation.seanceId,
+      contenu: trimmed,
+    });
+    if (!res.ok) {
+      Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
+    }
   };
 
   const renderMessage = ({ item }) => {
