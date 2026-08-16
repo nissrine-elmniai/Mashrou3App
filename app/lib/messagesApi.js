@@ -2,6 +2,9 @@ import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
+/** UUID v4 de profile — tout autre valeur (ex. "admin") est refusée. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -68,7 +71,13 @@ export async function getMySeance() {
 /**
  * Profil admin de référence (chat superviseur <-> admin). RLS :
  * profiles_select_superviseur_admin limite la lecture des profils admin
- * aux comptes superviseur. @returns { ok, admin? }
+ * aux comptes superviseur.
+ *
+ * Choix si plusieurs profils ont role='admin' : on retourne le PREMIER
+ * créé (order created_at ASC, limit 1) — choix déterministe, le compte
+ * admin racine étant normalement le plus ancien. Aucun admin trouvé =>
+ * erreur explicite { ok:false, error }.
+ * @returns { ok, admin? }
  */
 export async function resolveAdminProfile() {
   if (!isSupabaseConfigured()) {
@@ -89,7 +98,10 @@ export async function resolveAdminProfile() {
     if (error) {
       return { ok: false, error: mapTableError(error, "profiles") };
     }
-    return { ok: true, admin: data || null };
+    if (!data) {
+      return { ok: false, error: "لم يتم العثور على حساب الإدارة" };
+    }
+    return { ok: true, admin: data };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -106,7 +118,7 @@ export async function getConversation({ otherUserId, seanceId = null }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!otherUserId) {
+  if (!otherUserId || typeof otherUserId !== "string" || !UUID_RE.test(otherUserId)) {
     return { ok: false, error: "المحادثة غير محددة" };
   }
   const userId = await currentAuthId();
@@ -154,7 +166,7 @@ export async function sendMessage({ recipientId, seanceId = null, contenu, image
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   const text = String(contenu || "").trim();
-  if (!recipientId) {
+  if (!recipientId || typeof recipientId !== "string" || !UUID_RE.test(recipientId)) {
     return { ok: false, error: "المستلم غير محدد" };
   }
   if (!text) {

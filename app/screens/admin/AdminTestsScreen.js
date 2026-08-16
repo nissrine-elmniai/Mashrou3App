@@ -6,6 +6,8 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
   Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -385,15 +387,19 @@ export default function AdminTestsScreen({ navigation, route }) {
         })}
       </View>
 
-      <ScrollView
+      <KeyboardAvoidingView
         style={styles.scroll}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingBottom: 24 + bottomGap },
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: 24 + bottomGap },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
         {tab === "create" ? (
           <View style={styles.formCard}>
             <View style={styles.formHeader}>
@@ -586,7 +592,8 @@ export default function AdminTestsScreen({ navigation, route }) {
         ) : (
           filteredExams.map(renderExamCard)
         )}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

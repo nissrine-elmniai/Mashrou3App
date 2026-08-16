@@ -584,8 +584,8 @@ function RegistrationBlock({
 function InfoRow({ label, value }) {
   return (
     <View style={styles.infoRow}>
-      <Text style={styles.infoValue}>{value}</Text>
       <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
     </View>
   );
 }

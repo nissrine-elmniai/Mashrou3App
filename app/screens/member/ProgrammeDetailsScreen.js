@@ -467,7 +467,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 const StatCard = ({ title, value, icon, color }) => (
   <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
     <View style={styles.rowBetween}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
       <View style={styles.row}>
         <Text style={[styles.statTitle, { ...rtlText }]}>{title}</Text>
         <MaterialCommunityIcons
@@ -477,6 +476,7 @@ const StatCard = ({ title, value, icon, color }) => (
           style={{ marginStart: 8 }}
         />
       </View>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
     </View>
   </View>
 );
