@@ -345,7 +345,7 @@ function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
     sessions: "AdminSeasons",
     tests: "AdminTests",
     notifications: "AdminNotifications",
-    chat: "ChatConversation",
+    chat: "AdminChat",
     settings: "AdminSettings",
   };
 

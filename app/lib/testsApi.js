@@ -268,3 +268,136 @@ export async function recordTestResult({ invitationId, note, commentaire = null 
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
+
+/**
+ * (Admin) Tous les tests, avec la séance et les invitations jointes.
+ * RLS : tests_admin_all / inscriptions via private.is_admin() (0009).
+ * @returns { ok, tests }
+ */
+export async function getAllTestsAdmin() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("tests")
+        .select(
+          "*, seance:seances!tests_seance_id_fkey(id, nom), invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie)"
+        )
+        .order("created_at", { ascending: false }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الاختبارات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "tests") };
+    }
+    return { ok: true, tests: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Tests d'une séance donnée (invitations jointes).
+ * @param {string} seanceId
+ * @returns { ok, tests }
+ */
+export async function getSeanceTests(seanceId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!seanceId) {
+    return { ok: false, error: "معرّف الحصة مفقود" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("tests")
+        .select(
+          "*, invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie)"
+        )
+        .eq("seance_id", seanceId)
+        .order("created_at", { ascending: false }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة اختبارات الحصة"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "tests") };
+    }
+    return { ok: true, tests: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Invitations d'un test avec le profil de chaque membre et son
+ * résultat (notation) éventuel.
+ * @param {string} testId
+ * @returns { ok, invitations }
+ */
+export async function getTestInvitationsWithMembers(testId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_invitations")
+        .select(
+          "*, membre:profiles!test_invitations_membre_id_fkey(first_name, last_name, email), resultat:test_resultats!test_resultats_test_invitation_id_fkey(note, commentaire, created_at)"
+        )
+        .eq("test_id", testId)
+        .order("created_at", { ascending: true }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة دعوات الاختبار"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "test_invitations") };
+    }
+    return { ok: true, invitations: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin / Superviseur) Positionnement du statut d'un test (migration
+ * 0012 : planifie / termine / annule). RLS : tests_admin_all ou
+ * tests_write_superviseur.
+ * @param {object} payload { testId, statut }
+ * @returns { ok, test? }
+ */
+export async function updateTestStatus({ testId, statut }) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود" };
+  }
+  if (!["planifie", "termine", "annule"].includes(statut)) {
+    return { ok: false, error: "حالة غير صالحة للاختبار" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("tests")
+        .update({ statut })
+        .eq("id", testId)
+        .select("*")
+        .single(),
+      SUPABASE_TIMEOUT_MS,
+      "تحديث حالة الاختبار"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "tests") };
+    }
+    return { ok: true, test: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}

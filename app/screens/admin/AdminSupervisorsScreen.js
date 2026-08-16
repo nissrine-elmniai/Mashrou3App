@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -8,13 +8,20 @@ import {
   ScrollView,
   Alert,
   Modal,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Search, Trash2, Plus, X, Menu, Bell, SquarePen } from "lucide-react-native";
+import { Search, Trash2, Plus, X, Menu, Bell, Ban } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { ACCOUNT_STATUS, ROLES, userHasRole } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
+import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
+import {
+  createSupervisorInvitation,
+  listSupervisorInvitations,
+  revokeSupervisorInvitation,
+  deleteSupervisorAccount,
+} from "../../lib/supervisorInvitationsApi";
 
 const palette = {
   primary: "#2E7D32",
@@ -36,23 +43,14 @@ function hissaLabel(count) {
 }
 
 export default function AdminSupervisorsScreen({ navigation }) {
-  const {
-    users,
-    addSupervisor,
-    removeSupervisor,
-    getSupervisorGroups,
-    currentUser,
-    stats,
-  } = useApp();
+  const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const fabBottom = Math.max(insets.bottom, 16) + 16;
-  const supervisors = users.filter((u) => userHasRole(u, ROLES.SUPERVISOR));
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
-  const pendingCount = stats?.pendingRegs ?? 0;
+  const [supervisors, setSupervisors] = useState([]);
+  const [invitations, setInvitations] = useState([]);
+  const [seances, setSeances] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -63,18 +61,58 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [groupName, setGroupName] = useState("");
   const [sending, setSending] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const displayName = currentUser
+    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
+    : "";
+  const initial = displayName.charAt(0) || "م";
+  const pendingCount = stats?.pendingRegs ?? 0;
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    const [supRes, invRes, seaRes] = await Promise.all([
+      getSupervisorProfiles(),
+      listSupervisorInvitations(),
+      getAllSeances(),
+    ]);
+    if (supRes.ok) setSupervisors(supRes.supervisors);
+    if (invRes.ok) setInvitations(invRes.invitations);
+    if (seaRes.ok) setSeances(seaRes.seances);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  const groupCount = (supervisorId) =>
+    seances.filter(
+      (s) => s.superviseur_id === supervisorId && s.statut !== "archivee"
+    ).length;
+
+  const pendingInvitations = useMemo(
+    () => invitations.filter((i) => i.status === "pending"),
+    [invitations]
+  );
+
+  const q = search.trim().toLowerCase();
+  const filteredSupervisors = useMemo(() => {
     return supervisors.filter((s) => {
-      const fullName = `${s.firstName || ""} ${s.lastName || ""}`.toLowerCase();
+      if (!q) return true;
+      const fullName = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
       const mail = (s.email || "").toLowerCase();
-      if (q && !fullName.includes(q) && !mail.includes(q)) return false;
-      if (filter === "pending") {
-        return s.accountStatus === ACCOUNT_STATUS.INVITED;
-      }
-      return true;
+      return fullName.includes(q) || mail.includes(q);
     });
-  }, [supervisors, search, filter]);
+  }, [supervisors, q]);
+
+  const filteredInvitations = useMemo(() => {
+    if (filter !== "pending") return [];
+    return pendingInvitations.filter((i) => {
+      if (!q) return true;
+      const fullName = `${i.first_name || ""} ${i.last_name || ""}`.toLowerCase();
+      const mail = (i.email || "").toLowerCase();
+      return fullName.includes(q) || mail.includes(q);
+    });
+  }, [pendingInvitations, filter, q]);
 
   const resetForm = () => {
     setFirstName("");
@@ -84,16 +122,16 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const handleAdd = async () => {
-    if (!groupName.trim()) {
-      Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
+    if (!email.trim() || !firstName.trim() || !lastName.trim()) {
+      Alert.alert("تنبيه", "أدخل الاسم واللقب والبريد الإلكتروني");
       return;
     }
     setSending(true);
-    const result = addSupervisor({
+    const result = await createSupervisorInvitation({
+      email,
       firstName,
       lastName,
-      email,
-      groupName: groupName.trim(),
+      groupName,
     });
     if (!result.ok) {
       setSending(false);
@@ -105,7 +143,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
     const mail = await sendSupervisorInviteEmail({
       toEmail: email.trim(),
       fullName,
-      groupName: result.groupName,
+      groupName: groupName.trim(),
     });
     setSending(false);
 
@@ -117,39 +155,62 @@ export default function AdminSupervisorsScreen({ navigation }) {
     } else {
       Alert.alert(
         "تمت الإضافة — فشل إرسال البريد",
-        `${mail.error || ""}\n\nتمت إضافة المشرف. أبلغه أنه يمكنه إنشاء حسابه من التطبيق.`
+        `${mail.error || ""}\n\nتم حفظ الدعوة. أبلغ المشرف أنه يمكنه إنشاء حسابه من التطبيق.`
       );
     }
 
     resetForm();
     setShowAdd(false);
+    loadAll();
   };
 
-  const confirmRemove = (supervisor) => {
-    const fullName = `${supervisor.firstName} ${supervisor.lastName}`;
-    Alert.alert("حذف المشرف", `هل تريد حذف «${fullName}»؟`, [
-      { text: "إلغاء", style: "cancel" },
-      {
-        text: "حذف",
-        style: "destructive",
-        onPress: () => {
-          const result = removeSupervisor(supervisor.id);
-          if (!result.ok) {
-            Alert.alert("خطأ", result.error);
-            return;
-          }
-          Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
-        },
-      },
-    ]);
-  };
-
-  const openEdit = (supervisor) => {
-    const groups = getSupervisorGroups(supervisor.id);
+  const confirmDelete = (supervisor) => {
+    const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
     Alert.alert(
-      "تعديل المشرف",
-      `${supervisor.firstName || ""} ${supervisor.lastName || ""}\n${supervisor.email || ""}\n${hissaLabel(groups.length)}`,
-      [{ text: "حسناً", style: "cancel" }]
+      "حذف المشرف",
+      `هل تريد حذف «${name || supervisor.email}» نهائياً؟ سيُحذف حسابه وكل بياناته المرتبطة.`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "حذف",
+          style: "destructive",
+          onPress: async () => {
+            const result = await deleteSupervisorAccount({
+              userId: supervisor.id,
+            });
+            if (!result.ok) {
+              Alert.alert("خطأ", result.error);
+              return;
+            }
+            Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
+            loadAll();
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmRevoke = (invitation) => {
+    const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
+    Alert.alert(
+      "إلغاء الدعوة",
+      `هل تريد إلغاء دعوة «${name || invitation.email}»؟ يمكنك إعادة دعوته لاحقاً بنفس البريد.`,
+      [
+        { text: "تراجع", style: "cancel" },
+        {
+          text: "إلغاء الدعوة",
+          style: "destructive",
+          onPress: async () => {
+            const result = await revokeSupervisorInvitation(invitation.id);
+            if (!result.ok) {
+              Alert.alert("خطأ", result.error);
+              return;
+            }
+            Alert.alert("تم", "تم إلغاء الدعوة");
+            loadAll();
+          },
+        },
+      ]
     );
   };
 
@@ -234,47 +295,78 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 filter === "pending" && styles.filterChipTextActive,
               ]}
             >
-              بانتظار التفعيل
+              بانتظار التفعيل ({pendingInvitations.length})
             </Text>
           </TouchableOpacity>
         </View>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <View style={styles.emptyCard}>
+            <ActivityIndicator size="large" color={palette.primary} />
+          </View>
+        ) : filter === "pending" ? (
+          filteredInvitations.length === 0 ? (
+            <Text style={styles.emptyText}>لا توجد دعوات معلّقة</Text>
+          ) : (
+            filteredInvitations.map((invitation) => {
+              const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
+              return (
+                <View key={invitation.id} style={styles.card}>
+                  <View style={styles.cardAvatar}>
+                    <Text style={styles.cardAvatarText}>
+                      {name.charAt(0) || "؟"}
+                    </Text>
+                  </View>
+                  <View style={styles.cardInfo}>
+                    <Text style={styles.cardName}>{name || "دعوة مشرف"}</Text>
+                    <Text style={styles.cardEmail}>{invitation.email}</Text>
+                    {invitation.group_name ? (
+                      <Text style={styles.cardGroup}>
+                        المجموعة: {invitation.group_name}
+                      </Text>
+                    ) : null}
+                    <View style={styles.sessionBadge}>
+                      <Text style={styles.sessionBadgeText}>
+                        بانتظار التفعيل
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.deleteBtn]}
+                    onPress={() => confirmRevoke(invitation)}
+                    accessibilityLabel="إلغاء الدعوة"
+                  >
+                    <Ban size={18} color={palette.red} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )
+        ) : filteredSupervisors.length === 0 ? (
           <Text style={styles.emptyText}>لا يوجد مشرفون بعد</Text>
         ) : (
-          filtered.map((supervisor) => {
-            const name = `${supervisor.firstName || ""} ${supervisor.lastName || ""}`.trim();
-            const groups = getSupervisorGroups(supervisor.id);
-            const pending = supervisor.accountStatus === ACCOUNT_STATUS.INVITED;
+          filteredSupervisors.map((supervisor) => {
+            const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
             return (
               <View key={supervisor.id} style={styles.card}>
                 <View style={styles.cardAvatar}>
                   <Text style={styles.cardAvatarText}>
-                    {(supervisor.firstName?.[0] || name.charAt(0) || "?").toUpperCase()}
+                    {name.charAt(0) || "؟"}
                   </Text>
                 </View>
                 <View style={styles.cardInfo}>
-                  <Text style={styles.cardName}>{name}</Text>
+                  <Text style={styles.cardName}>{name || supervisor.email}</Text>
                   <Text style={styles.cardEmail}>{supervisor.email}</Text>
                   <View style={styles.sessionBadge}>
                     <Text style={styles.sessionBadgeText}>
-                      {pending && groups.length === 0
-                        ? "بانتظار التفعيل"
-                        : hissaLabel(groups.length)}
+                      {hissaLabel(groupCount(supervisor.id))}
                     </Text>
                   </View>
                 </View>
                 <View style={styles.cardActions}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.editBtn]}
-                    onPress={() => openEdit(supervisor)}
-                    accessibilityLabel="تعديل المشرف"
-                  >
-                    <SquarePen size={18} color={palette.textSecondary} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
                     style={[styles.actionBtn, styles.deleteBtn]}
-                    onPress={() => confirmRemove(supervisor)}
+                    onPress={() => confirmDelete(supervisor)}
                     accessibilityLabel="حذف المشرف"
                   >
                     <Trash2 size={18} color={palette.red} />
@@ -476,6 +568,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 40,
   },
+  emptyCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 48,
+    alignItems: "center",
+  },
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -518,6 +616,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     ...rtlText,
   },
+  cardGroup: {
+    color: palette.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+    ...rtlText,
+  },
   sessionBadge: {
     alignSelf: "flex-start",
     marginTop: 6,
@@ -538,9 +642,6 @@ const styles = StyleSheet.create({
   actionBtn: {
     padding: 8,
     borderRadius: 8,
-  },
-  editBtn: {
-    backgroundColor: "#F5F5F5",
   },
   deleteBtn: {
     backgroundColor: "#FFEBEE",

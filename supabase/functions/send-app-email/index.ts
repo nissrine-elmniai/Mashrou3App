@@ -1,9 +1,10 @@
 // Supabase Edge Function — envoi d'e-mails via Resend
 // Deploy: supabase functions deploy send-app-email
 // Secret: supabase secrets set RESEND_API_KEY=re_xxx
-// Optionnel: supabase secrets set FROM_EMAIL="Nom <noreply@votredomaine.com>"
+// Optionnel: supabase secrets set FROM_EMAIL="Nom <noreply@ton-domaine.com>"
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { Resend } from "npm:resend@4.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,22 +33,35 @@ Deno.serve(async (req) => {
       data: { user },
       error: userError,
     } = await userClient.auth.getUser();
+
     if (userError || !user) {
+      console.error("Auth error:", userError);
       return json({ ok: false, error: "جلسة غير صالحة" }, 401);
     }
 
-    // Seuls admin / supervisor peuvent envoyer
-    const { data: profile } = await userClient
+    // Vérification du rôle
+    const { data: profile, error: profileError } = await userClient
       .from("profiles")
       .select("role")
       .eq("id", user.id)
       .maybeSingle();
 
+    if (profileError) {
+      console.error("Profile fetch error:", profileError);
+    }
+
     if (!profile || !["admin", "supervisor"].includes(profile.role)) {
       return json({ ok: false, error: "ليس لديك صلاحية إرسال البريد" }, 403);
     }
 
-    const body = await req.json();
+    // Parsing du body
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ ok: false, error: "جسم الطلب غير صالح (JSON)" }, 400);
+    }
+
     const toEmail = String(body.toEmail || "").trim().toLowerCase();
     const subject = String(body.subject || "").trim();
     const message = String(body.message || "").trim();
@@ -55,7 +69,7 @@ Deno.serve(async (req) => {
 
     if (!toEmail || !subject || !message) {
       return json(
-        { ok: false, error: "بيانات البريد غير مكتملة" },
+        { ok: false, error: "بيانات البريد غير مكتملة (toEmail, subject, message)" },
         400
       );
     }
@@ -63,58 +77,51 @@ Deno.serve(async (req) => {
     const resendKey = Deno.env.get("RESEND_API_KEY");
     if (!resendKey) {
       return json(
-        {
-          ok: false,
-          error:
-            "RESEND_API_KEY غير مُعدّ. أضفه عبر: supabase secrets set RESEND_API_KEY=...",
-        },
+        { ok: false, error: "RESEND_API_KEY غير مُعدّ في secrets" },
         500
       );
     }
 
     const fromEmail =
       Deno.env.get("FROM_EMAIL") ||
-      "مهندس حامل لكتاب الله <onboarding@resend.dev>";
+      "Mashrou3 <onboarding@resend.dev>";
 
-    const resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [toEmail],
-        subject,
-        text: message,
-        html: message
-          .split("\n")
-          .map((line: string) => `<p style="margin:0 0 8px;">${escapeHtml(line) || "&nbsp;"}</p>`)
-          .join(""),
-      }),
+    // Envoi via SDK Resend
+    const resend = new Resend(resendKey);
+
+    const { data, error: resendError } = await resend.emails.send({
+      from: fromEmail,
+      to: [toEmail],
+      subject,
+      text: message,
+      html: message
+        .split("\n")
+        .map((line) => `<p style="margin:0 0 8px;">${escapeHtml(line) || "&nbsp;"}</p>`)
+        .join(""),
     });
 
-    const resendData = await resendRes.json();
-    if (!resendRes.ok) {
-      const errMsg =
-        resendData?.message ||
-        resendData?.error ||
-        "فشل إرسال البريد عبر Resend";
-      return json({ ok: false, error: String(errMsg) }, 502);
+    if (resendError) {
+      console.error("Resend API error:", resendError);
+      return json(
+        {
+          ok: false,
+          error: resendError.message || "فشل إرسال البريد عبر Resend",
+        },
+        502
+      );
     }
 
     return json({
       ok: true,
       via: "resend",
-      id: resendData.id,
+      id: data?.id,
       to: toEmail,
       toName,
     });
-  } catch (e) {
-    return json(
-      { ok: false, error: e?.message || "خطأ غير متوقع في إرسال البريد" },
-      500
-    );
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    console.error("Edge function fatal error:", e);
+    return json({ ok: false, error: errMsg }, 500);
   }
 });
 

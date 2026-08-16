@@ -19,6 +19,7 @@ import {
 } from "@expo-google-fonts/cairo";
 
 import { AppProvider } from "./app/context/AppContext";
+import BlockingAlertGate from "./app/components/BlockingAlertGate";
 import { colors } from "./app/constants/theme";
 import {
   applyGlobalRtlTypography,
@@ -54,6 +55,7 @@ import AdminProfileScreen from "./app/screens/admin/AdminProfileScreen";
 import AdminSettingsScreen from "./app/screens/admin/AdminSettingsScreen";
 import AdminMembersScreen from "./app/screens/admin/AdminMembersScreen";
 import AdminNotificationsScreen from "./app/screens/admin/AdminNotificationsScreen";
+import AdminChatScreen from "./app/screens/admin/AdminChatScreen";
 
 const Stack = createStackNavigator();
 
@@ -216,8 +218,8 @@ function RootNavigator() {
         <Stack.Screen
           name="AdminNotifications"
           component={AdminNotificationsScreen}
-          options={{ headerShown: false }}
         />
+        <Stack.Screen name="AdminChat" component={AdminChatScreen} />
 
         <Stack.Screen
           name="MemberDashboardScreen"
@@ -278,6 +280,7 @@ export default function App() {
       <SafeAreaProvider>
         <AppProvider>
           <RootNavigator />
+          <BlockingAlertGate />
         </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

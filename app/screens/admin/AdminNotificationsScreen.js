@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -9,17 +9,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Menu, Bell, Send, Megaphone } from "lucide-react-native";
+import { Menu, Bell, Megaphone } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { rtlText, row, textAlignStart } from "../../constants/rtl";
+import { rtlText, row } from "../../constants/rtl";
+import { sendAlert, getAllAlertsAdmin } from "../../lib/alertsApi";
 
 const palette = {
   primary: "#2E7D32",
   gold: "#FBC02D",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
+  softGold: "#FFF8E1",
   blue: "#1976D2",
   background: "#F5F5F5",
   textSecondary: "#666666",
@@ -50,14 +54,7 @@ const AUDIENCE_LABELS = {
 };
 
 export default function AdminNotificationsScreen({ navigation }) {
-  const {
-    currentUser,
-    stats,
-    notifications,
-    sendAlert,
-    getNotificationsForUser,
-    markNotificationRead,
-  } = useApp();
+  const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
@@ -66,20 +63,31 @@ export default function AdminNotificationsScreen({ navigation }) {
   const [toSupervisors, setToSupervisors] = useState(true);
   const [sending, setSending] = useState(false);
 
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
     : "";
   const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
-  const list = useMemo(() => {
-    const mine = getNotificationsForUser(currentUser);
-    // Admin voit aussi tout ce qui a été diffusé
-    const all = notifications.length ? notifications : mine;
-    return [...all].sort((a, b) =>
-      (a.createdAt || "") < (b.createdAt || "") ? 1 : -1
-    );
-  }, [notifications, currentUser, getNotificationsForUser]);
+  const loadHistory = useCallback(async () => {
+    const res = await getAllAlertsAdmin();
+    if (res.ok) setHistory(res.alerts);
+    setLoadingHistory(false);
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadHistory();
+    setRefreshing(false);
+  };
 
   const resolveAudience = () => {
     if (toMembers && toSupervisors) return "all";
@@ -88,17 +96,21 @@ export default function AdminNotificationsScreen({ navigation }) {
     return null;
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const audience = resolveAudience();
     if (!audience) {
       Alert.alert("تنبيه", "اختر الأعضاء أو المشرفين أو الاثنين معاً");
       return;
     }
+    if (!alertText.trim()) {
+      Alert.alert("تنبيه", "اكتب نص التنبيه أولاً");
+      return;
+    }
     setSending(true);
-    const result = sendAlert(alertText, audience);
+    const result = await sendAlert(alertText.trim(), audience);
     setSending(false);
     if (!result.ok) {
-      Alert.alert("تنبيه", result.error);
+      Alert.alert("فشل الإرسال", result.error);
       return;
     }
     setAlertText("");
@@ -109,6 +121,7 @@ export default function AdminNotificationsScreen({ navigation }) {
           ? "المشرفين"
           : "الأعضاء والمشرفين";
     Alert.alert("تم الإرسال", `تم إرسال التنبيه إلى ${dest}`);
+    loadHistory();
   };
 
   return (
@@ -130,7 +143,10 @@ export default function AdminNotificationsScreen({ navigation }) {
         >
           <Text style={styles.topBarAvatarText}>{initial}</Text>
         </TouchableOpacity>
-        <TouchableOpacity hitSlop={12}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("AdminRegistrations")}
+          hitSlop={12}
+        >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
           {pendingCount > 0 ? (
             <View style={styles.bellBadge}>
@@ -154,128 +170,114 @@ export default function AdminNotificationsScreen({ navigation }) {
           ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[palette.primary]}
+            />
+          }
         >
-        {pendingCount > 0 ? (
-          <TouchableOpacity
-            style={styles.pendingCard}
-            onPress={() => navigation.navigate("AdminRegistrations")}
-            activeOpacity={0.85}
-          >
-            <View style={styles.pendingIcon}>
-              <Megaphone size={20} color={palette.gold} />
+          <View style={styles.composer}>
+            <View style={styles.composerHeader}>
+              <Megaphone
+                size={18}
+                color={palette.primary}
+                pointerEvents="none"
+              />
+              <Text style={styles.composerTitle}>إرسال تنبيه عاجل</Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.pendingTitle}>طلبات تسجيل معلّقة</Text>
-              <Text style={styles.pendingSub}>
-                {pendingCount} طلب بانتظار مراجعتك
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ) : null}
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>إرسال تنبيه جديد</Text>
-          <Text style={styles.sectionSub}>اختر المستلمين ثم اكتب نص التنبيه</Text>
-
-          <View style={styles.audienceRow}>
-            <Text style={styles.audienceLabel}>إرسال إلى</Text>
-            <TouchableOpacity
-              style={[styles.audienceChip, toMembers && styles.audienceChipActive]}
-              onPress={() => setToMembers((v) => !v)}
-              activeOpacity={0.85}
-            >
-              <Text
-                style={[
-                  styles.audienceChipText,
-                  toMembers && styles.audienceChipTextActive,
-                ]}
-              >
-                الأعضاء
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.audienceChip,
-                toSupervisors && styles.audienceChipActive,
-              ]}
-              onPress={() => setToSupervisors((v) => !v)}
-              activeOpacity={0.85}
-            >
-              <Text
-                style={[
-                  styles.audienceChipText,
-                  toSupervisors && styles.audienceChipTextActive,
-                ]}
-              >
-                المشرفون
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <TextInput
-            style={styles.input}
-            placeholder="اكتب نص التنبيه هنا..."
-            placeholderTextColor={palette.placeholder}
-            value={alertText}
-            onChangeText={setAlertText}
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            textAlign={textAlignStart}
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, sending && { opacity: 0.6 }]}
-            onPress={sending ? undefined : handleSend}
-            activeOpacity={0.85}
-          >
-            <Send size={18} color="#fff" />
-            <Text style={styles.sendBtnText}>
-              {sending ? "جاري الإرسال..." : "إرسال التنبيه"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.listHeading}>سجل التنبيهات</Text>
-
-        {list.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>لا توجد تنبيهات بعد</Text>
-          </View>
-        ) : (
-          list.map((n) => {
-            const unread =
-              currentUser?.id && !(n.readBy || []).includes(currentUser.id);
-            return (
+            <TextInput
+              style={styles.composerInput}
+              placeholder="نص التنبيه… (يظهر فوراً لجميع المعنيين)"
+              placeholderTextColor={palette.placeholder}
+              value={alertText}
+              onChangeText={setAlertText}
+              multiline
+              maxLength={500}
+            />
+            <View style={styles.audienceRow}>
               <TouchableOpacity
-                key={n.id}
-                style={[styles.notifCard, unread && styles.notifCardUnread]}
-                onPress={() => markNotificationRead(n.id)}
-                activeOpacity={0.85}
+                style={[
+                  styles.chip,
+                  toMembers && styles.chipActive,
+                ]}
+                onPress={() => setToMembers((v) => !v)}
               >
-                <View
+                <Text
                   style={[
-                    styles.notifDot,
-                    { backgroundColor: unread ? palette.primary : palette.border },
+                    styles.chipText,
+                    toMembers && styles.chipTextActive,
                   ]}
-                />
-                <View style={styles.notifBody}>
-                  <View style={styles.notifTitleRow}>
-                    <Text style={styles.notifTitle}>{n.title}</Text>
-                    {AUDIENCE_LABELS[n.audience] ? (
-                      <View style={styles.audienceBadge}>
-                        <Text style={styles.audienceBadgeText}>
-                          {AUDIENCE_LABELS[n.audience]}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text style={styles.notifText}>{n.body}</Text>
-                  <Text style={styles.notifTime}>{formatTime(n.createdAt)}</Text>
-                </View>
+                >
+                  الأعضاء
+                </Text>
               </TouchableOpacity>
-            );
-          })
-        )}
+              <TouchableOpacity
+                style={[
+                  styles.chip,
+                  toSupervisors && styles.chipActive,
+                ]}
+                onPress={() => setToSupervisors((v) => !v)}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    toSupervisors && styles.chipTextActive,
+                  ]}
+                >
+                  المشرفون
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
+              onPress={handleSend}
+              disabled={sending}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.sendBtnText}>
+                {sending ? "جارٍ الإرسال…" : "إرسال التنبيه"}
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.composerHint}>
+              سيظهر التنبيه في شاشة كاملة عاجلة لكل المستهدفين، ويبقى
+              معروضاً حتى القراءة.
+            </Text>
+          </View>
+
+          <Text style={styles.sectionTitle}>سجل التنبيهات</Text>
+
+          {loadingHistory ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="large" color={palette.primary} />
+            </View>
+          ) : history.length === 0 ? (
+            <Text style={styles.emptyText}>لا توجد تنبيهات بعد</Text>
+          ) : (
+            history.map((item) => (
+              <View key={item.id} style={styles.historyCard}>
+                <View style={styles.historyTop}>
+                  <Text style={styles.historyMessage} numberOfLines={3}>
+                    {item.message}
+                  </Text>
+                  <View style={styles.historyBadge}>
+                    <Text style={styles.historyBadgeText}>
+                      {AUDIENCE_LABELS[item.audience] || item.audience}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.historyMeta}>
+                  <Text style={styles.historyDate}>
+                    {formatTime(item.createdAt)}
+                  </Text>
+                  <Text style={styles.historyAck}>
+                    قرأها {item.ackCount} من المستهدفين
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -289,8 +291,7 @@ const styles = StyleSheet.create({
   },
   topBar: {
     backgroundColor: "#fff",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    padding: 16,
     flexDirection: row,
     alignItems: "center",
     gap: 12,
@@ -334,209 +335,158 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "bold",
   },
-  scroll: {
-    flex: 1,
-  },
+  scroll: { flex: 1 },
   scrollContent: {
     padding: 16,
   },
-  pendingCard: {
-    backgroundColor: "#FFF8E1",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
+  composer: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginBottom: 20,
+  },
+  composerHeader: {
     flexDirection: row,
     alignItems: "center",
-    gap: 12,
-    borderWidth: 1,
-    borderColor: "#FDE68A",
+    gap: 8,
+    marginBottom: 10,
   },
-  pendingIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  pendingTitle: {
-    fontWeight: "bold",
+  composerTitle: {
+    fontSize: 15,
+    fontWeight: "700",
     color: palette.textPrimary,
-    fontSize: 14,
     ...rtlText,
   },
-  pendingSub: {
-    color: palette.textSecondary,
-    fontSize: 13,
-    marginTop: 2,
-    ...rtlText,
-  },
-  sectionCard: {
-    backgroundColor: "#fff",
+  composerInput: {
+    minHeight: 84,
+    maxHeight: 140,
+    backgroundColor: "#FAFAFA",
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontWeight: "bold",
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: 12,
+    fontSize: 14,
     color: palette.textPrimary,
-    fontSize: 16,
-    marginBottom: 4,
-    ...rtlText,
-  },
-  sectionSub: {
-    color: palette.placeholder,
-    fontSize: 13,
-    marginBottom: 12,
-    ...rtlText,
-  },
-  audienceLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: palette.textSecondary,
+    textAlignVertical: "top",
     ...rtlText,
   },
   audienceRow: {
     flexDirection: row,
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 14,
+    gap: 10,
+    marginTop: 10,
   },
-  audienceChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: palette.background,
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "#EEEEEE",
+  },
+  chipActive: {
+    backgroundColor: palette.softGreen,
     borderWidth: 1,
-    borderColor: palette.border,
-  },
-  audienceChipActive: {
-    backgroundColor: palette.primary,
     borderColor: palette.primary,
   },
-  audienceChipText: {
+  chipText: {
     fontSize: 13,
+    fontWeight: "600",
     color: palette.textSecondary,
     ...rtlText,
   },
-  audienceChipTextActive: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    minHeight: 100,
-    backgroundColor: palette.background,
-    fontSize: 15,
-    color: palette.textPrimary,
-    marginBottom: 12,
-    ...rtlText,
+  chipTextActive: {
+    color: palette.primary,
   },
   sendBtn: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    marginTop: 14,
     backgroundColor: palette.primary,
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  sendBtnDisabled: {
+    opacity: 0.6,
   },
   sendBtnText: {
     color: "#fff",
-    fontWeight: "700",
     fontSize: 15,
+    fontWeight: "700",
     ...rtlText,
   },
-  listHeading: {
-    fontWeight: "bold",
+  composerHint: {
+    marginTop: 10,
+    fontSize: 12,
+    color: palette.textSecondary,
+    ...rtlText,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
     color: palette.textPrimary,
-    fontSize: 16,
     marginBottom: 12,
     ...rtlText,
   },
-  emptyCard: {
+  loadingCard: {
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 32,
+    borderRadius: 14,
+    paddingVertical: 40,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   emptyText: {
+    textAlign: "center",
     color: palette.textSecondary,
-    ...rtlText,
-  },
-  notifCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 10,
-    flexDirection: row,
-    alignItems: "flex-start",
-    gap: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  notifCardUnread: {
-    borderRightWidth: 3,
-    borderRightColor: palette.primary,
-  },
-  notifDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 6,
-  },
-  notifBody: {
-    flex: 1,
-  },
-  notifTitleRow: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 4,
-  },
-  notifTitle: {
-    flex: 1,
-    fontWeight: "bold",
-    color: palette.textPrimary,
+    marginTop: 10,
     fontSize: 14,
     ...rtlText,
   },
-  audienceBadge: {
-    backgroundColor: palette.softGreen,
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+  historyCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginBottom: 10,
   },
-  audienceBadgeText: {
-    color: palette.primary,
-    fontSize: 11,
-    fontWeight: "600",
+  historyTop: {
+    flexDirection: row,
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  historyMessage: {
+    flex: 1,
+    fontSize: 14,
+    color: palette.textPrimary,
+    lineHeight: 22,
     ...rtlText,
   },
-  notifText: {
+  historyBadge: {
+    backgroundColor: palette.softGold,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  historyBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#8D6E63",
+    ...rtlText,
+  },
+  historyMeta: {
+    flexDirection: row,
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 10,
+  },
+  historyDate: {
+    fontSize: 11,
     color: palette.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
     ...rtlText,
   },
-  notifTime: {
-    color: palette.placeholder,
+  historyAck: {
     fontSize: 11,
-    marginTop: 6,
+    color: palette.blue,
     ...rtlText,
   },
 });

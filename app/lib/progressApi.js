@@ -166,3 +166,31 @@ export async function getSeanceMemberProgress(seanceId) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
+
+/**
+ * (Admin) Toutes les progressions, avec le profil de chaque membre joint.
+ * RLS : progression_admin_select (lecture globale admin uniquement).
+ * @returns { ok, entries }
+ */
+export async function getAllProgressionAdmin() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("progression")
+        .select("*, membre:profiles!progression_membre_id_fkey(first_name, last_name, email)")
+        .order("date_saisie", { ascending: false })
+        .order("created_at", { ascending: false }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التقدم الكلي"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "progression") };
+    }
+    return { ok: true, entries: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}

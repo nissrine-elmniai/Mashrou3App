@@ -1,20 +1,21 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Menu, Bell, ClipboardList } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import {
-  ACCOUNT_STATUS,
-  ROLES,
-  userHasRole,
-} from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
+import {
+  getMemberProfiles,
+  getAllAcceptedInscriptions,
+} from "../../lib/seancesApi";
+import { getAllProgressionAdmin } from "../../lib/progressApi";
 import {
   LEVEL_COLORS,
   deriveLevel,
@@ -33,68 +34,65 @@ const palette = {
   inactive: "#9E9E9E",
 };
 
-function sessionLabel(group) {
-  if (!group) return "بدون حصة";
-  const slot = group.freeTimeSlot || "";
-  if (slot.includes("فجر")) return "حصة الفجر";
-  if (slot.includes("ظهر")) return "حصة الظهر";
-  if (slot.includes("عصر")) return "حصة العصر";
-  if (slot.includes("مغرب")) return "حصة المغرب";
-  if (slot.includes("سبت")) return "حصة السبت";
-  if (slot.includes("أحد")) return "حصة الأحد";
-  return group.name || slot || "حصة";
-}
-
 function levelColor(level) {
   return LEVEL_COLORS[level] || palette.primary;
 }
 
 export default function AdminMembersScreen({ navigation }) {
-  const {
-    users,
-    groups,
-    progress,
-    stats,
-    currentUser,
-    getMemberGroup,
-    getMemberProgress,
-  } = useApp();
+  const { stats, currentUser } = useApp();
+
+  const [loading, setLoading] = useState(true);
+  const [profiles, setProfiles] = useState([]);
+  const [inscriptions, setInscriptions] = useState([]);
+  const [progressions, setProgressions] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const [profRes, inscRes, progRes] = await Promise.all([
+        getMemberProfiles(),
+        getAllAcceptedInscriptions(),
+        getAllProgressionAdmin(),
+      ]);
+      if (cancelled) return;
+      if (profRes.ok) setProfiles(profRes.members);
+      if (inscRes.ok) setInscriptions(inscRes.inscriptions);
+      if (progRes.ok) setProgressions(progRes.entries);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const members = useMemo(() => {
-    return users
-      .filter(
-        (u) =>
-          userHasRole(u, ROLES.MEMBER) &&
-          u.accountStatus !== ACCOUNT_STATUS.INVITED
-      )
-      .map((user) => {
-        const group = getMemberGroup(user.id);
-        const prog = getMemberProgress(user.id);
-        const pct = prog
-          ? Math.min(
-              100,
-              Math.round(
-                ((prog.hifzPages || 0) / (prog.targetPages || 1)) * 100
-              )
-            )
-          : 0;
-        const level =
-          user.level && LEVEL_COLORS[user.level]
-            ? user.level
-            : deriveLevel(pct);
-        const active =
-          user.accountStatus !== ACCOUNT_STATUS.INVITED && !!group;
+    return profiles
+      .filter((p) => p.account_status !== "invited")
+      .map((p) => {
+        const inscription = inscriptions.find((i) => i.membre_id === p.id);
+        const entries = progressions
+          .filter((e) => e.membre_id === p.id)
+          .sort((a, b) => {
+            const d = (x) => `${x.date_saisie}T${x.created_at || ""}`;
+            return d(b) < d(a) ? -1 : 1;
+          });
+        const latest = entries[0];
+        const juze = latest?.juze || 0;
+        const pct = Math.min(100, Math.round((juze / 30) * 100));
+        const level = deriveLevel(pct);
+        const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
         return {
-          id: user.id,
-          name: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
-          firstName: user.firstName || "",
+          id: p.id,
+          name,
+          firstName: p.first_name || "",
           level,
           pct,
-          session: sessionLabel(group),
-          active,
+          session: inscription?.seance?.nom || "بدون حصة",
+          active: !!inscription,
         };
       });
-  }, [users, groups, progress, getMemberGroup, getMemberProgress]);
+  }, [profiles, inscriptions, progressions]);
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -170,7 +168,11 @@ export default function AdminMembersScreen({ navigation }) {
 
         <Text style={styles.sectionTitle}>جميع الأعضاء</Text>
 
-        {members.length === 0 ? (
+        {loading ? (
+          <View style={styles.emptyCard}>
+            <ActivityIndicator size="large" color={palette.primary} />
+          </View>
+        ) : members.length === 0 ? (
           <Text style={styles.emptyText}>لا يوجد أعضاء بعد</Text>
         ) : (
           members.map((member) => (
@@ -341,6 +343,14 @@ const styles = StyleSheet.create({
     marginTop: 40,
     fontSize: 14,
     ...rtlText,
+  },
+  emptyCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingVertical: 48,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   card: {
     backgroundColor: "#fff",
