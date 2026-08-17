@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -13,8 +13,14 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Menu, Bell, Plus, Calendar, Users, Check, X, ClipboardList, Clock } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { ROLES, userHasRole } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
+import {
+  getAllTestsAdmin,
+  createTest,
+  inviteMembers,
+  updateTestStatus,
+} from "../../lib/testsApi";
+import { getAllSeances, getSeanceMembers } from "../../lib/seancesApi";
 
 const palette = {
   primary: "#2E7D32",
@@ -38,15 +44,9 @@ const TABS = [
   { key: "create", label: "إنشاء" },
 ];
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function getExamKind(exam) {
-  if (exam.status === "cancelled") return "cancelled";
-  if (exam.status === "completed" || exam.score != null) return "past";
-  const date = exam.date || "";
-  if (date && date < todayISO()) return "past";
+function getExamKind(test) {
+  if (test.statut === "annule") return "cancelled";
+  if (test.statut === "termine") return "past";
   return "upcoming";
 }
 
@@ -61,28 +61,34 @@ function statusMeta(kind) {
 }
 
 export default function AdminTestsScreen({ navigation, route }) {
-  const {
-    currentUser,
-    stats,
-    exams,
-    users,
-    groups,
-    createExam,
-    cancelExam,
-    markExamCompleted,
-    getUserById,
-  } = useApp();
+  const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
   const [tab, setTab] = useState(route?.params?.initialTab || "all");
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [date, setDate] = useState(todayISO());
-  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [seances, setSeances] = useState([]);
+  const [tests, setTests] = useState([]);
+  const [selectedSeanceId, setSelectedSeanceId] = useState(null);
+  const [seanceMembers, setSeanceMembers] = useState([]);
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
-  const [notifyMembers, setNotifyMembers] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    const [testsRes, seancesRes] = await Promise.all([
+      getAllTestsAdmin(),
+      getAllSeances(),
+    ]);
+    if (testsRes.ok) setTests(testsRes.tests);
+    if (seancesRes.ok) setSeances(seancesRes.seances);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
 
   useEffect(() => {
     const next = route?.params?.initialTab;
@@ -95,46 +101,34 @@ export default function AdminTestsScreen({ navigation, route }) {
   const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
-  const members = useMemo(
-    () => users.filter((u) => userHasRole(u, ROLES.MEMBER)),
-    [users]
-  );
-
-  const membersForGroup = useMemo(() => {
-    if (!selectedGroupId) return members;
-    const group = groups.find((g) => g.id === selectedGroupId);
-    if (!group) return members;
-    return members.filter((m) => (group.memberIds || []).includes(m.id));
-  }, [members, groups, selectedGroupId]);
-
-  const sortedExams = useMemo(() => {
-    return [...exams].sort((a, b) => {
-      const da = a.date || a.createdAt || "";
-      const db = b.date || b.createdAt || "";
+  const sortedTests = useMemo(() => {
+    return [...tests].sort((a, b) => {
+      const da = a.created_at || "";
+      const db = b.created_at || "";
       return da < db ? 1 : -1;
     });
-  }, [exams]);
+  }, [tests]);
 
-  const filteredExams = useMemo(() => {
-    if (tab === "all" || tab === "create") return sortedExams;
-    return sortedExams.filter((e) => {
-      const kind = getExamKind(e);
+  const filteredTests = useMemo(() => {
+    if (tab === "all" || tab === "create") return sortedTests;
+    return sortedTests.filter((t) => {
+      const kind = getExamKind(t);
       if (tab === "upcoming") return kind === "upcoming";
       if (tab === "past") return kind === "past" || kind === "cancelled";
       return true;
     });
-  }, [sortedExams, tab]);
+  }, [sortedTests, tab]);
 
   const counts = useMemo(() => {
     let upcoming = 0;
     let past = 0;
-    sortedExams.forEach((e) => {
-      const kind = getExamKind(e);
+    sortedTests.forEach((t) => {
+      const kind = getExamKind(t);
       if (kind === "upcoming") upcoming += 1;
       else past += 1;
     });
-    return { all: sortedExams.length, upcoming, past };
-  }, [sortedExams]);
+    return { all: sortedTests.length, upcoming, past };
+  }, [sortedTests]);
 
   const toggleMember = (id) => {
     setSelectedMemberIds((prev) =>
@@ -143,104 +137,119 @@ export default function AdminTestsScreen({ navigation, route }) {
   };
 
   const handleSelectAll = () => {
-    if (selectedMemberIds.length === membersForGroup.length) {
+    if (selectedMemberIds.length === seanceMembers.length) {
       setSelectedMemberIds([]);
     } else {
-      setSelectedMemberIds(membersForGroup.map((m) => m.id));
+      setSelectedMemberIds(seanceMembers.map((m) => m.membre_id));
+    }
+  };
+
+  const handleSelectSeance = async (id) => {
+    setSelectedSeanceId(id);
+    setSelectedMemberIds([]);
+    if (!id) {
+      setSeanceMembers([]);
+      return;
+    }
+    const res = await getSeanceMembers(id);
+    if (res.ok) {
+      setSeanceMembers(res.members);
+    } else {
+      setSeanceMembers([]);
+      Alert.alert("تنبيه", res.error);
     }
   };
 
   const resetForm = () => {
     setTitle("");
-    setDescription("");
-    setDate(todayISO());
-    setSelectedGroupId(null);
+    setSelectedSeanceId(null);
+    setSeanceMembers([]);
     setSelectedMemberIds([]);
-    setNotifyMembers(true);
   };
 
-  const handleCreate = () => {
-    setSaving(true);
-    const result = createExam({
-      title,
-      description,
-      date,
-      groupId: selectedGroupId,
-      memberIds: selectedMemberIds,
-      notifyMembers,
-    });
-    setSaving(false);
-    if (!result.ok) {
-      Alert.alert("تنبيه", result.error);
+  const handleCreate = async () => {
+    if (!selectedSeanceId) {
+      Alert.alert("تنبيه", "اختر الحصة المعنية بالاختبار");
       return;
     }
+    setSaving(true);
+    const created = await createTest({
+      titre: title,
+      seanceId: selectedSeanceId,
+    });
+    if (!created.ok) {
+      setSaving(false);
+      Alert.alert("تنبيه", created.error);
+      return;
+    }
+    if (selectedMemberIds.length > 0) {
+      const invited = await inviteMembers({
+        testId: created.test.id,
+        membreIds: selectedMemberIds,
+      });
+      if (!invited.ok) {
+        Alert.alert(
+          "تم إنشاء الاختبار — فشلت الدعوات",
+          invited.error
+        );
+        resetForm();
+        setTab("upcoming");
+        loadAll();
+        setSaving(false);
+        return;
+      }
+    }
+    setSaving(false);
     Alert.alert("تم الإنشاء", "تم جدولة الاختبار بنجاح");
     resetForm();
     setTab("upcoming");
+    loadAll();
   };
 
-  const confirmCancel = (exam) => {
-    Alert.alert("إلغاء الاختبار", `هل تريد إلغاء «${exam.title || "اختبار"}»؟`, [
+  const confirmCancel = (test) => {
+    Alert.alert("إلغاء الاختبار", `هل تريد إلغاء «${test.titre || "اختبار"}»؟`, [
       { text: "تراجع", style: "cancel" },
       {
         text: "إلغاء",
         style: "destructive",
-        onPress: () => {
-          const result = cancelExam(exam.id);
+        onPress: async () => {
+          const result = await updateTestStatus({ testId: test.id, statut: "annule" });
           if (!result.ok) Alert.alert("خطأ", result.error);
+          loadAll();
         },
       },
     ]);
   };
 
-  const confirmComplete = (exam) => {
-    Alert.alert("تعليم كمنجز", `هل تم إنجاز «${exam.title || "اختبار"}»؟`, [
+  const confirmComplete = (test) => {
+    Alert.alert("تعليم كمنجز", `هل تم إنجاز «${test.titre || "اختبار"}»؟`, [
       { text: "تراجع", style: "cancel" },
       {
         text: "تأكيد",
-        onPress: () => {
-          const result = markExamCompleted(exam.id);
+        onPress: async () => {
+          const result = await updateTestStatus({ testId: test.id, statut: "termine" });
           if (!result.ok) Alert.alert("خطأ", result.error);
+          loadAll();
         },
       },
     ]);
   };
 
-  const renderExamCard = (exam) => {
-    const kind = getExamKind(exam);
+  const renderTestCard = (test) => {
+    const kind = getExamKind(test);
     const meta = statusMeta(kind);
-    const group = exam.groupId
-      ? groups.find((g) => g.id === exam.groupId)
-      : null;
-    const participantCount =
-      exam.memberIds?.length ||
-      (exam.memberId ? 1 : 0);
-    const participantNames = (exam.memberIds || [])
-      .slice(0, 3)
-      .map((id) => {
-        const u = getUserById(id);
-        return u ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : "";
-      })
-      .filter(Boolean);
-
-    if (exam.memberId && !exam.memberIds) {
-      const u = getUserById(exam.memberId);
-      if (u) {
-        participantNames.push(
-          `${u.firstName || ""} ${u.lastName || ""}`.trim()
-        );
-      }
-    }
+    const seanceName = test.seance?.nom || "—";
+    const participantCount = (test.invitations || []).length;
 
     return (
-      <View key={exam.id} style={styles.card}>
+      <View key={test.id} style={styles.card}>
         <View style={styles.cardHeader}>
           <View style={styles.cardIconWrap}>
             <ClipboardList size={20} color={palette.primary} pointerEvents="none" />
           </View>
           <View style={styles.cardHeaderInfo}>
             <Text style={styles.cardTitle}>
-              {exam.title || exam.level || "اختبار"}
+              {test.titre || "اختبار"}
             </Text>
             <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
               <Text style={[styles.statusBadgeText, { color: meta.color }]}>
@@ -250,55 +259,35 @@ export default function AdminTestsScreen({ navigation, route }) {
           </View>
         </View>
 
-        {exam.description ? (
-          <Text style={styles.cardDesc} numberOfLines={2}>
-            {exam.description}
-          </Text>
-        ) : null}
-
         <View style={styles.metaPills}>
           <View style={styles.metaPill}>
-            <Calendar size={13} color={palette.textSecondary} />
-            <Text style={styles.metaPillText}>{exam.date || "—"}</Text>
+            <Clock size={13} color={palette.textSecondary} />
+            <Text style={styles.metaPillText}>{seanceName}</Text>
           </View>
-          {group ? (
-            <View style={styles.metaPill}>
-              <Clock size={13} color={palette.textSecondary} />
-              <Text style={styles.metaPillText}>{group.name}</Text>
-            </View>
-          ) : null}
+          <View style={styles.metaPill}>
+            <Calendar size={13} color={palette.textSecondary} />
+            <Text style={styles.metaPillText}>
+              {(test.created_at || "").slice(0, 10)}
+            </Text>
+          </View>
           <View style={styles.metaPill}>
             <Users size={13} color={palette.textSecondary} />
             <Text style={styles.metaPillText}>{participantCount} مشارك</Text>
           </View>
         </View>
 
-        {participantNames.length ? (
-          <Text style={styles.participantsText} numberOfLines={1}>
-            {participantNames.join("، ")}
-            {participantCount > participantNames.length ? "…" : ""}
-          </Text>
-        ) : null}
-
-        {exam.score != null ? (
-          <Text style={styles.scoreText}>
-            الدرجة: {exam.score}
-            {exam.level ? ` — ${exam.level}` : ""}
-          </Text>
-        ) : null}
-
         {kind === "upcoming" ? (
           <View style={styles.cardActions}>
             <TouchableOpacity
               style={[styles.actionBtn, styles.completeBtn]}
-              onPress={() => confirmComplete(exam)}
+              onPress={() => confirmComplete(test)}
             >
               <Check size={16} color="#fff" />
               <Text style={styles.actionBtnText}>تم الإنجاز</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, styles.cancelBtn]}
-              onPress={() => confirmCancel(exam)}
+              onPress={() => confirmCancel(test)}
             >
               <X size={16} color="#fff" />
               <Text style={styles.actionBtnText}>إلغاء</Text>
@@ -400,7 +389,11 @@ export default function AdminTestsScreen({ navigation, route }) {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-        {tab === "create" ? (
+        {loading && tab !== "create" ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>جاري التحميل...</Text>
+          </View>
+        ) : tab === "create" ? (
           <View style={styles.formCard}>
             <View style={styles.formHeader}>
               <View style={styles.formHeaderIcon}>
@@ -409,7 +402,7 @@ export default function AdminTestsScreen({ navigation, route }) {
               <View style={{ flex: 1 }}>
                 <Text style={styles.formTitle}>إنشاء اختبار جديد</Text>
                 <Text style={styles.formSubtitle}>
-                  حدّد العنوان والتاريخ والمشاركين
+                  حدّد العنوان والحصة والمشاركين
                 </Text>
               </View>
             </View>
@@ -424,100 +417,68 @@ export default function AdminTestsScreen({ navigation, route }) {
               textAlign={textAlignStart}
             />
 
-            <Text style={styles.label}>الوصف</Text>
-            <TextInput
-              style={[styles.input, styles.textarea]}
-              placeholder="وصف الاختبار..."
-              placeholderTextColor={palette.placeholder}
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-              textAlign={textAlignStart}
-            />
-
-            <Text style={styles.label}>تاريخ الاختبار</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={palette.placeholder}
-              value={date}
-              onChangeText={setDate}
-              textAlign={textAlignStart}
-            />
-
-            <Text style={styles.label}>الحصة (اختياري)</Text>
-            <View style={styles.groupChips}>
-              <TouchableOpacity
-                style={[
-                  styles.groupChip,
-                  !selectedGroupId && styles.groupChipActive,
-                ]}
-                onPress={() => {
-                  setSelectedGroupId(null);
-                  setSelectedMemberIds([]);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.groupChipText,
-                    !selectedGroupId && styles.groupChipTextActive,
-                  ]}
-                >
-                  الكل
-                </Text>
-              </TouchableOpacity>
-              {groups.map((g) => {
-                const active = selectedGroupId === g.id;
-                return (
-                  <TouchableOpacity
-                    key={g.id}
-                    style={[styles.groupChip, active && styles.groupChipActive]}
-                    onPress={() => {
-                      setSelectedGroupId(g.id);
-                      setSelectedMemberIds([]);
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.groupChipText,
-                        active && styles.groupChipTextActive,
-                      ]}
+            <Text style={styles.label}>الحصة</Text>
+            {seances.length === 0 ? (
+              <Text style={styles.emptyText}>
+                لا توجد حصص بعد — أنشئ حصة أولاً من شاشة «الحصص»
+              </Text>
+            ) : (
+              <View style={styles.groupChips}>
+                {seances.map((s) => {
+                  const active = selectedSeanceId === s.id;
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.groupChip, active && styles.groupChipActive]}
+                      onPress={() => handleSelectSeance(s.id)}
                     >
-                      {g.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      <Text
+                        style={[
+                          styles.groupChipText,
+                          active && styles.groupChipTextActive,
+                        ]}
+                      >
+                        {s.nom}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
 
             <View style={styles.checklistHeader}>
               <Text style={styles.label}>الأعضاء المشاركون</Text>
-              <TouchableOpacity onPress={handleSelectAll}>
-                <Text style={styles.selectAllText}>
-                  {selectedMemberIds.length === membersForGroup.length &&
-                  membersForGroup.length > 0
-                    ? "إلغاء الكل"
-                    : "اختيار الكل"}
-                </Text>
-              </TouchableOpacity>
+              {seanceMembers.length > 0 ? (
+                <TouchableOpacity onPress={handleSelectAll}>
+                  <Text style={styles.selectAllText}>
+                    {selectedMemberIds.length === seanceMembers.length
+                      ? "إلغاء الكل"
+                      : "اختيار الكل"}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
-            {membersForGroup.length === 0 ? (
-              <Text style={styles.emptyText}>لا يوجد أعضاء متاحون</Text>
+            {!selectedSeanceId ? (
+              <Text style={styles.emptyText}>
+                اختر حصة لعرض أعضائها
+              </Text>
+            ) : seanceMembers.length === 0 ? (
+              <Text style={styles.emptyText}>لا يوجد أعضاء في هذه الحصة</Text>
             ) : (
-              membersForGroup.map((member) => {
-                const isSelected = selectedMemberIds.includes(member.id);
-                const name = `${member.firstName || ""} ${member.lastName || ""}`.trim();
+              seanceMembers.map((item) => {
+                const member = item.membre || {};
+                const memberId = item.membre_id;
+                const isSelected = selectedMemberIds.includes(memberId);
+                const name = `${member.first_name || ""} ${member.last_name || ""}`.trim();
                 return (
                   <TouchableOpacity
-                    key={member.id}
+                    key={memberId}
                     style={[
                       styles.checkItem,
                       isSelected && styles.checkItemSelected,
                     ]}
-                    onPress={() => toggleMember(member.id)}
+                    onPress={() => toggleMember(memberId)}
                   >
                     <View
                       style={[
@@ -529,29 +490,13 @@ export default function AdminTestsScreen({ navigation, route }) {
                         <Text style={styles.checkmark}>✓</Text>
                       ) : null}
                     </View>
-                    <Text style={styles.checkLabel}>{name || member.email}</Text>
+                    <Text style={styles.checkLabel}>
+                      {name || member.email || "عضو"}
+                    </Text>
                   </TouchableOpacity>
                 );
               })
             )}
-
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>إرسال إشعار للأعضاء</Text>
-              <TouchableOpacity
-                style={[
-                  styles.toggleTrack,
-                  notifyMembers && styles.toggleTrackOn,
-                ]}
-                onPress={() => setNotifyMembers((v) => !v)}
-              >
-                <View
-                  style={[
-                    styles.toggleThumb,
-                    notifyMembers && styles.toggleThumbOn,
-                  ]}
-                />
-              </TouchableOpacity>
-            </View>
 
             <TouchableOpacity
               style={[styles.submitBtn, saving && { opacity: 0.6 }]}
@@ -563,7 +508,7 @@ export default function AdminTestsScreen({ navigation, route }) {
               </Text>
             </TouchableOpacity>
           </View>
-        ) : filteredExams.length === 0 ? (
+        ) : filteredTests.length === 0 ? (
           <View style={styles.emptyCard}>
             <View style={styles.emptyIconWrap}>
               <ClipboardList
@@ -590,7 +535,7 @@ export default function AdminTestsScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
         ) : (
-          filteredExams.map(renderExamCard)
+          filteredTests.map(renderTestCard)
         )}
         </ScrollView>
       </KeyboardAvoidingView>

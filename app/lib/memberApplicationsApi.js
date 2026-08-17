@@ -93,6 +93,32 @@ export async function upsertMemberApplication(reg, status) {
   }
 }
 
+/**
+ * (Admin) Nombre de demandes d'inscription en attente (statistiques).
+ * @returns { ok, count }
+ */
+export async function countPendingApplications() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { count, error } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الطلبات المعلقة"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "member_applications") };
+    }
+    return { ok: true, count: count || 0 };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
 /** Lie la demande au compte Auth après création du mot de passe */
 export async function markMemberApplicationActivated({ email, userId }) {
   if (!isSupabaseConfigured()) {

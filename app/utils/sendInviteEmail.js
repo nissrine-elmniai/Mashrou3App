@@ -56,6 +56,13 @@ async function sendAppEmail({ toEmail, toName, subject, message }) {
     ]);
 
     if (error) {
+      let serverError = "";
+      try {
+        const body = await error.context?.json();
+        serverError = String(body?.error || "");
+      } catch {
+        serverError = "";
+      }
       const msg = error.message || "";
       if (/failed to send|FunctionsRelayError|404|not found/i.test(msg)) {
         return {
@@ -64,7 +71,10 @@ async function sendAppEmail({ toEmail, toName, subject, message }) {
             "دالة الإرسال غير منشورة بعد. انشر send-app-email واضبط RESEND_API_KEY.",
         };
       }
-      return { ok: false, error: msg || "فشل استدعاء خدمة البريد" };
+      return {
+        ok: false,
+        error: serverError || msg || "فشل استدعاء خدمة البريد",
+      };
     }
 
     if (data && data.ok === false) {

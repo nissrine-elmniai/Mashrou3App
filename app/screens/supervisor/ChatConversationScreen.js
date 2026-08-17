@@ -89,6 +89,10 @@ export default function ChatConversationScreen({ navigation, route }) {
           } else {
             failReason = mySeance?.error || "لم يتم العثور على حصة نشطة";
           }
+        } else if (role === ROLES.ADMIN) {
+          // Chat admin <-> superviseur (cas 3 RG6) : contactId est l'UUID
+          // réel du superviseur choisi dans AdminChatScreen, sans séance.
+          otherId = contactId;
         } else if (isSupervisor) {
           // Chat superviseur <-> membre : séance active du superviseur
           const mySeance = await getSupervisorActiveSeance(authId);
