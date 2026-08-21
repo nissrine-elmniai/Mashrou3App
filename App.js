@@ -39,6 +39,7 @@ import ResetPasswordScreen from "./app/screens/ResetPasswordScreen";
 import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
 import MemberProfileScreen from "./app/screens/member/MemberProfileScreen";
 import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen";
+import MemberChatInboxScreen from "./app/screens/member/MemberChatInboxScreen";
 
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
 import ChatConversationScreen from "./app/screens/supervisor/ChatConversationScreen";
@@ -218,8 +219,13 @@ function RootNavigator() {
         <Stack.Screen
           name="AdminNotifications"
           component={AdminNotificationsScreen}
+          options={{ headerShown: false }}
         />
-        <Stack.Screen name="AdminChat" component={AdminChatScreen} />
+        <Stack.Screen
+          name="AdminChat"
+          component={AdminChatScreen}
+          options={{ headerShown: false }}
+        />
 
         <Stack.Screen
           name="MemberDashboardScreen"
@@ -234,6 +240,11 @@ function RootNavigator() {
         <Stack.Screen
           name="ProgrammeDetails"
           component={ProgrammeDetailsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="MemberChatInbox"
+          component={MemberChatInboxScreen}
           options={{ headerShown: false }}
         />
 

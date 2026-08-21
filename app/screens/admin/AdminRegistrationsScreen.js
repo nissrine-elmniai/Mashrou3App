@@ -10,6 +10,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Menu, Bell, Check, X, Mail } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import {
   REGISTRATION_STATUS,
   REGISTRATION_STATUS_LABELS,
@@ -33,6 +34,7 @@ const palette = {
 };
 
 export default function AdminRegistrationsScreen({ navigation, route }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "registrations");
   const seasonType = route?.params?.seasonType || SEASON_TYPES.REGULAR;
   const isSummer = seasonType === SEASON_TYPES.SUMMER;
 
@@ -183,10 +185,10 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="رجوع"
+          accessibilityLabel="فتح القائمة"
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
@@ -362,6 +364,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           })
         )}
       </ScrollView>
+      {sidebar}
     </SafeAreaView>
   );
 }

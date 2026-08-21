@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import { ROLE_LABELS } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../../lib/supabase";
@@ -40,6 +41,7 @@ const palette = {
 };
 
 export default function AdminSettingsScreen({ navigation }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "settings");
   const { currentUser, stats, logout } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -175,10 +177,10 @@ export default function AdminSettingsScreen({ navigation }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="رجوع"
+          accessibilityLabel="فتح القائمة"
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
@@ -383,6 +385,7 @@ export default function AdminSettingsScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      {sidebar}
     </SafeAreaView>
   );
 }

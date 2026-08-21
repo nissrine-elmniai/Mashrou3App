@@ -138,14 +138,30 @@ export async function signUpWithProfile({
   });
 
   if (error) {
-    // Compte Auth déjà existant → tenter une connexion (réactivation locale)
     if (/already registered|already been registered/i.test(error.message || "")) {
+      if (role === ROLES.MEMBER) {
+        return {
+          ok: false,
+          error:
+            "هذا البريد لحساب موجود مسبقاً (مشرف أو إدارة). حساب المشرف ليس حساب عضو — استخدم بريداً آخر لإنشاء حساب العضو.",
+        };
+      }
+      // Même rôle : réactivation éventuelle si le mot de passe correspond
       const signedIn = await signInWithEmailPassword(mail, password);
       if (!signedIn.ok) {
         return {
           ok: false,
           error:
             "هذا البريد مسجّل مسبقاً. سجّل الدخول أو استخدم استعادة كلمة المرور",
+        };
+      }
+      const existingRole = signedIn.profile?.role;
+      if (existingRole && existingRole !== role) {
+        await supabase.auth.signOut();
+        return {
+          ok: false,
+          error:
+            "هذا البريد مرتبط بدور آخر. استخدم بريداً مختلفاً لهذا الحساب.",
         };
       }
       const updated = await upsertProfile({

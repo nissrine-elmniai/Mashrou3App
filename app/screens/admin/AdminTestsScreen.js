@@ -9,18 +9,20 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Linking,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Menu, Bell, Plus, Calendar, Users, Check, X, ClipboardList, Clock } from "lucide-react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { Menu, Bell, Plus, Calendar, Check, X, ClipboardList, Link } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import {
   getAllTestsAdmin,
   createTest,
-  inviteMembers,
   updateTestStatus,
+  TEST_TYPE_LABELS,
 } from "../../lib/testsApi";
-import { getAllSeances, getSeanceMembers } from "../../lib/seancesApi";
 
 const palette = {
   primary: "#2E7D32",
@@ -44,6 +46,29 @@ const TABS = [
   { key: "create", label: "إنشاء" },
 ];
 
+const TEST_TYPES = [
+  { key: "hifz", label: "اختبار الحفظ" },
+  { key: "sunnah", label: "حفاظ السنة" },
+];
+
+function toIsoDate(value) {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatDateLabel(value) {
+  const iso = String(value || "").slice(0, 10);
+  if (!iso) return "اختر تاريخ الاختبار";
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
+
 function getExamKind(test) {
   if (test.statut === "annule") return "cancelled";
   if (test.statut === "termine") return "past";
@@ -61,28 +86,26 @@ function statusMeta(kind) {
 }
 
 export default function AdminTestsScreen({ navigation, route }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "tests");
   const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
   const [tab, setTab] = useState(route?.params?.initialTab || "all");
+  const [testType, setTestType] = useState("hifz");
   const [title, setTitle] = useState("");
-  const [seances, setSeances] = useState([]);
+  const [testDate, setTestDate] = useState(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [quranQuantity, setQuranQuantity] = useState("");
+  const [formUrl, setFormUrl] = useState("");
   const [tests, setTests] = useState([]);
-  const [selectedSeanceId, setSelectedSeanceId] = useState(null);
-  const [seanceMembers, setSeanceMembers] = useState([]);
-  const [selectedMemberIds, setSelectedMemberIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
-    const [testsRes, seancesRes] = await Promise.all([
-      getAllTestsAdmin(),
-      getAllSeances(),
-    ]);
+    const testsRes = await getAllTestsAdmin();
     if (testsRes.ok) setTests(testsRes.tests);
-    if (seancesRes.ok) setSeances(seancesRes.seances);
     setLoading(false);
   }, []);
 
@@ -130,77 +153,30 @@ export default function AdminTestsScreen({ navigation, route }) {
     return { all: sortedTests.length, upcoming, past };
   }, [sortedTests]);
 
-  const toggleMember = (id) => {
-    setSelectedMemberIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const handleSelectAll = () => {
-    if (selectedMemberIds.length === seanceMembers.length) {
-      setSelectedMemberIds([]);
-    } else {
-      setSelectedMemberIds(seanceMembers.map((m) => m.membre_id));
-    }
-  };
-
-  const handleSelectSeance = async (id) => {
-    setSelectedSeanceId(id);
-    setSelectedMemberIds([]);
-    if (!id) {
-      setSeanceMembers([]);
-      return;
-    }
-    const res = await getSeanceMembers(id);
-    if (res.ok) {
-      setSeanceMembers(res.members);
-    } else {
-      setSeanceMembers([]);
-      Alert.alert("تنبيه", res.error);
-    }
-  };
-
   const resetForm = () => {
+    setTestType("hifz");
     setTitle("");
-    setSelectedSeanceId(null);
-    setSeanceMembers([]);
-    setSelectedMemberIds([]);
+    setTestDate(null);
+    setQuranQuantity("");
+    setFormUrl("");
+    setShowDatePicker(false);
   };
 
   const handleCreate = async () => {
-    if (!selectedSeanceId) {
-      Alert.alert("تنبيه", "اختر الحصة المعنية بالاختبار");
-      return;
-    }
     setSaving(true);
     const created = await createTest({
       titre: title,
-      seanceId: selectedSeanceId,
+      type: testType,
+      dateTest: toIsoDate(testDate),
+      quranQuantity,
+      formUrl,
     });
+    setSaving(false);
     if (!created.ok) {
-      setSaving(false);
       Alert.alert("تنبيه", created.error);
       return;
     }
-    if (selectedMemberIds.length > 0) {
-      const invited = await inviteMembers({
-        testId: created.test.id,
-        membreIds: selectedMemberIds,
-      });
-      if (!invited.ok) {
-        Alert.alert(
-          "تم إنشاء الاختبار — فشلت الدعوات",
-          invited.error
-        );
-        resetForm();
-        setTab("upcoming");
-        loadAll();
-        setSaving(false);
-        return;
-      }
-    }
-    setSaving(false);
-    Alert.alert("تم الإنشاء", "تم جدولة الاختبار بنجاح");
+    Alert.alert("تم الإعلان", "تم إعلان الاختبار بنجاح");
     resetForm();
     setTab("upcoming");
     loadAll();
@@ -238,8 +214,7 @@ export default function AdminTestsScreen({ navigation, route }) {
   const renderTestCard = (test) => {
     const kind = getExamKind(test);
     const meta = statusMeta(kind);
-    const seanceName = test.seance?.nom || "—";
-    const participantCount = (test.invitations || []).length;
+    const typeLabel = TEST_TYPE_LABELS[test.type] || test.titre || "اختبار";
 
     return (
       <View key={test.id} style={styles.card}>
@@ -248,9 +223,7 @@ export default function AdminTestsScreen({ navigation, route }) {
             <ClipboardList size={20} color={palette.primary} pointerEvents="none" />
           </View>
           <View style={styles.cardHeaderInfo}>
-            <Text style={styles.cardTitle}>
-              {test.titre || "اختبار"}
-            </Text>
+            <Text style={styles.cardTitle}>{test.titre || typeLabel}</Text>
             <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
               <Text style={[styles.statusBadgeText, { color: meta.color }]}>
                 {meta.label}
@@ -260,20 +233,34 @@ export default function AdminTestsScreen({ navigation, route }) {
         </View>
 
         <View style={styles.metaPills}>
-          <View style={styles.metaPill}>
-            <Clock size={13} color={palette.textSecondary} />
-            <Text style={styles.metaPillText}>{seanceName}</Text>
-          </View>
+          {typeLabel ? (
+            <View style={styles.metaPill}>
+              <Text style={styles.metaPillText}>{typeLabel}</Text>
+            </View>
+          ) : null}
           <View style={styles.metaPill}>
             <Calendar size={13} color={palette.textSecondary} />
             <Text style={styles.metaPillText}>
-              {(test.created_at || "").slice(0, 10)}
+              {formatDateLabel(test.date_test || test.created_at)}
             </Text>
           </View>
-          <View style={styles.metaPill}>
-            <Users size={13} color={palette.textSecondary} />
-            <Text style={styles.metaPillText}>{participantCount} مشارك</Text>
-          </View>
+          {test.type === "hifz" && test.quran_quantity ? (
+            <View style={styles.metaPill}>
+              <ClipboardList size={13} color={palette.textSecondary} />
+              <Text style={styles.metaPillText}>{test.quran_quantity}</Text>
+            </View>
+          ) : null}
+          {test.type === "sunnah" && test.form_url ? (
+            <TouchableOpacity
+              style={styles.metaPill}
+              onPress={() => Linking.openURL(test.form_url)}
+            >
+              <Link size={13} color={palette.primary} />
+              <Text style={[styles.metaPillText, { color: palette.primary }]}>
+                Google Form
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {kind === "upcoming" ? (
@@ -302,10 +289,10 @@ export default function AdminTestsScreen({ navigation, route }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="رجوع"
+          accessibilityLabel="فتح القائمة"
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
@@ -400,11 +387,34 @@ export default function AdminTestsScreen({ navigation, route }) {
                 <Plus size={20} color={palette.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.formTitle}>إنشاء اختبار جديد</Text>
+                <Text style={styles.formTitle}>إعلان اختبار جديد</Text>
                 <Text style={styles.formSubtitle}>
-                  حدّد العنوان والحصة والمشاركين
+                  اختر النوع ثم أعلن التاريخ والتفاصيل
                 </Text>
               </View>
+            </View>
+
+            <Text style={styles.label}>نوع الاختبار</Text>
+            <View style={styles.groupChips}>
+              {TEST_TYPES.map((item) => {
+                const active = testType === item.key;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[styles.groupChip, active && styles.groupChipActive]}
+                    onPress={() => setTestType(item.key)}
+                  >
+                    <Text
+                      style={[
+                        styles.groupChipText,
+                        active && styles.groupChipTextActive,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <Text style={styles.label}>عنوان الاختبار</Text>
@@ -417,85 +427,63 @@ export default function AdminTestsScreen({ navigation, route }) {
               textAlign={textAlignStart}
             />
 
-            <Text style={styles.label}>الحصة</Text>
-            {seances.length === 0 ? (
-              <Text style={styles.emptyText}>
-                لا توجد حصص بعد — أنشئ حصة أولاً من شاشة «الحصص»
+            <Text style={styles.label}>تاريخ الاختبار</Text>
+            <TouchableOpacity
+              style={styles.dateBtn}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <Calendar size={18} color={palette.primary} />
+              <Text style={styles.dateBtnText}>
+                {formatDateLabel(toIsoDate(testDate))}
               </Text>
-            ) : (
-              <View style={styles.groupChips}>
-                {seances.map((s) => {
-                  const active = selectedSeanceId === s.id;
-                  return (
-                    <TouchableOpacity
-                      key={s.id}
-                      style={[styles.groupChip, active && styles.groupChipActive]}
-                      onPress={() => handleSelectSeance(s.id)}
-                    >
-                      <Text
-                        style={[
-                          styles.groupChipText,
-                          active && styles.groupChipTextActive,
-                        ]}
-                      >
-                        {s.nom}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
+            </TouchableOpacity>
+            {showDatePicker ? (
+              <DateTimePicker
+                value={testDate || new Date()}
+                mode="date"
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                onChange={(event, selected) => {
+                  if (Platform.OS !== "ios") setShowDatePicker(false);
+                  if (event.type === "dismissed") return;
+                  if (selected) setTestDate(selected);
+                }}
+              />
+            ) : null}
+            {Platform.OS === "ios" && showDatePicker ? (
+              <TouchableOpacity
+                style={styles.dateDoneBtn}
+                onPress={() => setShowDatePicker(false)}
+              >
+                <Text style={styles.dateDoneText}>تم</Text>
+              </TouchableOpacity>
+            ) : null}
 
-            <View style={styles.checklistHeader}>
-              <Text style={styles.label}>الأعضاء المشاركون</Text>
-              {seanceMembers.length > 0 ? (
-                <TouchableOpacity onPress={handleSelectAll}>
-                  <Text style={styles.selectAllText}>
-                    {selectedMemberIds.length === seanceMembers.length
-                      ? "إلغاء الكل"
-                      : "اختيار الكل"}
-                  </Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            {!selectedSeanceId ? (
-              <Text style={styles.emptyText}>
-                اختر حصة لعرض أعضائها
-              </Text>
-            ) : seanceMembers.length === 0 ? (
-              <Text style={styles.emptyText}>لا يوجد أعضاء في هذه الحصة</Text>
+            {testType === "hifz" ? (
+              <>
+                <Text style={styles.label}>كمية القرآن المراد تقييمها</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="مثال: جزء عمّ — أو 10 صفحات"
+                  placeholderTextColor={palette.placeholder}
+                  value={quranQuantity}
+                  onChangeText={setQuranQuantity}
+                  textAlign={textAlignStart}
+                />
+              </>
             ) : (
-              seanceMembers.map((item) => {
-                const member = item.membre || {};
-                const memberId = item.membre_id;
-                const isSelected = selectedMemberIds.includes(memberId);
-                const name = `${member.first_name || ""} ${member.last_name || ""}`.trim();
-                return (
-                  <TouchableOpacity
-                    key={memberId}
-                    style={[
-                      styles.checkItem,
-                      isSelected && styles.checkItemSelected,
-                    ]}
-                    onPress={() => toggleMember(memberId)}
-                  >
-                    <View
-                      style={[
-                        styles.checkbox,
-                        isSelected && styles.checkboxChecked,
-                      ]}
-                    >
-                      {isSelected ? (
-                        <Text style={styles.checkmark}>✓</Text>
-                      ) : null}
-                    </View>
-                    <Text style={styles.checkLabel}>
-                      {name || member.email || "عضو"}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })
+              <>
+                <Text style={styles.label}>رابط Google Form</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="https://docs.google.com/forms/..."
+                  placeholderTextColor={palette.placeholder}
+                  value={formUrl}
+                  onChangeText={setFormUrl}
+                  autoCapitalize="none"
+                  keyboardType="url"
+                  textAlign={textAlignStart}
+                />
+              </>
             )}
 
             <TouchableOpacity
@@ -504,7 +492,7 @@ export default function AdminTestsScreen({ navigation, route }) {
             >
               <Plus size={18} color="#fff" />
               <Text style={styles.submitText}>
-                {saving ? "جاري الإنشاء..." : "إنشاء الاختبار"}
+                {saving ? "جاري الإعلان..." : "إعلان الاختبار"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -539,6 +527,7 @@ export default function AdminTestsScreen({ navigation, route }) {
         )}
         </ScrollView>
       </KeyboardAvoidingView>
+      {sidebar}
     </SafeAreaView>
   );
 }
@@ -857,6 +846,37 @@ const styles = StyleSheet.create({
   textarea: {
     minHeight: 80,
     textAlignVertical: "top",
+  },
+  dateBtn: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 12,
+    backgroundColor: palette.background,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  dateBtnText: {
+    fontSize: 15,
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  dateDoneBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: palette.primary,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginBottom: 14,
+  },
+  dateDoneText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    ...rtlText,
   },
   groupChips: {
     flexDirection: row,

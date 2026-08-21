@@ -9,10 +9,14 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  Keyboard,
+  Platform,
+  Pressable,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Menu, Bell, Plus, X, SquarePen, Archive } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import {
   getAllSeances,
@@ -37,14 +41,11 @@ const palette = {
 
 const EMPTY_FORM = {
   nom: "",
-  saisonId: "",
-  jour: "",
-  heureDebut: "",
-  heureFin: "",
   superviseurId: null,
 };
 
 export default function AdminSeasonsScreen({ navigation }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "sessions");
   const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -79,6 +80,24 @@ export default function AdminSeasonsScreen({ navigation }) {
     loadAll();
   }, [loadAll]);
 
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    if (!modalVisible) {
+      setKeyboardHeight(0);
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [modalVisible]);
+
   const openCreate = () => {
     setEditingId(null);
     setForm(EMPTY_FORM);
@@ -89,40 +108,36 @@ export default function AdminSeasonsScreen({ navigation }) {
     setEditingId(seance.id);
     setForm({
       nom: seance.nom || "",
-      saisonId: seance.saison_id || "",
-      jour: seance.jour || "",
-      heureDebut: seance.heure_debut ? String(seance.heure_debut).slice(0, 5) : "",
-      heureFin: seance.heure_fin ? String(seance.heure_fin).slice(0, 5) : "",
       superviseurId: seance.superviseur_id || null,
     });
     setModalVisible(true);
   };
 
   const handleSave = async () => {
+    const nom = String(form.nom || "").trim();
+    if (!nom) {
+      Alert.alert("تنبيه", "أدخل اسم الحصة");
+      return;
+    }
+    if (!form.superviseurId) {
+      Alert.alert("تنبيه", "اختر مشرفاً للحصة");
+      return;
+    }
     setSaving(true);
-    const payload = {
-      nom: form.nom,
-      saisonId: form.saisonId || null,
-      jour: form.jour || null,
-      heureDebut: form.heureDebut || null,
-      heureFin: form.heureFin || null,
-      superviseurId: form.superviseurId || null,
-    };
     let result;
     if (editingId) {
       result = await updateSeance({
         seanceId: editingId,
         patch: {
-          nom: payload.nom,
-          saison_id: payload.saisonId,
-          jour: payload.jour,
-          heure_debut: payload.heureDebut,
-          heure_fin: payload.heureFin,
-          superviseur_id: payload.superviseurId,
+          nom,
+          superviseur_id: form.superviseurId,
         },
       });
     } else {
-      result = await createSeance(payload);
+      result = await createSeance({
+        nom,
+        superviseurId: form.superviseurId,
+      });
     }
     setSaving(false);
     if (!result.ok) {
@@ -166,10 +181,10 @@ export default function AdminSeasonsScreen({ navigation }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="رجوع"
+          accessibilityLabel="فتح القائمة"
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
@@ -224,14 +239,6 @@ export default function AdminSeasonsScreen({ navigation }) {
               ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() ||
                 sup.email
               : "";
-            const time =
-              seance.heure_debut && seance.heure_fin
-                ? `${String(seance.heure_debut).slice(0, 5)} - ${String(
-                    seance.heure_fin
-                  ).slice(0, 5)}`
-                : seance.heure_debut
-                  ? String(seance.heure_debut).slice(0, 5)
-                  : "";
             const archived = seance.statut === "archivee";
             return (
               <View
@@ -254,9 +261,6 @@ export default function AdminSeasonsScreen({ navigation }) {
                           <Text style={styles.badgeActiveText}>نشطة</Text>
                         </View>
                       )}
-                      {seance.saison_id ? (
-                        <Text style={styles.cardMeta}>{seance.saison_id}</Text>
-                      ) : null}
                     </View>
                   </View>
                   <View style={styles.cardActions}>
@@ -279,10 +283,6 @@ export default function AdminSeasonsScreen({ navigation }) {
                   </View>
                 </View>
 
-                {seance.jour ? (
-                  <Text style={styles.cardDay}>{seance.jour}</Text>
-                ) : null}
-                {time ? <Text style={styles.cardTime}>{time}</Text> : null}
                 {supName ? (
                   <Text style={styles.cardSup}>المشرف: {supName}</Text>
                 ) : null}
@@ -316,79 +316,52 @@ export default function AdminSeasonsScreen({ navigation }) {
         <View
           style={[
             styles.modalOverlay,
-            { paddingBottom: Math.max(insets.bottom, 16) },
+            {
+              paddingBottom:
+                keyboardHeight > 0
+                  ? keyboardHeight
+                  : Math.max(insets.bottom, 16),
+            },
           ]}
         >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              Keyboard.dismiss();
+              setModalVisible(false);
+            }}
+          />
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingId ? "تعديل الحصة" : "إضافة حصة"}
               </Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setModalVisible(false);
+                }}
+              >
                 <X size={22} color={palette.textSecondary} />
               </TouchableOpacity>
             </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalScrollContent}
+            >
+            <Text style={styles.modalLabel}>اسم الحصة</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="اسم الحصة (مثال: حصة الفجر)"
+              placeholder="مثال: حصة الفجر"
               placeholderTextColor={palette.placeholder}
               value={form.nom}
               onChangeText={(v) => setField("nom", v)}
               textAlign={textAlignStart}
             />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="الموسم (مثال: 2025-2026)"
-              placeholderTextColor={palette.placeholder}
-              value={form.saisonId}
-              onChangeText={(v) => setField("saisonId", v)}
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="اليوم (مثال: السبت - الاثنين - الأربعاء)"
-              placeholderTextColor={palette.placeholder}
-              value={form.jour}
-              onChangeText={(v) => setField("jour", v)}
-              textAlign={textAlignStart}
-            />
-            <View style={styles.modalRow}>
-              <TextInput
-                style={[styles.modalInput, styles.modalInputHalf]}
-                placeholder="بداية (مثال: 05:30)"
-                placeholderTextColor={palette.placeholder}
-                value={form.heureDebut}
-                onChangeText={(v) => setField("heureDebut", v)}
-                textAlign={textAlignStart}
-              />
-              <TextInput
-                style={[styles.modalInput, styles.modalInputHalf]}
-                placeholder="نهاية (مثال: 06:30)"
-                placeholderTextColor={palette.placeholder}
-                value={form.heureFin}
-                onChangeText={(v) => setField("heureFin", v)}
-                textAlign={textAlignStart}
-              />
-            </View>
 
-            <Text style={styles.modalLabel}>المشرف (اختياري)</Text>
+            <Text style={styles.modalLabel}>المشرف</Text>
             <View style={styles.supervisorChips}>
-              <TouchableOpacity
-                style={[
-                  styles.supervisorChip,
-                  !form.superviseurId && styles.supervisorChipActive,
-                ]}
-                onPress={() => setField("superviseurId", null)}
-              >
-                <Text
-                  style={[
-                    styles.supervisorChipText,
-                    !form.superviseurId && styles.supervisorChipTextActive,
-                  ]}
-                >
-                  بدون مشرف
-                </Text>
-              </TouchableOpacity>
               {supervisors.map((s) => {
                 const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
                 const active = form.superviseurId === s.id;
@@ -431,9 +404,11 @@ export default function AdminSeasonsScreen({ navigation }) {
                     : "إضافة الحصة"}
               </Text>
             </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
+      {sidebar}
     </SafeAreaView>
   );
 }
@@ -563,11 +538,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     ...rtlText,
   },
-  cardMeta: {
-    color: palette.placeholder,
-    fontSize: 12,
-    ...rtlText,
-  },
   cardActions: {
     flexDirection: row,
     gap: 8,
@@ -581,19 +551,6 @@ const styles = StyleSheet.create({
   },
   archiveBtn: {
     backgroundColor: palette.softGreen,
-  },
-  cardDay: {
-    color: palette.textSecondary,
-    fontSize: 14,
-    marginBottom: 4,
-    ...rtlText,
-  },
-  cardTime: {
-    color: palette.primary,
-    fontWeight: "600",
-    fontSize: 15,
-    marginBottom: 4,
-    ...rtlText,
   },
   cardSup: {
     color: palette.textSecondary,
@@ -640,8 +597,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 32,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+    maxHeight: "88%",
+  },
+  modalScrollContent: {
+    paddingBottom: 12,
   },
   modalHeader: {
     flexDirection: row,
@@ -665,13 +627,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: palette.textPrimary,
     backgroundColor: palette.background,
-  },
-  modalRow: {
-    flexDirection: row,
-    gap: 10,
-  },
-  modalInputHalf: {
-    flex: 1,
   },
   modalLabel: {
     fontSize: 13,

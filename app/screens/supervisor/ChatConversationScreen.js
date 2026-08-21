@@ -71,33 +71,41 @@ export default function ChatConversationScreen({ navigation, route }) {
         let seanceId = null;
         let failReason = null;
 
-        if (isAdmin && isSupervisor) {
+        if (isMember) {
+          if (isAdmin) {
+            // Chat membre <-> administration (plus le superviseur).
+            const res = await resolveAdminProfile();
+            if (res?.ok && res.admin) {
+              otherId = res.admin.id;
+            } else {
+              failReason = res?.error || "لم يتم العثور على حساب الإدارة";
+            }
+          } else {
+            // Chat membre <-> son superviseur : contactId = UUID du superviseur
+            const mySeance = await getMySeance();
+            if (mySeance?.ok && mySeance.seance) {
+              seanceId = mySeance.seance.id;
+              otherId = contactId;
+            } else {
+              failReason = mySeance?.error || "لم يتم العثور على حصة نشطة";
+            }
+          }
+        } else if (isAdmin && isSupervisor) {
           // Chat superviseur <-> admin : résoudre l'UUID réel du compte admin.
-          // (Plusieurs admins : resolveAdminProfile choisit le premier créé.)
           const res = await resolveAdminProfile();
           if (res?.ok && res.admin) {
             otherId = res.admin.id;
           } else {
             failReason = res?.error || "لم يتم العثور على حساب الإدارة";
           }
-        } else if (isAdmin && isMember) {
-          // Chat membre <-> son superviseur : séance du membre + son superviseur
-          const mySeance = await getMySeance();
-          if (mySeance?.ok && mySeance.seance) {
-            seanceId = mySeance.seance.id;
-            otherId = mySeance.seance.superviseur_id;
-          } else {
-            failReason = mySeance?.error || "لم يتم العثور على حصة نشطة";
-          }
         } else if (role === ROLES.ADMIN) {
-          // Chat admin <-> superviseur (cas 3 RG6) : contactId est l'UUID
-          // réel du superviseur choisi dans AdminChatScreen, sans séance.
+          // Chat admin <-> membre ou superviseur : contactId est l'UUID réel.
           otherId = contactId;
         } else if (isSupervisor) {
           // Chat superviseur <-> membre : séance active du superviseur
           const mySeance = await getSupervisorActiveSeance(authId);
           seanceId = mySeance?.id || null;
-          otherId = contactId; // UUID réel d'un membre (contactId !== "admin" ici)
+          otherId = contactId;
         }
 
         if (cancelled) return;
@@ -128,7 +136,7 @@ export default function ChatConversationScreen({ navigation, route }) {
   useEffect(() => {
     if (!authId || !conversation.otherId) return;
     const unsubscribe = subscribeConversation(
-      { otherUserId: conversation.otherId },
+      { otherUserId: conversation.otherId, myUserId: authId },
       (msg) => {
         setMessages((prev) =>
           prev.some((m) => m.id === msg.id)
@@ -151,7 +159,16 @@ export default function ChatConversationScreen({ navigation, route }) {
       contenu: trimmed,
     });
     if (!res.ok) {
+      setInputText(trimmed);
       Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
+      return;
+    }
+    if (res.message) {
+      setMessages((prev) =>
+        prev.some((m) => m.id === res.message.id)
+          ? prev
+          : [...prev, normalizeMessage(res.message, authId)]
+      );
     }
   };
 

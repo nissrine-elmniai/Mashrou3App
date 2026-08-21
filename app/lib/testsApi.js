@@ -20,6 +20,9 @@ function mapTableError(error, tableLabel) {
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }
+  if (/Could not find the .* column|schema cache/i.test(msg)) {
+    return `عمود ناقص في جدول ${tableLabel} — نفّذ supabase/migrations/0016_tests_types.sql في SQL Editor`;
+  }
   if (/permission|row-level security|RLS|42501|violates row/i.test(msg)) {
     return "لا صلاحية كافية لهذه العملية";
   }
@@ -52,7 +55,9 @@ export async function getMyTestInvitations() {
     const { data, error } = await withTimeout(
       supabase
         .from("test_invitations")
-        .select("*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at)")
+        .select(
+          "*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at, type, date_test, quran_quantity, form_url)"
+        )
         .eq("membre_id", userId)
         .order("created_at", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
@@ -153,33 +158,68 @@ export async function getMyTestResults() {
   }
 }
 
+export const TEST_TYPE_LABELS = {
+  hifz: "اختبار الحفظ",
+  sunnah: "حفاظ السنة",
+};
+
 /**
- * (Superviseur) Création d'un test pour une de ses séances.
- * @param {object} payload { titre, seanceId }
+ * (Admin) Création d'un test :
+ *  - hifz   : date + quantité de Coran
+ *  - sunnah : date + lien Google Form
+ * @param {object} payload { type, dateTest, quranQuantity?, formUrl?, seanceId? }
  * @returns { ok, test? }
  */
-export async function createTest({ titre, seanceId }) {
+export async function createTest({
+  type = "hifz",
+  dateTest,
+  quranQuantity = null,
+  formUrl = null,
+  seanceId = null,
+  titre = null,
+}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!titre || !String(titre).trim()) {
+  const testType = type === "sunnah" ? "sunnah" : "hifz";
+  const title = String(titre || "").trim();
+  if (!title) {
     return { ok: false, error: "أدخل عنوان الاختبار" };
   }
-  if (!seanceId) {
-    return { ok: false, error: "معرّف الحصة مفقود" };
+  const date = String(dateTest || "").trim();
+  if (!date) {
+    return { ok: false, error: "أعلن تاريخ الاختبار" };
+  }
+  if (testType === "hifz" && !String(quranQuantity || "").trim()) {
+    return { ok: false, error: "أدخل كمية القرآن المراد تقييمها" };
+  }
+  if (testType === "sunnah") {
+    const url = String(formUrl || "").trim();
+    if (!url) {
+      return { ok: false, error: "أدخل رابط نموذج Google Form" };
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      return { ok: false, error: "رابط Google Form غير صالح — يجب أن يبدأ بـ https://" };
+    }
   }
   const userId = await currentAuthId();
   if (!userId) {
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
+  const row = {
+    titre: title,
+    type: testType,
+    date_test: date,
+    quran_quantity: testType === "hifz" ? String(quranQuantity).trim() : null,
+    form_url: testType === "sunnah" ? String(formUrl).trim() : null,
+    created_by: userId,
+  };
+  if (seanceId) row.seance_id = seanceId;
+
   try {
     const { data, error } = await withTimeout(
-      supabase
-        .from("tests")
-        .insert({ titre: String(titre).trim(), seance_id: seanceId, created_by: userId })
-        .select("*")
-        .single(),
+      supabase.from("tests").insert(row).select("*").single(),
       SUPABASE_TIMEOUT_MS,
       "إنشاء الاختبار"
     );

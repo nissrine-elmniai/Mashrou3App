@@ -719,7 +719,22 @@ export function AppProvider({ children }) {
 
     const existingUser = users.find((u) => u.email.toLowerCase() === mail);
 
-    // Même e-mail déjà utilisé (ex. superviseur) → un seul compte, rôles cumulés
+    if (existingUser && userHasRole(existingUser, ROLES.SUPERVISOR)) {
+      return {
+        ok: false,
+        error:
+          "هذا البريد لحساب مشرف. لا يُستخدم كحساب عضو — أدخل بريداً آخر للعضو.",
+      };
+    }
+    if (existingUser && userHasRole(existingUser, ROLES.ADMIN)) {
+      return {
+        ok: false,
+        error:
+          "هذا البريد لحساب الإدارة. استخدم بريداً آخر لإنشاء حساب العضو.",
+      };
+    }
+
+    // Même e-mail déjà utilisé pour un membre → réactivation du même الحساب
     if (existingUser) {
       let authId = existingUser.authId || null;
       let needsEmailConfirmation = false;

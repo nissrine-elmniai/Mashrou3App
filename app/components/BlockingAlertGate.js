@@ -11,7 +11,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../constants/theme";
 import { rtlText, rtlTextBold, fonts } from "../constants/rtl";
 import { useApp } from "../context/AppContext";
-import { getUnacknowledgedAlerts, acknowledgeAlert } from "../lib/alertsApi";
+import { ROLES } from "../constants/roles";
+import {
+  getUnacknowledgedAlerts,
+  acknowledgeAlert,
+  subscribeToNewAlerts,
+} from "../lib/alertsApi";
 
 const POLL_INTERVAL_MS = 30000;
 
@@ -28,12 +33,13 @@ const POLL_INTERVAL_MS = 30000;
  */
 export default function BlockingAlertGate() {
   const { supabaseSession, currentUser } = useApp();
+  const isAdmin = currentUser?.role === ROLES.ADMIN;
   const [queue, setQueue] = useState([]);
   const [loadingAck, setLoadingAck] = useState(false);
   const fetchingRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    if (!supabaseSession?.user?.id) return;
+    if (!supabaseSession?.user?.id || isAdmin) return;
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     try {
@@ -44,12 +50,16 @@ export default function BlockingAlertGate() {
     } finally {
       fetchingRef.current = false;
     }
-  }, [supabaseSession?.user?.id]);
+  }, [supabaseSession?.user?.id, isAdmin]);
 
-  // Requête immédiate au montage (alerte bloquante dès l'arrivée dans l'app)
+  // Requête immédiate au montage + Realtime (affichage dès l'envoi admin)
   useEffect(() => {
+    if (!supabaseSession?.user?.id || isAdmin) return undefined;
     refresh();
-  }, [refresh]);
+    return subscribeToNewAlerts(() => {
+      refresh();
+    });
+  }, [refresh, supabaseSession?.user?.id, isAdmin]);
 
   // Requête immédiate à chaque retour au premier plan
   useEffect(() => {
@@ -79,7 +89,7 @@ export default function BlockingAlertGate() {
     setQueue((prev) => prev.filter((a) => a.id !== current.id));
   };
 
-  if (!supabaseSession?.user?.id || queue.length === 0) {
+  if (isAdmin || !supabaseSession?.user?.id || queue.length === 0) {
     return null;
   }
 

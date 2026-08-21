@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -31,6 +31,7 @@ import {
   ProgressRing,
   MemberBottomTabBar,
 } from "../../components/ui";
+import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -50,15 +51,28 @@ export default function MemberDashboardScreen({ navigation }) {
     submitSeasonRegistration,
     getMemberGroup,
     getMemberProgress,
-    getNotificationsForUser,
-    markNotificationRead,
   } = useApp();
 
-  const myNotifications = getNotificationsForUser(currentUser);
-
   const [tab, setTab] = useState("home");
+  const [adminAlerts, setAdminAlerts] = useState([]);
   const [selectedTimes, setSelectedTimes] = useState([]);
   const [summerTimes, setSummerTimes] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const res = await getVisibleAlerts();
+      if (!cancelled && res.ok) setAdminAlerts(res.alerts);
+    };
+    load();
+    const unsub = subscribeToNewAlerts(() => {
+      load();
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
 
   const openRegular = seasons.filter(
     (s) => s.registrationOpen && s.type === SEASON_TYPES.REGULAR
@@ -196,12 +210,7 @@ export default function MemberDashboardScreen({ navigation }) {
       },
     });
 
-  const openChat = () =>
-    navigation.navigate("ChatConversation", {
-      contactId: "admin",
-      contactName: "إدارة المسجد",
-      contactAvatarLetter: "م",
-    });
+  const openChat = () => navigation.navigate("MemberChatInbox");
 
   const insets = useSafeAreaInsets();
 
@@ -262,23 +271,21 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            {myNotifications.length > 0 ? (
-              <SectionCard
-                title="الإشعارات"
-                subtitle="آخر التنبيهات والقرارات"
-              >
-                {myNotifications.slice(0, 5).map((n) => (
-                  <TouchableOpacity
-                    key={n.id}
-                    style={styles.notifItem}
-                    onPress={() => markNotificationRead(n.id)}
-                  >
-                    <Text style={styles.notifTitle}>{n.title}</Text>
-                    <Text style={styles.notifBody}>{n.body}</Text>
-                  </TouchableOpacity>
-                ))}
-              </SectionCard>
-            ) : null}
+            <SectionCard
+              title="الإشعارات"
+              subtitle="تنبيهات الإدارة تظهر هنا مباشرة"
+            >
+              {adminAlerts.length === 0 ? (
+                <EmptyState text="لا توجد تنبيهات بعد" />
+              ) : (
+                adminAlerts.slice(0, 5).map((n) => (
+                  <View key={n.id} style={styles.notifItem}>
+                    <Text style={styles.notifTitle}>تنبيه من الإدارة</Text>
+                    <Text style={styles.notifBody}>{n.message}</Text>
+                  </View>
+                ))
+              )}
+            </SectionCard>
 
             <SectionCard
               title="الإجراءات السريعة"

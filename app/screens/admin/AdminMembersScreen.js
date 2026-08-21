@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Menu, Bell, ClipboardList } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row } from "../../constants/rtl";
 import {
   getMemberProfiles,
@@ -39,6 +40,7 @@ function levelColor(level) {
 }
 
 export default function AdminMembersScreen({ navigation }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "members");
   const { stats, currentUser } = useApp();
 
   const [loading, setLoading] = useState(true);
@@ -107,10 +109,10 @@ export default function AdminMembersScreen({ navigation }) {
     >
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="رجوع"
+          accessibilityLabel="فتح القائمة"
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
@@ -180,6 +182,7 @@ export default function AdminMembersScreen({ navigation }) {
           ))
         )}
       </ScrollView>
+      {sidebar}
     </SafeAreaView>
   );
 }

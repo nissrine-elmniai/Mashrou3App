@@ -16,6 +16,13 @@ function withTimeout(promise, ms, label) {
 
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
+  if (/null value in column ["'](\w+)["']/i.test(msg)) {
+    const col = msg.match(/null value in column ["'](\w+)["']/i)?.[1] || "مطلوب";
+    return `عمود ${col} مطلوب — أعد تحميل التطبيق (يرسل title/message/body) أو نفّذ 0022`;
+  }
+  if (/Could not find the ['"]?message['"]? column|schema cache/i.test(msg)) {
+    return "عمود message ناقص في جدول alerts — نفّذ ملف 0021_alerts_align_columns.sql في SQL Editor ثم أعد المحاولة";
+  }
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }
@@ -43,8 +50,8 @@ export async function getUnacknowledgedAlerts() {
       withTimeout(
         supabase
           .from("alerts")
-          .select("id, message, created_at")
-          .order("created_at", { ascending: true }),
+        .select("id, message, title, body, created_at")
+        .order("created_at", { ascending: true }),
         SUPABASE_TIMEOUT_MS,
         "قراءة التنبيهات"
       ),
@@ -70,7 +77,7 @@ export async function getUnacknowledgedAlerts() {
       ok: true,
       alerts: pending.map((a) => ({
         id: a.id,
-        message: a.message,
+        message: a.message || a.body || a.title || "",
         createdAt: a.created_at,
       })),
     };
@@ -120,16 +127,66 @@ export async function sendAlert(message, audience) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
+  const text = String(message || "").trim();
+  if (!text) {
+    return { ok: false, error: "اكتب نص التنبيه أولاً" };
+  }
+  const allowed = ["all", "members", "supervisors"];
+  const target = allowed.includes(audience) ? audience : "all";
+  const title = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+  const id =
+    (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : null) || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
   try {
-    const { error } = await withTimeout(
-      supabase.rpc("send_alert", { p_message: message, p_audience: audience }),
+    const { data: authData } = await supabase.auth.getUser();
+    const row = {
+      id,
+      title,
+      message: text,
+      body: text,
+      audience: target,
+      created_by: authData?.user?.id || null,
+    };
+
+    // Schéma legacy : title + body souvent NOT NULL
+    let insertError = (
+      await withTimeout(
+        supabase.from("alerts").insert(row),
+        SUPABASE_TIMEOUT_MS,
+        "إرسال التنبيه"
+      )
+    ).error;
+
+    // Si une colonne n'existe pas dans le cache, retenter sans elle
+    if (insertError && /Could not find the ['"](\w+)['"] column/i.test(insertError.message || "")) {
+      const badCol = RegExp.$1;
+      const slim = { ...row };
+      delete slim[badCol];
+      insertError = (
+        await withTimeout(
+          supabase.from("alerts").insert(slim),
+          SUPABASE_TIMEOUT_MS,
+          "إرسال التنبيه"
+        )
+      ).error;
+    }
+
+    if (!insertError) return { ok: true };
+
+    // Repli RPC (après migration 0022)
+    const { error: rpcError } = await withTimeout(
+      supabase.rpc("send_alert", { p_message: text, p_audience: target }),
       SUPABASE_TIMEOUT_MS,
       "إرسال التنبيه"
     );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "alerts") };
-    }
-    return { ok: true };
+    if (!rpcError) return { ok: true };
+
+    return {
+      ok: false,
+      error: mapTableError(insertError || rpcError, "alerts"),
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -147,7 +204,7 @@ export async function getAllAlertsAdmin() {
     const { data, error } = await withTimeout(
       supabase
         .from("alerts")
-        .select("id, message, audience, created_at"),
+        .select("id, message, title, body, audience, created_at"),
       SUPABASE_TIMEOUT_MS,
       "قراءة سجل التنبيهات"
     );
@@ -167,7 +224,7 @@ export async function getAllAlertsAdmin() {
         );
         return {
           id: a.id,
-          message: a.message,
+          message: a.message || a.body || a.title || "",
           audience: a.audience,
           createdAt: a.created_at,
           ackCount: countError ? 0 : count || 0,
@@ -179,6 +236,65 @@ export async function getAllAlertsAdmin() {
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+/**
+ * Alertes visibles par le compte connecté (RLS filtre déjà l'audience).
+ * Sert aux listes membre / superviseur.
+ * @returns { ok, alerts }
+ */
+export async function getVisibleAlerts() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("alerts")
+        .select("id, message, title, body, audience, created_at")
+        .order("created_at", { ascending: false })
+        .limit(20),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "alerts") };
+    }
+    return {
+      ok: true,
+      alerts: (data || []).map((a) => ({
+        id: a.id,
+        message: a.message || a.body || a.title || "",
+        audience: a.audience,
+        createdAt: a.created_at,
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Realtime : nouvel INSERT sur alerts (filtré par RLS — seuls les destinataires
+ * reçoivent l'événement). @returns {() => void}
+ */
+export function subscribeToNewAlerts(onInsert) {
+  if (!isSupabaseConfigured() || typeof onInsert !== "function") {
+    return () => {};
+  }
+  const channel = supabase.channel(`alerts_inbox_${Date.now()}`);
+  channel
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "alerts" },
+      (payload) => {
+        if (payload?.new) onInsert(payload.new);
+      }
+    )
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /** Id de l'utilisateur connecté via la session Supabase, ou null. */

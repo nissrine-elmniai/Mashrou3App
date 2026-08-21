@@ -84,6 +84,13 @@ export async function createSeance({
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
+  const authId = await currentAuthId();
+  if (!authId) {
+    return {
+      ok: false,
+      error: "لا توجد جلسة Supabase. سجّل الخروج ثم سجّل الدخول مجدداً بحساب الأدمن.",
+    };
+  }
   const cleanNom = String(nom || "").trim();
   if (!cleanNom) {
     return { ok: false, error: "أدخل اسم الحصة" };

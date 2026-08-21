@@ -9,10 +9,14 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
+  Keyboard,
+  Platform,
+  Pressable,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, Trash2, Plus, X, Menu, Bell, Ban } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
 import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
@@ -43,6 +47,7 @@ function hissaLabel(count) {
 }
 
 export default function AdminSupervisorsScreen({ navigation }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "supervisors");
   const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const fabBottom = Math.max(insets.bottom, 16) + 16;
@@ -83,6 +88,24 @@ export default function AdminSupervisorsScreen({ navigation }) {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    if (!showAdd) {
+      setKeyboardHeight(0);
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [showAdd]);
 
   const groupCount = (supervisorId) =>
     seances.filter(
@@ -218,10 +241,10 @@ export default function AdminSupervisorsScreen({ navigation }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="رجوع"
+          accessibilityLabel="فتح القائمة"
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
@@ -397,61 +420,85 @@ export default function AdminSupervisorsScreen({ navigation }) {
         <View
           style={[
             styles.modalOverlay,
-            { paddingBottom: Math.max(insets.bottom, 16) },
+            {
+              paddingBottom:
+                keyboardHeight > 0
+                  ? keyboardHeight
+                  : Math.max(insets.bottom, 16),
+            },
           ]}
         >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              Keyboard.dismiss();
+              setShowAdd(false);
+            }}
+          />
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>إضافة مشرف</Text>
-              <TouchableOpacity onPress={() => setShowAdd(false)}>
+              <TouchableOpacity
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setShowAdd(false);
+                }}
+              >
                 <X size={22} color={palette.textSecondary} />
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="الاسم"
-              placeholderTextColor={palette.placeholder}
-              value={firstName}
-              onChangeText={setFirstName}
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="اللقب"
-              placeholderTextColor={palette.placeholder}
-              value={lastName}
-              onChangeText={setLastName}
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="البريد الإلكتروني"
-              placeholderTextColor={palette.placeholder}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="اسم المجموعة (مثال: مجموعة الفجر)"
-              placeholderTextColor={palette.placeholder}
-              value={groupName}
-              onChangeText={setGroupName}
-              textAlign={textAlignStart}
-            />
-            <TouchableOpacity
-              style={[styles.modalSubmit, sending && { opacity: 0.6 }]}
-              onPress={sending ? undefined : handleAdd}
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalScrollContent}
             >
-              <Text style={styles.modalSubmitText}>
-                {sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
-              </Text>
-            </TouchableOpacity>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="الاسم"
+                placeholderTextColor={palette.placeholder}
+                value={firstName}
+                onChangeText={setFirstName}
+                textAlign={textAlignStart}
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="اللقب"
+                placeholderTextColor={palette.placeholder}
+                value={lastName}
+                onChangeText={setLastName}
+                textAlign={textAlignStart}
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="البريد الإلكتروني"
+                placeholderTextColor={palette.placeholder}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                textAlign={textAlignStart}
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="اسم المجموعة (مثال: مجموعة الفجر)"
+                placeholderTextColor={palette.placeholder}
+                value={groupName}
+                onChangeText={setGroupName}
+                textAlign={textAlignStart}
+              />
+              <TouchableOpacity
+                style={[styles.modalSubmit, sending && { opacity: 0.6 }]}
+                onPress={sending ? undefined : handleAdd}
+              >
+                <Text style={styles.modalSubmitText}>
+                  {sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
+      {sidebar}
     </SafeAreaView>
   );
 }
@@ -670,8 +717,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 32,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+    maxHeight: "88%",
+  },
+  modalScrollContent: {
+    paddingBottom: 12,
   },
   modalHeader: {
     flexDirection: row,

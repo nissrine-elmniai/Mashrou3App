@@ -1,37 +1,22 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Animated,
-  Modal,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  Menu,
-  X,
-  Home,
-  Users,
-  UserCog,
-  Calendar,
-  ClipboardList,
-  FileText,
-  Bell,
-  MessageSquare,
-  Settings,
-  LogOut,
-  Plus,
-} from "lucide-react-native";
+import { Menu, Bell, Plus } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import {
   ROLES,
   userHasRole,
   REGISTRATION_STATUS,
   ACCOUNT_STATUS,
 } from "../../constants/roles";
-import { rtlText, row, isRTL } from "../../constants/rtl";
+import { rtlText, row } from "../../constants/rtl";
 
 const palette = {
   primary: "#2E7D32",
@@ -45,8 +30,6 @@ const palette = {
   placeholder: "#999999",
   border: "#E0E0E0",
 };
-
-const SIDEBAR_WIDTH = 280;
 
 function parseActivityDate(value) {
   if (!value) return null;
@@ -286,178 +269,10 @@ function DashboardHome({ navigation, stats, activities }) {
   );
 }
 
-function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
-  const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
-  const overlayOpacity = useRef(new Animated.Value(0)).current;
-  const insets = useSafeAreaInsets();
-
-  useEffect(() => {
-    if (isOpen) {
-      Animated.parallel([
-        Animated.timing(translateX, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayOpacity, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(translateX, {
-          toValue: SIDEBAR_WIDTH,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayOpacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [isOpen]);
-
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "محمد أحمد";
-  const initial = displayName.charAt(0) || "م";
-
-  const menuItems = [
-    { id: "home", label: "الرئيسية", icon: Home },
-    { id: "supervisors", label: "المشرفون", icon: UserCog },
-    { id: "members", label: "الأعضاء", icon: Users },
-    { id: "registrations", label: "طلبات التسجيل", icon: FileText },
-    { id: "sessions", label: "الحصص", icon: Calendar },
-    { id: "tests", label: "الاختبارات", icon: ClipboardList },
-    { id: "notifications", label: "التنبيهات", icon: Bell },
-    { id: "chat", label: "الدردشة", icon: MessageSquare },
-    { id: "settings", label: "الإعدادات", icon: Settings },
-  ];
-
-  const routeMap = {
-    supervisors: "AdminSupervisors",
-    members: "AdminMembers",
-    registrations: "AdminRegistrations",
-    sessions: "AdminSeasons",
-    tests: "AdminTests",
-    notifications: "AdminNotifications",
-    chat: "AdminChat",
-    settings: "AdminSettings",
-  };
-
-  const handlePress = (id) => {
-    if (id === "home") {
-      onClose();
-      return;
-    }
-    onClose();
-    if (routeMap[id]) {
-      navigation.navigate(routeMap[id]);
-    }
-  };
-
-  return (
-    <Modal visible={isOpen} transparent animationType="none" onRequestClose={onClose}>
-      <View style={sbStyles.modalContainer}>
-        <Animated.View
-          style={[
-            sbStyles.overlay,
-            { opacity: overlayOpacity },
-          ]}
-          pointerEvents="box-none"
-        >
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={onClose}
-          />
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            sbStyles.sidebar,
-            isRTL ? { left: 0 } : { right: 0 },
-            {
-              top: insets.top,
-              // Au moins 16px en bas (souvent insets.bottom = 0 sur Android)
-              bottom: Math.max(insets.bottom, 16),
-              transform: [{ translateX }],
-            },
-          ]}
-        >
-          <View style={sbStyles.header}>
-            <View style={sbStyles.avatar}>
-              <Text style={sbStyles.avatarText}>{initial}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={sbStyles.role}>مشرف عام</Text>
-              <Text style={sbStyles.name}>{displayName}</Text>
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <X size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            style={sbStyles.menuScroll}
-            contentContainerStyle={sbStyles.menuList}
-            showsVerticalScrollIndicator={false}
-          >
-            {menuItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = item.id === "home";
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  onPress={() => handlePress(item.id)}
-                  style={[
-                    sbStyles.menuItem,
-                    isActive && sbStyles.menuItemActive,
-                  ]}
-                >
-                  <Icon
-                    size={20}
-                    color={isActive ? palette.primary : palette.textSecondary}
-                    pointerEvents="none"
-                  />
-                  <Text
-                    style={[
-                      sbStyles.menuItemText,
-                      isActive && sbStyles.menuItemTextActive,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <View style={sbStyles.logoutWrap}>
-            <TouchableOpacity
-              style={sbStyles.logoutBtn}
-              onPress={onLogout}
-              activeOpacity={0.7}
-            >
-              <LogOut size={20} color={palette.red} pointerEvents="none" />
-              <Text style={sbStyles.logoutText}>تسجيل الخروج</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      </View>
-    </Modal>
-  );
-}
-
 export default function AdminDashboard({ navigation }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "home");
   const {
     stats,
-    logout,
     currentUser,
     users,
     exams,
@@ -491,11 +306,6 @@ export default function AdminDashboard({ navigation }) {
     [registrations, exams, users, notifications]
   );
 
-  const handleLogout = async () => {
-    await logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
-  };
-
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
     : "";
@@ -505,7 +315,7 @@ export default function AdminDashboard({ navigation }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => setSidebarOpen(true)}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="فتح القائمة"
@@ -551,13 +361,7 @@ export default function AdminDashboard({ navigation }) {
         />
       </ScrollView>
 
-      <AdminSidebar
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        navigation={navigation}
-        currentUser={currentUser}
-        onLogout={handleLogout}
-      />
+      {sidebar}
     </SafeAreaView>
   );
 }
@@ -617,112 +421,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 10,
     fontWeight: "bold",
-  },
-});
-
-const sbStyles = StyleSheet.create({
-  modalContainer: {
-    flex: 1,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
-  sidebar: {
-    position: "absolute",
-    width: SIDEBAR_WIDTH,
-    backgroundColor: "#fff",
-    elevation: 10,
-    zIndex: 2,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: -2, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-  },
-  header: {
-    backgroundColor: palette.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    backgroundColor: "#fff",
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 18,
-  },
-  role: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 12,
-    ...rtlText,
-  },
-  name: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-    ...rtlText,
-  },
-  menuScroll: {
-    flex: 1,
-  },
-  menuList: {
-    padding: 8,
-    paddingBottom: 16,
-  },
-  menuItem: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  menuItemActive: {
-    backgroundColor: palette.softGreen,
-    borderRightWidth: 3,
-    borderRightColor: palette.primary,
-  },
-  menuItemText: {
-    fontWeight: "500",
-    color: palette.textSecondary,
-    fontSize: 14,
-    ...rtlText,
-  },
-  menuItemTextActive: {
-    color: palette.primary,
-  },
-  logoutWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
-    backgroundColor: "#fff",
-  },
-  logoutBtn: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 12,
-    backgroundColor: "#FFEBEE",
-    borderRadius: 12,
-  },
-  logoutText: {
-    color: palette.red,
-    fontWeight: "600",
-    ...rtlText,
   },
 });
 
