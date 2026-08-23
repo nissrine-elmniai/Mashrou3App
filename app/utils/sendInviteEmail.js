@@ -1,6 +1,22 @@
 import { APP_EMAIL, USE_MOCK_EMAIL } from "../constants/email";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
+function mapEmailSendError(raw) {
+  const msg = String(raw || "");
+  if (/only send testing emails|verify a domain|resend.com\/domains/i.test(msg)) {
+    return [
+      "Resend في وضع الاختبار: لا يُرسل إلا إلى بريد حسابك.",
+      "لإرسال الدعوات لأي عنوان:",
+      "1) ثبّت نطاقاً في resend.com/domains",
+      "2) في Supabase Secrets ضع FROM_EMAIL مثل: مهندس حامل لكتاب الله <noreply@ton-domaine.com>",
+      "3) أعد نشر الدالة send-app-email",
+      "",
+      "الدعوة محفوظة: يمكن للمشرف إنشاء حسابه من التطبيق دون البريد.",
+    ].join("\n");
+  }
+  return msg;
+}
+
 /**
  * إرسال بريد التطبيق عبر Edge Function (Resend).
  * إن كان USE_MOCK_EMAIL=true → محاكاة فقط.
@@ -73,12 +89,15 @@ async function sendAppEmail({ toEmail, toName, subject, message }) {
       }
       return {
         ok: false,
-        error: serverError || msg || "فشل استدعاء خدمة البريد",
+        error: mapEmailSendError(serverError || msg) || "فشل استدعاء خدمة البريد",
       };
     }
 
     if (data && data.ok === false) {
-      return { ok: false, error: data.error || "فشل إرسال البريد" };
+      return {
+        ok: false,
+        error: mapEmailSendError(data.error) || "فشل إرسال البريد",
+      };
     }
 
     return {

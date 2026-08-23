@@ -1,10 +1,13 @@
-// Supabase Edge Function — envoi d'e-mails via Resend
-// Deploy: supabase functions deploy send-app-email
-// Secret: supabase secrets set RESEND_API_KEY=re_xxx
-// Optionnel: supabase secrets set FROM_EMAIL="Nom <noreply@ton-domaine.com>"
+// Deploy: npx supabase functions deploy send-app-email
+// Secrets: SMTP_USER + SMTP_PASS (recommandé, n'importe quel destinataire)
+// Optionnel: SMTP_HOST, SMTP_PORT, SMTP_SECURE, FROM_NAME
+// Repli: RESEND_API_KEY (mode test = un seul destinataire)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { Resend } from "npm:resend@4.0.0";
+import {
+  htmlFromText,
+  sendTransactionalEmail,
+} from "../_shared/sendMail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,7 +42,6 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "جلسة غير صالحة" }, 401);
     }
 
-    // Vérification du rôle
     const { data: profile, error: profileError } = await userClient
       .from("profiles")
       .select("role")
@@ -54,7 +56,6 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "ليس لديك صلاحية إرسال البريد" }, 403);
     }
 
-    // Parsing du body
     let body: Record<string, unknown>;
     try {
       body = await req.json();
@@ -74,47 +75,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    const resendKey = Deno.env.get("RESEND_API_KEY");
-    if (!resendKey) {
-      return json(
-        { ok: false, error: "RESEND_API_KEY غير مُعدّ في secrets" },
-        500
-      );
-    }
-
-    const fromEmail =
-      Deno.env.get("FROM_EMAIL") ||
-      "Mashrou3 <onboarding@resend.dev>";
-
-    // Envoi via SDK Resend
-    const resend = new Resend(resendKey);
-
-    const { data, error: resendError } = await resend.emails.send({
-      from: fromEmail,
-      to: [toEmail],
+    const sent = await sendTransactionalEmail({
+      to: toEmail,
       subject,
       text: message,
-      html: message
-        .split("\n")
-        .map((line) => `<p style="margin:0 0 8px;">${escapeHtml(line) || "&nbsp;"}</p>`)
-        .join(""),
+      html: htmlFromText(message),
     });
 
-    if (resendError) {
-      console.error("Resend API error:", resendError);
-      return json(
-        {
-          ok: false,
-          error: resendError.message || "فشل إرسال البريد عبر Resend",
-        },
-        502
-      );
+    if (!sent.ok) {
+      return json({ ok: false, error: sent.error }, 502);
     }
 
     return json({
       ok: true,
-      via: "resend",
-      id: data?.id,
+      via: sent.via,
+      id: sent.id,
       to: toEmail,
       toName,
     });
@@ -130,12 +105,4 @@ function json(payload: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
