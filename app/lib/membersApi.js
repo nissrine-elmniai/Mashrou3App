@@ -14,7 +14,10 @@ export async function getSupervisorActiveSeance(supervisorAuthId) {
 
 /**
  * Membres inscrits (statut='accepte') d'une séance, normalisés en
- * [{ userId, nom, prenom, email, dateNaissance, genre }].
+ * [{ userId, nom, prenom, email, telephone, dateNaissance, genre, statutInscription, dateInscription }].
+ * `statutInscription`/`dateInscription` viennent de la ligne `inscriptions` elle-même
+ * (colonnes `statut`/`date_inscription`, déjà sélectionnées via `select("*")` mais pas
+ * remontées jusqu'ici).
  * Tente la jointure imbriquée PostgREST inscriptions -> membres -> users ;
  * si elle échoue, retombe sur 3 requêtes séparées plutôt que de deviner un
  * nom de contrainte FK.
@@ -34,8 +37,11 @@ export async function getSeanceMembers(seanceId) {
         nom: row.membres.users.nom,
         prenom: row.membres.users.prenom,
         email: row.membres.users.email,
+        telephone: row.membres.users.telephone,
         dateNaissance: row.membres.date_naissance,
         genre: row.membres.genre,
+        statutInscription: row.statut,
+        dateInscription: row.date_inscription,
       }));
   }
 
@@ -59,19 +65,26 @@ export async function getSeanceMembers(seanceId) {
 
   const membresById = new Map((membres || []).map((m) => [m.user_id, m]));
   const usersById = new Map((users || []).map((u) => [u.id, u]));
+  const inscriptionsByMembreId = new Map(
+    (inscriptions || []).map((i) => [i.membre_id, i])
+  );
 
   return membreIds
     .filter((id) => usersById.has(id))
     .map((id) => {
       const u = usersById.get(id);
       const m = membresById.get(id);
+      const i = inscriptionsByMembreId.get(id);
       return {
         userId: id,
         nom: u.nom,
         prenom: u.prenom,
         email: u.email,
+        telephone: u.telephone,
         dateNaissance: m?.date_naissance,
         genre: m?.genre,
+        statutInscription: i?.statut,
+        dateInscription: i?.date_inscription,
       };
     });
 }

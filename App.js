@@ -41,6 +41,7 @@ import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen"
 
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
 import ChatConversationScreen from "./app/screens/supervisor/ChatConversationScreen";
+import SupervisorMemberProfileScreen from "./app/screens/supervisor/MemberProfileScreen";
 
 import AdminDashboard from "./app/screens/admin/AdminDashboard";
 import AdminSeasonsScreen from "./app/screens/admin/AdminSeasonsScreen";
@@ -262,9 +263,10 @@ export default function App() {
   }
 
   return (
-    <AppProvider>
-      <SafeAreaProvider>
-        <NavigationContainer direction="rtl">
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AppProvider>
+        <SafeAreaProvider>
+          <NavigationContainer direction="rtl">
           <Stack.Navigator
           initialRouteName="Login"
           screenOptions={{
@@ -367,9 +369,15 @@ export default function App() {
               component={ChatConversationScreen}
               options={{ headerShown: false }}
             />
+            <Stack.Screen
+              name="MemberProfile"
+              component={SupervisorMemberProfileScreen}
+              options={{ headerShown: false }}
+            />
           </Stack.Navigator>
-        </NavigationContainer>
-      </SafeAreaProvider>
+          </NavigationContainer>
+        </SafeAreaProvider>
+      </AppProvider>
     </GestureHandlerRootView>
   );
 }

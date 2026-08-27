@@ -111,6 +111,7 @@ export function AppProvider({ children }) {
               loadedUsers.find((u) => u.email?.toLowerCase() === mail) ||
               loadedUsers.find((u) => u.authId === profileResult.profile.id);
             restored = profileToAppUser(profileResult.profile, local || {});
+            setSupabaseSession(sessionResult.session);
           }
         }
       } else if (saved?.currentUserId) {
@@ -167,6 +168,7 @@ export function AppProvider({ children }) {
     if (isSupabaseConfigured()) {
       const authResult = await signInWithEmailPassword(mail, password);
       if (!authResult.ok) return authResult;
+      setSupabaseSession(authResult.session);
 
       const profile = authResult.profile;
       let local = users.find(

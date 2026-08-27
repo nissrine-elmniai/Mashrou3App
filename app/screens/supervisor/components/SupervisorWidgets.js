@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Switch } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../../constants/rtl";
-import { LEVEL_COLORS, STATUS_COLORS, initials } from "../supervisorHelpers";
+import { STATUS_COLORS, initials } from "../supervisorHelpers";
 
 export function MiniStat({ value, label, color }) {
   return (
@@ -23,34 +23,26 @@ export function OutlineButton({ label, icon, onPress }) {
   );
 }
 
-export function MemberRow({ member, onMessage }) {
-  const levelColor = LEVEL_COLORS[member.level];
+export function MemberRow({ member, onMessage, onOpenProfile }) {
   const statusColor = STATUS_COLORS[member.status];
   const name = `${member.user.firstName} ${member.user.lastName}`;
   return (
     <View style={[styles.memberRowCard, shadows.card]}>
-      <View style={styles.avatarWrap}>
-        <View style={styles.memberAvatar}>
-          <Text style={styles.memberAvatarText}>{initials(member.user.firstName)}</Text>
-        </View>
-        <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-      </View>
-      <View style={styles.memberInfo}>
-        <Text style={styles.memberName}>{name}</Text>
-        <View style={styles.memberMetaRow}>
-          <View style={[styles.levelPill, { backgroundColor: `${levelColor}20` }]}>
-            <Text style={[styles.levelPillText, { color: levelColor }]}>{member.level}</Text>
+      <TouchableOpacity
+        style={styles.memberMainArea}
+        onPress={onOpenProfile}
+        activeOpacity={0.7}
+      >
+        <View style={styles.avatarWrap}>
+          <View style={styles.memberAvatar}>
+            <Text style={styles.memberAvatarText}>{initials(member.user.firstName)}</Text>
           </View>
-          <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${member.pct}%`, backgroundColor: colors.primary },
-              ]}
-            />
-          </View>
+          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
         </View>
-      </View>
+        <View style={styles.memberInfo}>
+          <Text style={styles.memberName}>{name}</Text>
+        </View>
+      </TouchableOpacity>
       <TouchableOpacity style={styles.msgIconBtn} onPress={onMessage}>
         <Ionicons name="chatbubble-outline" size={20} color={colors.primary} />
       </TouchableOpacity>
@@ -135,6 +127,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
+  memberMainArea: { flex: 1, flexDirection: row, alignItems: "center", gap: 12 },
   avatarWrap: { position: "relative" },
   memberAvatar: {
     width: 42,
@@ -157,18 +150,6 @@ const styles = StyleSheet.create({
   },
   memberInfo: { flex: 1 },
   memberName: { fontFamily: fonts.bold, fontSize: 15, color: colors.text, ...rtlTextBold },
-  memberMetaRow: { flexDirection: row, alignItems: "center", gap: 8, marginTop: 6 },
-  levelPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radii.pill },
-  levelPillText: { fontSize: 11, fontFamily: fonts.semiBold },
-  progressTrack: {
-    flex: 1,
-    maxWidth: 70,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.border,
-    overflow: "hidden",
-  },
-  progressFill: { height: "100%", borderRadius: 3 },
   msgIconBtn: { padding: 8 },
 
   attendanceRow: {
