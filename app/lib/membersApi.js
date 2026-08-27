@@ -29,6 +29,36 @@ export async function getSeanceMembers(seanceId) {
     .eq("seance_id", seanceId)
     .eq("statut", "accepte");
 
+  const [{ data: membres, error: membresError }, { data: users, error: usersError }] =
+    await Promise.all([
+      supabase.from("membres").select("*").in("user_id", membreIds),
+      supabase.from("users").select("*").in("id", membreIds),
+    ]);
+  if (membresError) throw membresError;
+  if (usersError) throw usersError;
+
+  const membresById = new Map((membres || []).map((m) => [m.user_id, m]));
+  const usersById = new Map((users || []).map((u) => [u.id, u]));
+  const inscriptionsByMembreId = new Map(
+    (inscriptions || []).map((i) => [i.membre_id, i])
+  );
+
+  return membreIds
+    .filter((id) => usersById.has(id))
+    .map((id) => {
+      const u = usersById.get(id);
+      const m = membresById.get(id);
+      const i = inscriptionsByMembreId.get(id);
+      return {
+        userId: id,
+        nom: u.nom,
+        prenom: u.prenom,
+        email: u.email,
+        telephone: u.telephone,
+        dateNaissance: m?.date_naissance,
+        genre: m?.genre,
+        statutInscription: i?.statut,
+        dateInscription: i?.date_inscription,
   if (error) throw error;
 
   return (data || [])

@@ -1,15 +1,42 @@
 import React, { useMemo, useState } from "react";
 import { View, StyleSheet, TextInput, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { MemberRow } from "./components/SupervisorWidgets";
 import { useSupervisorMembers } from "./hooks/useSupervisorMembers";
+import { initials } from "./supervisorHelpers";
 
-export default function SupervisorMembersScreen({ activeGroup, onChangeTab }) {
+export default function SupervisorMembersScreen({ activeGroup }) {
+  const navigation = useNavigation();
   const [search, setSearch] = useState("");
   const { membersWithStatus } = useSupervisorMembers(activeGroup);
+
+  const openChat = (m) => {
+    const name = `${m.user.firstName} ${m.user.lastName}`;
+    navigation.navigate("ChatConversation", {
+      contactId: m.user.id,
+      contactName: name,
+      contactAvatarLetter: initials(m.user.firstName),
+    });
+  };
+
+  const openProfile = (m) => {
+    navigation.navigate("MemberProfile", {
+      firstName: m.user.firstName,
+      lastName: m.user.lastName,
+      email: m.user.email,
+      phone: m.user.phone,
+      birthDate: m.user.birthDate,
+      gender: m.user.gender,
+      groupName: m.group?.name,
+      groupSchedule: m.group?.schedule,
+      registrationStatus: m.registrationStatus,
+      registrationDate: m.registrationDate,
+    });
+  };
 
   const filtered = useMemo(() => {
     return membersWithStatus.filter((m) => {
@@ -24,7 +51,7 @@ export default function SupervisorMembersScreen({ activeGroup, onChangeTab }) {
         <View style={styles.searchWrapper}>
           <Ionicons name="search-outline" size={20} color={colors.placeholder} />
           <TextInput
-            placeholder="بحث عن عضو..."
+            placeholder="ابحث عن عضو..."
             placeholderTextColor={colors.placeholder}
             style={styles.searchInput}
             textAlign={textAlignStart}
@@ -34,13 +61,14 @@ export default function SupervisorMembersScreen({ activeGroup, onChangeTab }) {
         </View>
 
         {filtered.length === 0 ? (
-          <EmptyState text="لا يوجد أعضاء في مجموعاتك" />
+          <EmptyState text="لا يوجد عضو بهذا الاسم في مجموعاتك" />
         ) : (
           filtered.map((m) => (
             <MemberRow
               key={`${m.group.id}_${m.user.id}`}
               member={m}
-              onMessage={() => onChangeTab("messages")}
+              onMessage={() => openChat(m)}
+              onOpenProfile={() => openProfile(m)}
             />
           ))
         )}

@@ -43,6 +43,7 @@ import MemberChatInboxScreen from "./app/screens/member/MemberChatInboxScreen";
 
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
 import ChatConversationScreen from "./app/screens/supervisor/ChatConversationScreen";
+import SupervisorMemberProfileScreen from "./app/screens/supervisor/MemberProfileScreen";
 
 import AdminDashboard from "./app/screens/admin/AdminDashboard";
 import AdminSeasonsScreen from "./app/screens/admin/AdminSeasonsScreen";
