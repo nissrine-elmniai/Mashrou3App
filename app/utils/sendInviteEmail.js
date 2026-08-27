@@ -1,6 +1,22 @@
 import { APP_EMAIL, USE_MOCK_EMAIL } from "../constants/email";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 
+function mapEmailSendError(raw) {
+  const msg = String(raw || "");
+  if (/only send testing emails|verify a domain|resend.com\/domains/i.test(msg)) {
+    return [
+      "Resend في وضع الاختبار: لا يُرسل إلا إلى بريد حسابك.",
+      "لإرسال الدعوات لأي عنوان:",
+      "1) ثبّت نطاقاً في resend.com/domains",
+      "2) في Supabase Secrets ضع FROM_EMAIL مثل: مهندس حامل لكتاب الله <noreply@ton-domaine.com>",
+      "3) أعد نشر الدالة send-app-email",
+      "",
+      "الدعوة محفوظة: يمكن للمشرف إنشاء حسابه من التطبيق دون البريد.",
+    ].join("\n");
+  }
+  return msg;
+}
+
 /**
  * إرسال بريد التطبيق عبر Edge Function (Resend).
  * إن كان USE_MOCK_EMAIL=true → محاكاة فقط.
@@ -35,37 +51,64 @@ async function sendAppEmail({ toEmail, toName, subject, message }) {
     };
   }
 
-  const { data, error } = await supabase.functions.invoke("send-app-email", {
-    body: {
-      toEmail: email,
-      toName: toName || "",
-      subject,
-      message,
-    },
-  });
+  try {
+    const invokePromise = supabase.functions.invoke("send-app-email", {
+      body: {
+        toEmail: email,
+        toName: toName || "",
+        subject,
+        message,
+      },
+    });
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("انتهت مهلة إرسال البريد (15ث)")),
+        15000
+      );
+    });
+    const { data, error } = await Promise.race([
+      invokePromise,
+      timeoutPromise,
+    ]);
 
-  if (error) {
-    const msg = error.message || "";
-    if (/failed to send|FunctionsRelayError|404|not found/i.test(msg)) {
+    if (error) {
+      let serverError = "";
+      try {
+        const body = await error.context?.json();
+        serverError = String(body?.error || "");
+      } catch {
+        serverError = "";
+      }
+      const msg = error.message || "";
+      if (/failed to send|FunctionsRelayError|404|not found/i.test(msg)) {
+        return {
+          ok: false,
+          error:
+            "دالة الإرسال غير منشورة بعد. انشر send-app-email واضبط RESEND_API_KEY.",
+        };
+      }
       return {
         ok: false,
-        error:
-          "دالة الإرسال غير منشورة بعد. انشر send-app-email واضبط RESEND_API_KEY.",
+        error: mapEmailSendError(serverError || msg) || "فشل استدعاء خدمة البريد",
       };
     }
-    return { ok: false, error: msg || "فشل استدعاء خدمة البريد" };
-  }
 
-  if (data && data.ok === false) {
-    return { ok: false, error: data.error || "فشل إرسال البريد" };
-  }
+    if (data && data.ok === false) {
+      return {
+        ok: false,
+        error: mapEmailSendError(data.error) || "فشل إرسال البريد",
+      };
+    }
 
-  return {
-    ok: true,
-    via: data?.via || "resend",
-    fromEmail: APP_EMAIL.fromEmail,
-    id: data?.id,
-  };
+    return {
+      ok: true,
+      via: data?.via || "resend",
+      fromEmail: APP_EMAIL.fromEmail,
+      id: data?.id,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "فشل إرسال البريد" };
+  }
 }
 
 /** رسالة قبول طلب عضو */

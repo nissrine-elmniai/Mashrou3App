@@ -1,27 +1,40 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Alert } from "react-native";
-import { useApp } from "../../context/AppContext";
 import {
-  AppShell,
-  SectionCard,
-  QuickButton,
-  EmptyState,
-  SoftButton,
-} from "../../components/ui";
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { Menu, Bell, Check, X, Mail } from "lucide-react-native";
+import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import {
   REGISTRATION_STATUS,
   REGISTRATION_STATUS_LABELS,
   SEASON_TYPES,
   SEASON_TYPE_LABELS,
 } from "../../constants/roles";
-import { colors } from "../../constants/theme";
-import { rtlText } from "../../constants/rtl";
-import RegistrationStepper, {
-  statusToStepper,
-} from "../../components/RegistrationStepper";
+import { rtlText, row } from "../../constants/rtl";
 import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
 
+const palette = {
+  primary: "#2E7D32",
+  gold: "#FBC02D",
+  red: "#D32F2F",
+  softGreen: "#E8F5E9",
+  softGold: "#FFF8E1",
+  teal: "#00897B",
+  background: "#F5F5F5",
+  textSecondary: "#666666",
+  textPrimary: "#333333",
+  border: "#E0E0E0",
+};
+
 export default function AdminRegistrationsScreen({ navigation, route }) {
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "registrations");
   const seasonType = route?.params?.seasonType || SEASON_TYPES.REGULAR;
   const isSummer = seasonType === SEASON_TYPES.SUMMER;
 
@@ -30,14 +43,18 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     seasons,
     getUserById,
     reviewRegistration,
+    currentUser,
+    stats,
   } = useApp();
+  const insets = useSafeAreaInsets();
+  const bottomGap = Math.max(insets.bottom, 16);
   const [filter, setFilter] = useState("pending");
+  const [sendingId, setSendingId] = useState(null);
 
   const list = useMemo(() => {
     return registrations
       .filter((r) => {
         const season = seasons.find((s) => s.id === r.seasonId);
-        // Demandes sans saison : visibles dans la liste saison régulière
         if (r.seasonId && season && season.type !== seasonType) return false;
         if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
         if (filter === "all") return true;
@@ -70,7 +87,11 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     [registrations, seasons, seasonType]
   );
 
-  const [sendingId, setSendingId] = useState(null);
+  const displayName = currentUser
+    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
+    : "";
+  const initial = displayName.charAt(0) || "م";
+  const bellCount = stats?.pendingRegs ?? pendingCount;
 
   const acceptAndInvite = async (reg) => {
     if (!reg.email) {
@@ -81,29 +102,37 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
       return;
     }
 
-    const result = reviewRegistration(reg.id, REGISTRATION_STATUS.ACCEPTED);
-    if (!result?.ok) {
-      Alert.alert("خطأ", result?.error || "تعذر قبول الطلب");
-      return;
-    }
-
     setSendingId(reg.id);
-    const mail = await sendMemberAcceptEmail({
-      toEmail: reg.email,
-      fullName: reg.fullName,
-    });
-    setSendingId(null);
+    try {
+      const result = await reviewRegistration(
+        reg.id,
+        REGISTRATION_STATUS.ACCEPTED
+      );
+      if (!result?.ok) {
+        Alert.alert("خطأ", result?.error || "تعذر قبول الطلب");
+        return;
+      }
 
-    if (mail.ok) {
-      Alert.alert(
-        "تم القبول",
-        `تم قبول الطلب وإرسال الرسالة إلى:\n${reg.email}`
-      );
-    } else {
-      Alert.alert(
-        "تم القبول — فشل إرسال البريد",
-        `${mail.error || ""}\n\nأبلغ المترشح أنه يمكنه إنشاء حسابه من التطبيق بنفس البريد.`
-      );
+      const mail = await sendMemberAcceptEmail({
+        toEmail: reg.email,
+        fullName: reg.fullName,
+      });
+
+      if (mail.ok) {
+        Alert.alert(
+          "تم القبول",
+          `تم حفظ البيانات في Supabase وإرسال الرسالة إلى:\n${reg.email}`
+        );
+      } else {
+        Alert.alert(
+          "تم القبول وحفظ البيانات — فشل إرسال البريد",
+          `${mail.error || ""}\n\nأبلغ المترشح أنه يمكنه إنشاء حسابه من التطبيق بنفس البريد.`
+        );
+      }
+    } catch (e) {
+      Alert.alert("خطأ", e?.message || "حدث خطأ أثناء قبول الطلب");
+    } finally {
+      setSendingId(null);
     }
   };
 
@@ -113,161 +142,423 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
       {
         text: "رفض",
         style: "destructive",
-        onPress: () => {
-          reviewRegistration(reg.id, REGISTRATION_STATUS.REJECTED);
+        onPress: async () => {
+          const result = await reviewRegistration(
+            reg.id,
+            REGISTRATION_STATUS.REJECTED
+          );
+          if (!result?.ok) {
+            Alert.alert("خطأ", result?.error || "تعذر رفض الطلب");
+          }
         },
       },
     ]);
   };
 
-  const accent = isSummer ? colors.orange : colors.primary;
+  const resendInvite = async (reg) => {
+    setSendingId(reg.id);
+    try {
+      const mail = await sendMemberAcceptEmail({
+        toEmail: reg.email,
+        fullName: reg.fullName,
+      });
+      if (mail.ok) {
+        Alert.alert("تم الإرسال", `أُرسلت الرسالة إلى:\n${reg.email}`);
+      } else {
+        Alert.alert("تنبيه", mail.error || "تعذر إرسال البريد");
+      }
+    } catch (e) {
+      Alert.alert("خطأ", e?.message || "تعذر إرسال البريد");
+    } finally {
+      setSendingId(null);
+    }
+  };
+
+  const filters = [
+    ["pending", `قيد الانتظار${pendingCount ? ` (${pendingCount})` : ""}`],
+    ["accepted", "المقبولة"],
+    ["rejected", "المرفوضة"],
+    ["all", "الكل"],
+  ];
 
   return (
-    <AppShell
-      title={isSummer ? "طلبات التسجيل الصيفي" : "طلبات التسجيل"}
-      subtitle={
-        pendingCount > 0
-          ? `${pendingCount} طلب بانتظار قرارك — القبول يرسل دعوة بالبريد`
-          : "قبول الطلب يرسل رسالة دعوة إلى بريد المترشح"
-      }
-      icon="document-text"
-      onBack={() => navigation.goBack()}
-    >
-      <SectionCard title="تصفية الطلبات" subtitle="اختر حالة العرض">
-        {[
-          ["pending", `قيد الانتظار (${pendingCount})`],
-          ["accepted", "المقبولة / الدعوات"],
-          ["rejected", "المرفوضة"],
-          ["all", "الكل"],
-        ].map(([key, label]) => (
-          <SoftButton
-            key={key}
-            label={label}
-            active={filter === key}
-            onPress={() => setFilter(key)}
-          />
-        ))}
-      </SectionCard>
-
-      {list.length === 0 ? (
-        <EmptyState text="لا توجد طلبات في هذا التصنيف" />
-      ) : (
-        list.map((reg) => {
-          const user = reg.userId ? getUserById(reg.userId) : null;
-          const season = seasons.find((s) => s.id === reg.seasonId);
-          const title =
-            reg.fullName ||
-            (user ? `${user.firstName} ${user.lastName}` : "مترشح");
-          const step = statusToStepper(reg.status);
-          return (
-            <SectionCard
-              key={reg.id}
-              title={title}
-              primary={accent}
-              borderColor={isSummer ? "#FDE68A" : colors.borderBlue}
-            >
-              <RegistrationStepper
-                activeStep={step.activeStep}
-                rejected={step.rejected}
-              />
-              {season ? (
-                <Text style={styles.meta}>
-                  {season.name} • {SEASON_TYPE_LABELS[season.type] || ""}
-                </Text>
-              ) : (
-                <Text style={styles.meta}>طلب انضمام عام</Text>
-              )}
-              {reg.email ? (
-                <Text style={styles.meta}>البريد: {reg.email}</Text>
-              ) : null}
-              {reg.phone ? (
-                <Text style={styles.meta}>الهاتف: {reg.phone}</Text>
-              ) : null}
-              {reg.school ? (
-                <Text style={styles.meta}>المدرسة/الكلية: {reg.school}</Text>
-              ) : null}
-              {reg.level ? (
-                <Text style={styles.meta}>مستوى الحفظ: {reg.level}</Text>
-              ) : null}
-              {reg.hifzAmount ? (
-                <Text style={styles.meta}>مقدار الحفظ: {reg.hifzAmount}</Text>
-              ) : null}
-              <Text style={[styles.status, { color: accent }]}>
-                {REGISTRATION_STATUS_LABELS[reg.status]}
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={openSidebar}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="فتح القائمة"
+        >
+          <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle}>
+          {isSummer ? "طلبات التسجيل الصيفي" : "طلبات التسجيل"}
+        </Text>
+        <TouchableOpacity
+          style={styles.topBarAvatar}
+          onPress={() => navigation.navigate("AdminProfile")}
+          hitSlop={8}
+        >
+          <Text style={styles.topBarAvatarText}>{initial}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("AdminNotifications")}
+          hitSlop={12}
+        >
+          <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
+          {bellCount > 0 ? (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>
+                {bellCount > 9 ? "9+" : bellCount}
               </Text>
-              {reg.status === REGISTRATION_STATUS.PENDING ? (
-                <View>
-                  <QuickButton
-                    label={
-                      sendingId === reg.id
-                        ? "جاري الإرسال..."
-                        : "قبول وإرسال الرسالة"
-                    }
-                    color={accent}
-                    icon="mail"
-                    onPress={
-                      sendingId === reg.id
-                        ? undefined
-                        : () => acceptAndInvite(reg)
-                    }
-                  />
-                  <QuickButton
-                    label="رفض"
-                    color={colors.red}
-                    icon="close"
-                    onPress={() => rejectRegistration(reg)}
-                  />
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: 24 + bottomGap },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {pendingCount > 0 ? (
+          <View style={styles.hintBanner}>
+            <Text style={styles.hintBannerText}>
+              {pendingCount} طلب بانتظار قرارك — القبول يحفظ البيانات ويرسل دعوة
+              بالبريد
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={styles.filterRow}>
+          {filters.map(([key, label]) => (
+            <TouchableOpacity
+              key={key}
+              style={[
+                styles.filterChip,
+                filter === key && styles.filterChipActive,
+              ]}
+              onPress={() => setFilter(key)}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  filter === key && styles.filterChipTextActive,
+                ]}
+              >
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {list.length === 0 ? (
+          <Text style={styles.emptyText}>لا توجد طلبات في هذا التصنيف</Text>
+        ) : (
+          list.map((reg) => {
+            const user = reg.userId ? getUserById(reg.userId) : null;
+            const season = seasons.find((s) => s.id === reg.seasonId);
+            const title =
+              reg.fullName ||
+              (user ? `${user.firstName} ${user.lastName}` : "مترشح");
+            const sending = sendingId === reg.id;
+            const statusColor =
+              reg.status === REGISTRATION_STATUS.REJECTED
+                ? palette.red
+                : reg.status === REGISTRATION_STATUS.PENDING
+                  ? palette.gold
+                  : palette.primary;
+
+            return (
+              <View key={reg.id} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <View style={styles.cardAvatar}>
+                    <Text style={styles.cardAvatarText}>
+                      {(title || "?").charAt(0)}
+                    </Text>
+                  </View>
+                  <View style={styles.cardHeaderInfo}>
+                    <Text style={styles.cardName}>{title}</Text>
+                    <View
+                      style={[
+                        styles.statusPill,
+                        { backgroundColor: `${statusColor}22` },
+                      ]}
+                    >
+                      <Text style={[styles.statusPillText, { color: statusColor }]}>
+                        {REGISTRATION_STATUS_LABELS[reg.status]}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
-              ) : null}
-              {reg.status === REGISTRATION_STATUS.INVITED && reg.email ? (
-                <QuickButton
-                  label={
-                    sendingId === reg.id
-                      ? "جاري الإرسال..."
-                      : "إعادة إرسال الرسالة"
-                  }
-                  color={colors.teal}
-                  icon="mail-outline"
-                  onPress={
-                    sendingId === reg.id
-                      ? undefined
-                      : async () => {
-                          setSendingId(reg.id);
-                          const mail = await sendMemberAcceptEmail({
-                            toEmail: reg.email,
-                            fullName: reg.fullName,
-                          });
-                          setSendingId(null);
-                          if (mail.ok) {
-                            Alert.alert(
-                              "تم الإرسال",
-                              `أُرسلت الرسالة إلى:\n${reg.email}`
-                            );
-                          } else {
-                            Alert.alert(
-                              "تنبيه",
-                              mail.error || "تعذر إرسال البريد"
-                            );
-                          }
-                        }
-                  }
-                />
-              ) : null}
-            </SectionCard>
-          );
-        })
-      )}
-    </AppShell>
+
+                <View style={styles.metaBlock}>
+                  {season ? (
+                    <Text style={styles.meta}>
+                      {season.name} • {SEASON_TYPE_LABELS[season.type] || ""}
+                    </Text>
+                  ) : (
+                    <Text style={styles.meta}>طلب انضمام عام</Text>
+                  )}
+                  {reg.email ? (
+                    <Text style={styles.meta}>البريد: {reg.email}</Text>
+                  ) : null}
+                  {reg.phone ? (
+                    <Text style={styles.meta}>الهاتف: {reg.phone}</Text>
+                  ) : null}
+                  {reg.school ? (
+                    <Text style={styles.meta}>المدرسة/الكلية: {reg.school}</Text>
+                  ) : null}
+                  {reg.level ? (
+                    <Text style={styles.meta}>مستوى الحفظ: {reg.level}</Text>
+                  ) : null}
+                  {reg.hifzAmount ? (
+                    <Text style={styles.meta}>مقدار الحفظ: {reg.hifzAmount}</Text>
+                  ) : null}
+                </View>
+
+                {reg.status === REGISTRATION_STATUS.PENDING ? (
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.acceptBtn]}
+                      onPress={sending ? undefined : () => acceptAndInvite(reg)}
+                      disabled={!!sending}
+                      activeOpacity={0.75}
+                    >
+                      <Check size={18} color="#fff" pointerEvents="none" />
+                      <Text style={styles.actionBtnText}>
+                        {sending ? "جاري..." : "قبول"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.rejectBtn]}
+                      onPress={sending ? undefined : () => rejectRegistration(reg)}
+                      disabled={!!sending}
+                      activeOpacity={0.75}
+                    >
+                      <X size={18} color="#fff" pointerEvents="none" />
+                      <Text style={styles.actionBtnText}>رفض</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                {reg.status === REGISTRATION_STATUS.INVITED && reg.email ? (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.resendBtn]}
+                    onPress={sending ? undefined : () => resendInvite(reg)}
+                    disabled={!!sending}
+                    activeOpacity={0.75}
+                  >
+                    <Mail size={18} color="#fff" pointerEvents="none" />
+                    <Text style={styles.actionBtnText}>
+                      {sending ? "جاري..." : "إعادة إرسال الرسالة"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+      {sidebar}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  meta: { ...rtlText, color: colors.muted, marginTop: 4 },
-  token: { color: colors.primaryDark, fontWeight: "700", marginTop: 8 },
-  status: {
+  container: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  topBar: {
+    backgroundColor: "#fff",
+    padding: 16,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  topBarTitle: {
+    flex: 1,
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 16,
     ...rtlText,
-    marginTop: 8,
-    marginBottom: 8,
+  },
+  topBarAvatar: {
+    width: 32,
+    height: 32,
+    backgroundColor: palette.softGreen,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  topBarAvatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: -4,
+    end: -6,
+    backgroundColor: palette.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "bold",
+  },
+  scroll: { flex: 1 },
+  scrollContent: {
+    padding: 16,
+  },
+  hintBanner: {
+    backgroundColor: palette.softGold,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#FFE082",
+  },
+  hintBannerText: {
+    fontSize: 13,
+    color: palette.textPrimary,
     fontWeight: "600",
+    ...rtlText,
+  },
+  filterRow: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  filterChipActive: {
+    backgroundColor: palette.softGreen,
+    borderColor: palette.primary,
+  },
+  filterChipText: {
+    fontSize: 13,
+    color: palette.textSecondary,
+    fontWeight: "500",
+    ...rtlText,
+  },
+  filterChipTextActive: {
+    color: palette.primary,
+    fontWeight: "700",
+  },
+  emptyText: {
+    textAlign: "center",
+    color: palette.textSecondary,
+    marginTop: 40,
+    fontSize: 14,
+    ...rtlText,
+  },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  cardHeader: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  cardAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: palette.softGreen,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cardAvatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 18,
+  },
+  cardHeaderInfo: {
+    flex: 1,
+    gap: 6,
+  },
+  cardName: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  statusPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    ...rtlText,
+  },
+  metaBlock: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  meta: {
+    fontSize: 13,
+    color: palette.textSecondary,
+    marginTop: 4,
+    ...rtlText,
+  },
+  actionRow: {
+    flexDirection: row,
+    gap: 10,
+    marginTop: 8,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  acceptBtn: {
+    backgroundColor: palette.primary,
+  },
+  rejectBtn: {
+    backgroundColor: palette.red,
+  },
+  resendBtn: {
+    backgroundColor: palette.teal,
+    marginTop: 8,
+  },
+  actionBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    ...rtlText,
   },
 });

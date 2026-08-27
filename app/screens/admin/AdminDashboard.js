@@ -1,31 +1,22 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useMemo } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Animated,
-  Modal,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  Menu,
-  X,
-  Home,
-  Users,
-  UserCog,
-  Calendar,
-  ClipboardList,
-  Bell,
-  MessageSquare,
-  Settings,
-  LogOut,
-  Plus,
-} from "lucide-react-native";
+import { Menu, Bell, Plus } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { ROLES, userHasRole } from "../../constants/roles";
-import { rtlText, row, isRTL } from "../../constants/rtl";
+import { useAdminSidebar } from "../../components/AdminSidebar";
+import {
+  ROLES,
+  userHasRole,
+  REGISTRATION_STATUS,
+  ACCOUNT_STATUS,
+} from "../../constants/roles";
+import { rtlText, row } from "../../constants/rtl";
 
 const palette = {
   primary: "#2E7D32",
@@ -40,9 +31,156 @@ const palette = {
   border: "#E0E0E0",
 };
 
-const SIDEBAR_WIDTH = 280;
+function parseActivityDate(value) {
+  if (!value) return null;
+  if (typeof value === "number") return new Date(value);
+  const raw = String(value).trim();
+  if (!raw) return null;
+  // ISO
+  const iso = new Date(raw);
+  if (!Number.isNaN(iso.getTime())) return iso;
+  // YYYY/MM/DD or DD/MM/YYYY
+  const parts = raw.split(/[/-]/).map(Number);
+  if (parts.length === 3 && parts.every((n) => n > 0)) {
+    if (parts[0] > 31) {
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+    if (parts[2] > 31) {
+      return new Date(parts[2], parts[1] - 1, parts[0]);
+    }
+  }
+  return null;
+}
 
-function DashboardHome({ navigation, stats }) {
+function formatRelativeTime(date) {
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return "الآن";
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "الآن";
+  if (mins < 60) return `منذ ${mins} دقيقة`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `منذ ${hours} ساعة`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "منذ يوم";
+  if (days < 7) return `منذ ${days} أيام`;
+  return date.toLocaleDateString("ar-MA", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function buildRecentActivities({
+  registrations = [],
+  exams = [],
+  users = [],
+  notifications = [],
+}) {
+  const items = [];
+
+  registrations.forEach((r) => {
+    const name = r.fullName || r.email || "مترشح";
+    if (r.status === REGISTRATION_STATUS.PENDING) {
+      items.push({
+        id: `reg-pending-${r.id}`,
+        color: palette.gold,
+        text: `طلب تسجيل جديد: ${name}`,
+        at: parseActivityDate(r.createdAt) || new Date(0),
+      });
+    } else if (
+      r.status === REGISTRATION_STATUS.INVITED ||
+      r.status === REGISTRATION_STATUS.ACCEPTED
+    ) {
+      items.push({
+        id: `reg-accepted-${r.id}`,
+        color: palette.primary,
+        text: `تم قبول طلب: ${name}`,
+        at:
+          parseActivityDate(r.acceptedAt) ||
+          parseActivityDate(r.createdAt) ||
+          new Date(0),
+      });
+    } else if (r.status === REGISTRATION_STATUS.ACTIVATED) {
+      items.push({
+        id: `reg-activated-${r.id}`,
+        color: palette.primary,
+        text: `تم إنشاء حساب العضو: ${name}`,
+        at:
+          parseActivityDate(r.acceptedAt) ||
+          parseActivityDate(r.createdAt) ||
+          new Date(0),
+      });
+    } else if (r.status === REGISTRATION_STATUS.REJECTED) {
+      items.push({
+        id: `reg-rejected-${r.id}`,
+        color: palette.red,
+        text: `تم رفض طلب: ${name}`,
+        at: parseActivityDate(r.createdAt) || new Date(0),
+      });
+    }
+  });
+
+  exams.forEach((e) => {
+    const title = e.title || "اختبار";
+    if (e.status === "cancelled") {
+      items.push({
+        id: `exam-cancel-${e.id}`,
+        color: palette.red,
+        text: `تم إلغاء الاختبار: ${title}`,
+        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
+      });
+    } else if (e.status === "completed") {
+      items.push({
+        id: `exam-done-${e.id}`,
+        color: palette.blue,
+        text: `تم إنجاز الاختبار: ${title}`,
+        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
+      });
+    } else {
+      items.push({
+        id: `exam-${e.id}`,
+        color: palette.blue,
+        text: `اختبار جديد: ${title}`,
+        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
+      });
+    }
+  });
+
+  users.forEach((u) => {
+    if (!userHasRole(u, ROLES.SUPERVISOR)) return;
+    if (u.accountStatus !== ACCOUNT_STATUS.INVITED) return;
+    const name = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email;
+    items.push({
+      id: `sup-invite-${u.id}`,
+      color: palette.gold,
+      text: `تعيين مشرف جديد: ${name}`,
+      at: parseActivityDate(u.createdAt) || new Date(0),
+    });
+  });
+
+  notifications.forEach((n) => {
+    const title = String(n.title || "");
+    if (!title.includes("تنبيه")) return;
+    items.push({
+      id: `notif-${n.id}`,
+      color: palette.red,
+      text: n.body ? `${title}: ${n.body}` : title,
+      at: parseActivityDate(n.createdAt) || new Date(0),
+    });
+  });
+
+  return items
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 12)
+    .map((item) => ({
+      id: item.id,
+      color: item.color,
+      text: item.text,
+      time: formatRelativeTime(item.at),
+    }));
+}
+
+function DashboardHome({ navigation, stats, activities }) {
   const statCards = [
     { label: "الأعضاء", value: stats?.members ?? 0, icon: "👥" },
     { label: "المشرفون", value: stats?.supervisors ?? 0, icon: "👨\u200d🏫" },
@@ -53,13 +191,6 @@ function DashboardHome({ navigation, stats }) {
       icon: "📋",
       badge: stats?.pendingRegs > 0 ? `${stats.pendingRegs} معلق` : null,
     },
-  ];
-
-  const activities = [
-    { color: palette.primary, text: "تم إضافة عضو جديد: أحمد محمد", time: "منذ 5 دقائق" },
-    { color: palette.gold, text: "اختبار جديد معلق للمراجعة", time: "منذ 15 دقيقة" },
-    { color: palette.blue, text: "تم تحديث بيانات الحصة", time: "منذ ساعة" },
-    { color: palette.red, text: "تنبيه: عضو متغيب 3 مرات متتالية", time: "منذ ساعتين" },
   ];
 
   return (
@@ -95,14 +226,16 @@ function DashboardHome({ navigation, stats }) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[dhStyles.actionBtn, { backgroundColor: palette.primary }]}
-          onPress={() => navigation.navigate("AdminTests")}
+          onPress={() =>
+            navigation.navigate("AdminTests", { initialTab: "create" })
+          }
         >
           <Plus size={16} color="#fff" />
           <Text style={[dhStyles.actionBtnText, { color: "#fff" }]}>إنشاء اختبار</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[dhStyles.actionBtn, dhStyles.actionBtnOutline]}
-          onPress={() => navigation.navigate("AdminRegistrations")}
+          onPress={() => navigation.navigate("AdminNotifications")}
         >
           <Plus size={16} color={palette.textSecondary} />
           <Text style={[dhStyles.actionBtnText, { color: palette.textSecondary }]}>إشعار</Text>
@@ -111,187 +244,42 @@ function DashboardHome({ navigation, stats }) {
 
       <View style={dhStyles.activityCard}>
         <Text style={dhStyles.activityTitle}>النشاط الأخير</Text>
-        {activities.map((activity, index) => (
-          <View key={index} style={dhStyles.activityItem}>
-            <View style={[dhStyles.activityDot, { backgroundColor: activity.color }]} />
-            <View style={{ flex: 1 }}>
-              <Text style={dhStyles.activityText}>{activity.text}</Text>
-              <Text style={dhStyles.activityTime}>{activity.time}</Text>
+        {activities.length === 0 ? (
+          <Text style={dhStyles.activityEmpty}>لا يوجد نشاط بعد</Text>
+        ) : (
+          activities.map((activity) => (
+            <View key={activity.id} style={dhStyles.activityItem}>
+              <View
+                style={[
+                  dhStyles.activityDot,
+                  { backgroundColor: activity.color },
+                ]}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={dhStyles.activityText}>{activity.text}</Text>
+                {activity.time ? (
+                  <Text style={dhStyles.activityTime}>{activity.time}</Text>
+                ) : null}
+              </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
       </View>
     </View>
   );
 }
 
-function AdminSidebar({ isOpen, onClose, navigation, currentUser, onLogout }) {
-  const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
-  const overlayOpacity = useRef(new Animated.Value(0)).current;
-  const insets = useSafeAreaInsets();
-
-  useEffect(() => {
-    if (isOpen) {
-      Animated.parallel([
-        Animated.timing(translateX, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayOpacity, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(translateX, {
-          toValue: SIDEBAR_WIDTH,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayOpacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [isOpen]);
-
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "محمد أحمد";
-  const initial = displayName.charAt(0) || "م";
-
-  const menuItems = [
-    { id: "home", label: "الرئيسية", icon: Home },
-    { id: "supervisors", label: "المشرفون", icon: UserCog },
-    { id: "members", label: "الأعضاء", icon: Users },
-    { id: "sessions", label: "الحصص", icon: Calendar },
-    { id: "tests", label: "الاختبارات", icon: ClipboardList },
-    { id: "notifications", label: "التنبيهات", icon: Bell },
-    { id: "chat", label: "الدردشة", icon: MessageSquare },
-    { id: "settings", label: "الإعدادات", icon: Settings },
-  ];
-
-  const routeMap = {
-    supervisors: "AdminSupervisors",
-    members: "AdminMembers",
-    sessions: "AdminSeasons",
-    tests: "AdminTests",
-    chat: "ChatConversation",
-    settings: "AdminProfile",
-  };
-
-  const handlePress = (id) => {
-    if (id === "home") {
-      onClose();
-      return;
-    }
-    onClose();
-    if (routeMap[id]) {
-      navigation.navigate(routeMap[id]);
-    }
-  };
-
-  return (
-    <Modal visible={isOpen} transparent animationType="none" onRequestClose={onClose}>
-      <View style={sbStyles.modalContainer}>
-        <Animated.View
-          style={[
-            sbStyles.overlay,
-            { opacity: overlayOpacity },
-          ]}
-          pointerEvents="box-none"
-        >
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={onClose}
-          />
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            sbStyles.sidebar,
-            isRTL ? { left: 0 } : { right: 0 },
-            {
-              top: insets.top,
-              // Au moins 16px en bas (souvent insets.bottom = 0 sur Android)
-              bottom: Math.max(insets.bottom, 16),
-              transform: [{ translateX }],
-            },
-          ]}
-        >
-          <View style={sbStyles.header}>
-            <View style={sbStyles.avatar}>
-              <Text style={sbStyles.avatarText}>{initial}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={sbStyles.role}>مشرف عام</Text>
-              <Text style={sbStyles.name}>{displayName}</Text>
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <X size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            style={sbStyles.menuScroll}
-            contentContainerStyle={sbStyles.menuList}
-            showsVerticalScrollIndicator={false}
-          >
-            {menuItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = item.id === "home";
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  onPress={() => handlePress(item.id)}
-                  style={[
-                    sbStyles.menuItem,
-                    isActive && sbStyles.menuItemActive,
-                  ]}
-                >
-                  <Icon
-                    size={20}
-                    color={isActive ? palette.primary : palette.textSecondary}
-                    pointerEvents="none"
-                  />
-                  <Text
-                    style={[
-                      sbStyles.menuItemText,
-                      isActive && sbStyles.menuItemTextActive,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <View style={sbStyles.logoutWrap}>
-            <TouchableOpacity
-              style={sbStyles.logoutBtn}
-              onPress={onLogout}
-              activeOpacity={0.7}
-            >
-              <LogOut size={20} color={palette.red} pointerEvents="none" />
-              <Text style={sbStyles.logoutText}>تسجيل الخروج</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-      </View>
-    </Modal>
-  );
-}
-
 export default function AdminDashboard({ navigation }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { stats, logout, currentUser, users, exams, seasons } = useApp();
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "home");
+  const {
+    stats,
+    currentUser,
+    users,
+    exams,
+    seasons,
+    registrations,
+    notifications,
+  } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
@@ -307,10 +295,16 @@ export default function AdminDashboard({ navigation }) {
     pendingRegs: stats?.pendingRegs ?? 0,
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
-  };
+  const recentActivities = useMemo(
+    () =>
+      buildRecentActivities({
+        registrations,
+        exams,
+        users,
+        notifications,
+      }),
+    [registrations, exams, users, notifications]
+  );
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -321,7 +315,7 @@ export default function AdminDashboard({ navigation }) {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
         <TouchableOpacity
-          onPress={() => setSidebarOpen(true)}
+          onPress={openSidebar}
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="فتح القائمة"
@@ -339,7 +333,7 @@ export default function AdminDashboard({ navigation }) {
           <Text style={styles.topBarAvatarText}>{initial}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => navigation.navigate("AdminRegistrations")}
+          onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel="التنبيهات"
@@ -360,16 +354,14 @@ export default function AdminDashboard({ navigation }) {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
         showsVerticalScrollIndicator={false}
       >
-        <DashboardHome navigation={navigation} stats={derivedStats} />
+        <DashboardHome
+          navigation={navigation}
+          stats={derivedStats}
+          activities={recentActivities}
+        />
       </ScrollView>
 
-      <AdminSidebar
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        navigation={navigation}
-        currentUser={currentUser}
-        onLogout={handleLogout}
-      />
+      {sidebar}
     </SafeAreaView>
   );
 }
@@ -429,112 +421,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 10,
     fontWeight: "bold",
-  },
-});
-
-const sbStyles = StyleSheet.create({
-  modalContainer: {
-    flex: 1,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
-  sidebar: {
-    position: "absolute",
-    width: SIDEBAR_WIDTH,
-    backgroundColor: "#fff",
-    elevation: 10,
-    zIndex: 2,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: -2, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-  },
-  header: {
-    backgroundColor: palette.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    backgroundColor: "#fff",
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 18,
-  },
-  role: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 12,
-    ...rtlText,
-  },
-  name: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-    ...rtlText,
-  },
-  menuScroll: {
-    flex: 1,
-  },
-  menuList: {
-    padding: 8,
-    paddingBottom: 16,
-  },
-  menuItem: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  menuItemActive: {
-    backgroundColor: palette.softGreen,
-    borderRightWidth: 3,
-    borderRightColor: palette.primary,
-  },
-  menuItemText: {
-    fontWeight: "500",
-    color: palette.textSecondary,
-    fontSize: 14,
-    ...rtlText,
-  },
-  menuItemTextActive: {
-    color: palette.primary,
-  },
-  logoutWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
-    backgroundColor: "#fff",
-  },
-  logoutBtn: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 12,
-    backgroundColor: "#FFEBEE",
-    borderRadius: 12,
-  },
-  logoutText: {
-    color: palette.red,
-    fontWeight: "600",
-    ...rtlText,
   },
 });
 
@@ -648,6 +534,13 @@ const dhStyles = StyleSheet.create({
   activityTime: {
     color: palette.placeholder,
     fontSize: 12,
+    ...rtlText,
+  },
+  activityEmpty: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 12,
     ...rtlText,
   },
 });

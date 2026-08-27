@@ -30,6 +30,10 @@ import {
   fetchProfile,
   profileToAppUser,
 } from "../lib/auth";
+import {
+  upsertMemberApplication,
+  markMemberApplicationActivated,
+} from "../lib/memberApplicationsApi";
 
 const AppContext = createContext(null);
 
@@ -540,51 +544,83 @@ export function AppProvider({ children }) {
     return { ok: true, registration };
   };
 
-  const reviewRegistration = (registrationId, status) => {
-    const reg = registrations.find((r) => r.id === registrationId);
-    if (!reg) return { ok: false, error: "الطلب غير موجود" };
+  const reviewRegistration = async (registrationId, status) => {
+    try {
+      const reg = registrations.find((r) => r.id === registrationId);
+      if (!reg) return { ok: false, error: "الطلب غير موجود" };
 
-    if (status === REGISTRATION_STATUS.REJECTED) {
+      if (status === REGISTRATION_STATUS.REJECTED) {
+        const sync = await upsertMemberApplication(
+          reg,
+          REGISTRATION_STATUS.REJECTED
+        );
+        if (!sync.ok) {
+          return {
+            ok: false,
+            error: sync.error || "تعذر حفظ الرفض في Supabase",
+          };
+        }
+
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === registrationId
+              ? { ...r, status: REGISTRATION_STATUS.REJECTED }
+              : r
+          )
+        );
+        pushNotification({
+          title: "تم رفض طلب تسجيل",
+          body: `رُفض طلب: ${reg.fullName || reg.phone}`,
+          audience: "admin",
+        });
+        return { ok: true };
+      }
+
+      if (status === REGISTRATION_STATUS.ACCEPTED) {
+        const acceptedAt = todayStr();
+        const sync = await upsertMemberApplication(
+          { ...reg, acceptedAt },
+          REGISTRATION_STATUS.INVITED
+        );
+        if (!sync.ok) {
+          return {
+            ok: false,
+            error:
+              sync.error ||
+              "تعذر حفظ بيانات العضو في Supabase — نفّذ member_applications.sql وتأكد من جلسة الأدمن",
+          };
+        }
+
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.id === registrationId
+              ? {
+                  ...r,
+                  status: REGISTRATION_STATUS.INVITED,
+                  inviteToken: null,
+                  acceptedAt,
+                }
+              : r
+          )
+        );
+        pushNotification({
+          title: "دعوة انضمام",
+          body: `تم قبول طلب ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
+          audience: "admin",
+        });
+        return { ok: true, registration: reg };
+      }
+
       setRegistrations((prev) =>
-        prev.map((r) =>
-          r.id === registrationId
-            ? { ...r, status: REGISTRATION_STATUS.REJECTED }
-            : r
-        )
+        prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
       );
-      pushNotification({
-        title: "تم رفض طلب تسجيل",
-        body: `رُفض طلب: ${reg.fullName || reg.phone}`,
-        audience: "admin",
-      });
       return { ok: true };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e?.message || "حدث خطأ أثناء مراجعة الطلب",
+      };
     }
-
-    if (status === REGISTRATION_STATUS.ACCEPTED) {
-      setRegistrations((prev) =>
-        prev.map((r) =>
-          r.id === registrationId
-            ? {
-                ...r,
-                status: REGISTRATION_STATUS.INVITED,
-                inviteToken: null,
-                acceptedAt: todayStr(),
-              }
-            : r
-        )
-      );
-      pushNotification({
-        title: "دعوة انضمام",
-        body: `تم قبول طلب ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
-        audience: "admin",
-      });
-      return { ok: true, registration: reg };
-    }
-
-    setRegistrations((prev) =>
-      prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
-    );
-    return { ok: true };
   };
 
   /** إنشاء حساب العضو بعد قبول الطلب (بالبريد، بدون رمز دعوة) */
@@ -685,7 +721,22 @@ export function AppProvider({ children }) {
 
     const existingUser = users.find((u) => u.email.toLowerCase() === mail);
 
-    // Même e-mail déjà utilisé (ex. superviseur) → un seul compte, rôles cumulés
+    if (existingUser && userHasRole(existingUser, ROLES.SUPERVISOR)) {
+      return {
+        ok: false,
+        error:
+          "هذا البريد لحساب مشرف. لا يُستخدم كحساب عضو — أدخل بريداً آخر للعضو.",
+      };
+    }
+    if (existingUser && userHasRole(existingUser, ROLES.ADMIN)) {
+      return {
+        ok: false,
+        error:
+          "هذا البريد لحساب الإدارة. استخدم بريداً آخر لإنشاء حساب العضو.",
+      };
+    }
+
+    // Même e-mail déjà utilisé pour un membre → réactivation du même الحساب
     if (existingUser) {
       let authId = existingUser.authId || null;
       let needsEmailConfirmation = false;
@@ -702,6 +753,10 @@ export function AppProvider({ children }) {
             };
           }
           authId = authResult.authUser.id;
+          await markMemberApplicationActivated({
+            email: mail,
+            userId: authId,
+          });
           await signOutAuth();
         } else {
           const authResult = await signUpWithProfile({
@@ -1326,6 +1381,8 @@ export function AppProvider({ children }) {
       level,
       notes,
       date: todayStr(),
+      status: "completed",
+      title: level ? `نتيجة — ${level}` : "نتيجة اختبار",
     };
     setExams((prev) => [...prev, exam]);
     pushNotification({
@@ -1335,6 +1392,74 @@ export function AppProvider({ children }) {
       userId: memberId,
     });
     return exam;
+  };
+
+  const createExam = ({
+    title,
+    description,
+    date,
+    groupId,
+    memberIds,
+    notifyMembers = true,
+  }) => {
+    const cleanTitle = (title || "").trim();
+    const cleanDate = (date || "").trim();
+    const ids = Array.isArray(memberIds)
+      ? [...new Set(memberIds.filter(Boolean))]
+      : [];
+
+    if (!cleanTitle) return { ok: false, error: "أدخل عنوان الاختبار" };
+    if (!cleanDate) return { ok: false, error: "أدخل تاريخ الاختبار" };
+    if (ids.length === 0) {
+      return { ok: false, error: "اختر عضواً واحداً على الأقل" };
+    }
+
+    const exam = {
+      id: uid("e"),
+      title: cleanTitle,
+      description: (description || "").trim(),
+      date: cleanDate,
+      groupId: groupId || null,
+      memberIds: ids,
+      status: "planned",
+      createdAt: new Date().toISOString(),
+    };
+    setExams((prev) => [exam, ...prev]);
+
+    if (notifyMembers) {
+      ids.forEach((memberId) => {
+        pushNotification({
+          title: "اختبار جديد",
+          body: `${exam.title} — بتاريخ ${exam.date}`,
+          audience: "user",
+          userId: memberId,
+        });
+      });
+    }
+
+    return { ok: true, exam };
+  };
+
+  const cancelExam = (examId) => {
+    const target = exams.find((e) => e.id === examId);
+    if (!target) return { ok: false, error: "الاختبار غير موجود" };
+    setExams((prev) =>
+      prev.map((e) =>
+        e.id === examId ? { ...e, status: "cancelled" } : e
+      )
+    );
+    return { ok: true };
+  };
+
+  const markExamCompleted = (examId) => {
+    const target = exams.find((e) => e.id === examId);
+    if (!target) return { ok: false, error: "الاختبار غير موجود" };
+    setExams((prev) =>
+      prev.map((e) =>
+        e.id === examId ? { ...e, status: "completed" } : e
+      )
+    );
+    return { ok: true };
   };
 
   function pushNotification({ title, body, audience = "all", userId = null }) {
@@ -1350,15 +1475,22 @@ export function AppProvider({ children }) {
     setNotifications((prev) => [item, ...prev].slice(0, 100));
   }
 
-  const sendAlert = (text) => {
+  const sendAlert = (text, audience = "all") => {
     const body = (text || "").trim();
     if (!body) return { ok: false, error: "اكتب نص التنبيه أولاً" };
+    const allowed = ["all", "members", "supervisors"];
+    const target = allowed.includes(audience) ? audience : "all";
+    const titleByAudience = {
+      all: "تنبيه من الإدارة",
+      members: "تنبيه للأعضاء",
+      supervisors: "تنبيه للمشرفين",
+    };
     pushNotification({
-      title: "تنبيه من الإدارة",
+      title: titleByAudience[target] || "تنبيه من الإدارة",
       body,
-      audience: "all",
+      audience: target,
     });
-    return { ok: true };
+    return { ok: true, audience: target };
   };
 
   const getNotificationsForUser = (user = currentUser) => {
@@ -1366,13 +1498,13 @@ export function AppProvider({ children }) {
     return notifications.filter((n) => {
       if (n.audience === "all") return true;
       if (n.audience === "user" && n.userId === user.id) return true;
-      if (n.audience === "admin" && user.role === ROLES.ADMIN) return true;
-      if (n.audience === "members" && user.role === ROLES.MEMBER) {
+      if (n.audience === "admin" && userHasRole(user, ROLES.ADMIN)) return true;
+      if (n.audience === "members" && userHasRole(user, ROLES.MEMBER)) {
         return true;
       }
       if (
         n.audience === "supervisors" &&
-        user.role === ROLES.SUPERVISOR
+        userHasRole(user, ROLES.SUPERVISOR)
       ) {
         return true;
       }
@@ -1495,6 +1627,9 @@ export function AppProvider({ children }) {
     updateMemberProgress,
     addProgressNote,
     addExamResult,
+    createExam,
+    cancelExam,
+    markExamCompleted,
     sendAlert,
     getNotificationsForUser,
     markNotificationRead,

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,33 +10,166 @@ import {
   Platform,
   StatusBar,
   Image,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { Paperclip, Send } from "lucide-react-native";
 import { colors, radii } from "../../constants/theme";
 import { row, rtlText, rtlTextBold, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
+import { useApp } from "../../context/AppContext";
+import { ROLES } from "../../constants/roles";
+import { getSupervisorActiveSeance } from "../../lib/membersApi";
+import {
+  getMySeance,
+  resolveAdminProfile,
+  getConversation,
+  sendMessage,
+  subscribeConversation,
+} from "../../lib/messagesApi";
 
-const INITIAL_MESSAGES = [
-  { id: "m1", text: "السلام عليكم، كيف تسير المراجعة هذا الأسبوع؟", sent: false, time: "10:30 ص" },
-  { id: "m2", text: "وعليكم السلام، الحمد لله الأمور جيدة", sent: true, time: "10:31 ص" },
-  { id: "m3", text: "هل حضرت الحصة أمس؟", sent: false, time: "10:32 ص" },
-  { id: "m4", text: "نعم، حضرت وأنهيت الحفظ المطلوب ✓", sent: true, time: "10:33 ص" },
-];
+function formatTime(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" });
+}
+
+function normalizeMessage(m, myAuthId) {
+  return {
+    id: m.id,
+    text: m.contenu || "",
+    sent: m.sender_id === myAuthId,
+    time: formatTime(m.created_at),
+    image: m.image_url || null,
+  };
+}
 
 export default function ChatConversationScreen({ navigation, route }) {
   const { contactId, contactName, contactAvatarLetter } = route.params || {};
+  const { currentUser, supabaseSession } = useApp();
   const isAdmin = contactId === "admin";
 
-  const [messages, setMessages] = useState(INITIAL_MESSAGES);
+  const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
+  const [conversation, setConversation] = useState({ otherId: null, seanceId: null });
 
-  const handleSend = () => {
+  const authId = supabaseSession?.user?.id || currentUser?.authId || null;
+  const role = currentUser?.role;
+  const isSupervisor = role === ROLES.SUPERVISOR;
+  const isMember = role === ROLES.MEMBER;
+
+  // Chargement de la conversation réelle (au lieu de l'ancien mock
+  // INITIAL_MESSAGES) : résolution du correspondant + séance selon le rôle.
+  // otherId ne contient JAMAIS la chaîne "admin" : uniquement un UUID de
+  // profiles.id (résolu), ou null si la résolution a échoué.
+  useEffect(() => {
+    if (!authId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        let otherId = null;
+        let seanceId = null;
+        let failReason = null;
+
+        if (isMember) {
+          if (isAdmin) {
+            // Chat membre <-> administration (plus le superviseur).
+            const res = await resolveAdminProfile();
+            if (res?.ok && res.admin) {
+              otherId = res.admin.id;
+            } else {
+              failReason = res?.error || "لم يتم العثور على حساب الإدارة";
+            }
+          } else {
+            // Chat membre <-> son superviseur : contactId = UUID du superviseur
+            const mySeance = await getMySeance();
+            if (mySeance?.ok && mySeance.seance) {
+              seanceId = mySeance.seance.id;
+              otherId = contactId;
+            } else {
+              failReason = mySeance?.error || "لم يتم العثور على حصة نشطة";
+            }
+          }
+        } else if (isAdmin && isSupervisor) {
+          // Chat superviseur <-> admin : résoudre l'UUID réel du compte admin.
+          const res = await resolveAdminProfile();
+          if (res?.ok && res.admin) {
+            otherId = res.admin.id;
+          } else {
+            failReason = res?.error || "لم يتم العثور على حساب الإدارة";
+          }
+        } else if (role === ROLES.ADMIN) {
+          // Chat admin <-> membre ou superviseur : contactId est l'UUID réel.
+          otherId = contactId;
+        } else if (isSupervisor) {
+          // Chat superviseur <-> membre : séance active du superviseur
+          const mySeance = await getSupervisorActiveSeance(authId);
+          seanceId = mySeance?.id || null;
+          otherId = contactId;
+        }
+
+        if (cancelled) return;
+        setConversation({ otherId, seanceId });
+        if (!otherId) {
+          if (failReason) {
+            Alert.alert("تعذر فتح المحادثة", failReason);
+          }
+          return;
+        }
+
+        const res = await getConversation({ otherUserId: otherId, seanceId });
+        if (cancelled || !res.ok) return;
+        setMessages((res.messages || []).map((m) => normalizeMessage(m, authId)));
+      } catch (e) {
+        console.warn(
+          "ChatConversationScreen: échec de chargement —",
+          e?.message || e
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authId, contactId, isAdmin, isSupervisor, isMember]);
+
+  // Abonnement Realtime aux nouveaux messages du binôme
+  useEffect(() => {
+    if (!authId || !conversation.otherId) return;
+    const unsubscribe = subscribeConversation(
+      { otherUserId: conversation.otherId, myUserId: authId },
+      (msg) => {
+        setMessages((prev) =>
+          prev.some((m) => m.id === msg.id)
+            ? prev
+            : [...prev, normalizeMessage(msg, authId)]
+        );
+      }
+    );
+    return unsubscribe;
+  }, [authId, conversation.otherId]);
+
+  const handleSend = async () => {
     const trimmed = inputText.trim();
     if (!trimmed) return;
-    const time = new Date().toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" });
-    setMessages((prev) => [...prev, { id: `local_${Date.now()}`, text: trimmed, sent: true, time }]);
+    if (!conversation.otherId || !authId) return;
     setInputText("");
+    const res = await sendMessage({
+      recipientId: conversation.otherId,
+      seanceId: conversation.seanceId,
+      contenu: trimmed,
+    });
+    if (!res.ok) {
+      setInputText(trimmed);
+      Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
+      return;
+    }
+    if (res.message) {
+      setMessages((prev) =>
+        prev.some((m) => m.id === res.message.id)
+          ? prev
+          : [...prev, normalizeMessage(res.message, authId)]
+      );
+    }
   };
 
   const renderMessage = ({ item }) => {
@@ -64,24 +197,26 @@ export default function ChatConversationScreen({ navigation, route }) {
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.card} />
 
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-          <Ionicons name={arrowBack} size={22} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.avatarWrap}>
-          <View style={[styles.memberAvatar, isAdmin && { backgroundColor: colors.primary }]}>
-            <Text style={isAdmin ? styles.memberAvatarTextWhite : styles.memberAvatarText}>
-              {contactAvatarLetter}
-            </Text>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+            <Ionicons name={arrowBack} size={22} color={colors.text} />
+          </TouchableOpacity>
+          <View style={styles.avatarWrap}>
+            <View style={[styles.memberAvatar, isAdmin && { backgroundColor: colors.primary }]}>
+              <Text style={isAdmin ? styles.memberAvatarTextWhite : styles.memberAvatarText}>
+                {contactAvatarLetter}
+              </Text>
+            </View>
+            <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
           </View>
-          <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
+          <Text style={styles.contactName} numberOfLines={1}>
+            {contactName}
+          </Text>
         </View>
-        <Text style={styles.contactName} numberOfLines={1}>
-          {contactName}
-        </Text>
-      </View>
-
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <FlatList
           data={[...messages].reverse()}
           keyExtractor={(item) => item.id}

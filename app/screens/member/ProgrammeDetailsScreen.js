@@ -13,7 +13,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
-import { row, rtlText, textAlignStart, arrowBack } from "../../constants/rtl";
+import { row, rtlText, arrowBack } from "../../constants/rtl";
+import { colors, radii, shadows } from "../../constants/theme";
+import { addProgressEntry } from "../../lib/progressApi";
 
 const { width } = Dimensions.get("window");
 
@@ -48,13 +50,27 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   );
   const hizbRestants = programData.nbHizb - hizbCompletes;
 
-  // Calcul des jours (simulé - à remplacer par Firebase)
-  const dateDebut = new Date(programData.dateDebut.replace(/\//g, "-"));
+  // Garde-fou : date de début absente/invalide ("—", undefined…)
+  const rawDate = programData.dateDebut;
+  const dateIsValid =
+    !!rawDate &&
+    rawDate !== "—" &&
+    !isNaN(new Date(String(rawDate).replace(/\//g, "-")).getTime());
+  const dateDebut = dateIsValid
+    ? new Date(String(rawDate).replace(/\//g, "-"))
+    : null;
+
+  // Calcul des jours (dates portées par le programme affiché — pas d'entité backend)
   const aujourdhui = new Date();
-  const joursEcoules = Math.min(
-    programData.duree,
-    Math.floor((aujourdhui - dateDebut) / (1000 * 60 * 60 * 24)),
-  );
+  const joursEcoules = dateDebut
+    ? Math.min(
+        programData.duree,
+        Math.max(
+          0,
+          Math.floor((aujourdhui - dateDebut) / (1000 * 60 * 60 * 24)),
+        ),
+      )
+    : 0;
   const joursRestants = Math.max(0, programData.duree - joursEcoules);
 
   // Formatage des dates
@@ -77,14 +93,18 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     return `${date.getDate()} ${mois[date.getMonth()]} ${date.getFullYear()}`;
   };
 
-  const dateDebutFormatted = formatDate(programData.dateDebut);
+  const dateDebutFormatted = dateIsValid ? formatDate(rawDate) : "Date non définie";
 
-  const dateFinObj = new Date(programData.dateDebut.replace(/\//g, "-"));
-  dateFinObj.setDate(dateFinObj.getDate() + programData.duree);
-  const dateFinFormatted = `${dateFinObj.getDate()} ${dateFinObj.toLocaleDateString("fr-FR", { month: "long" })} ${dateFinObj.getFullYear()}`;
+  const dateFinObj = dateDebut ? new Date(dateDebut) : null;
+  if (dateFinObj) {
+    dateFinObj.setDate(dateFinObj.getDate() + programData.duree);
+  }
+  const dateFinFormatted = dateFinObj
+    ? `${dateFinObj.getDate()} ${dateFinObj.toLocaleDateString("fr-FR", { month: "long" })} ${dateFinObj.getFullYear()}`
+    : "Date non définie";
 
   // Gestion de la sauvegarde du progrès
-  const handleSaveProgress = () => {
+  const handleSaveProgress = async () => {
     const newProgress = parseInt(tempProgress);
     if (isNaN(newProgress) || newProgress < 0 || newProgress > 100) {
       Alert.alert("خطأ", "الرجاء إدخال قيمة بين 0 و 100");
@@ -98,9 +118,22 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
     setShowProgressModal(false);
     setIsEditing(false);
-    Alert.alert("تم", "تم تحديث التقدم بنجاح");
 
-    // Ici vous ajouterez la logique pour sauvegarder dans Firebase
+    // Persistance Supabase (table progression). Le programme affiché est
+    // « جزء عم » → juze 30 ; le pourcentage du modal est traduit en tumun
+    // (1..8) de ce juz. Mapping provisoire — à affiner quand le CDC
+    // définira la saisie détaillée.
+    const result = await addProgressEntry({
+      juze: 30,
+      tumun: Math.max(1, Math.min(8, Math.ceil((newProgress / 100) * 8))),
+      note: null,
+    });
+
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error || "تعذر حفظ التقدم");
+      return;
+    }
+    Alert.alert("تم", "تم تحديث التقدم بنجاح");
   };
 
   // 🆕 FONCTION POUR SUPPRIMER LE PROGRAMME
@@ -124,8 +157,8 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
   const confirmDelete = async () => {
     try {
-      // Ici vous ferez l'appel Firebase pour supprimer
-      // await deleteDoc(doc(db, "programmes", programData.id));
+      // Pas d'entité « programme » côté backend (le Mushaf reste un asset
+      // statique embarqué) — suppression locale uniquement.
 
       console.log("Programme supprimé:", programData.id);
 
@@ -154,7 +187,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>إدارة التقدم</Text>
             <TouchableOpacity onPress={() => setShowProgressModal(false)}>
-              <Ionicons name="close" size={24} color="#666" />
+              <Ionicons name="close" size={24} color={colors.muted} />
             </TouchableOpacity>
           </View>
 
@@ -301,19 +334,19 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             title="الأحزاب المكتملة"
             value={hizbCompletes.toString()}
             icon="check-circle"
-            color="#00963F"
+            color={colors.primary}
           />
           <StatCard
             title="الأحزاب المتبقية"
             value={hizbRestants.toString()}
             icon="clock-outline"
-            color="#FFC107"
+            color={colors.gold}
           />
           <StatCard
             title="الأيام المتبقية"
             value={joursRestants.toString()}
             icon="calendar-clock"
-            color="#00963F"
+            color={colors.primary}
           />
 
           {/* --- Détails du Programme (DATES DYNAMIQUES) --- */}
@@ -328,7 +361,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
                   <Ionicons
                     name="calendar-outline"
                     size={16}
-                    color="#00963F"
+                    color={colors.primary}
                     style={styles.dateIcon}
                   />
                 </View>
@@ -340,7 +373,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
                   <Ionicons
                     name="calendar-outline"
                     size={16}
-                    color="#FFC107"
+                    color={colors.gold}
                     style={styles.dateIcon}
                   />
                 </View>
@@ -434,16 +467,16 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 const StatCard = ({ title, value, icon, color }) => (
   <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
     <View style={styles.rowBetween}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
       <View style={styles.row}>
-        <Text style={[styles.statTitle, { writingDirection: "rtl" }]}>{title}</Text>
+        <Text style={[styles.statTitle, { ...rtlText }]}>{title}</Text>
         <MaterialCommunityIcons
           name={icon}
           size={20}
-          color="#888"
+          color={colors.muted}
           style={{ marginStart: 8 }}
         />
       </View>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
     </View>
   </View>
 );
@@ -451,13 +484,13 @@ const StatCard = ({ title, value, icon, color }) => (
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F7FA",
+    backgroundColor: colors.bg,
   },
   header: {
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.primary,
     height: 100,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+    borderBottomLeftRadius: radii.xl,
+    borderBottomRightRadius: radii.xl,
     paddingHorizontal: 20,
     justifyContent: "center",
     alignItems: "flex-end",
@@ -478,19 +511,15 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: "white",
-    borderRadius: 16,
+    borderRadius: radii.lg,
     padding: 16,
     marginBottom: 12,
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    ...shadows.card,
   },
   mainCard: {
-    backgroundColor: "#F0F9F0",
+    backgroundColor: colors.soft,
     borderWidth: 1,
-    borderColor: "#D0E8D0",
+    borderColor: colors.borderGreen,
   },
   row: {
     flexDirection: row,
@@ -510,44 +539,44 @@ const styles = StyleSheet.create({
   mainTitle: {
     fontSize: 22,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
     marginEnd: 10,
   },
   iconCircle: {
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.primary,
     padding: 10,
-    borderRadius: 50,
+    borderRadius: radii.pill,
   },
   headerIcons: {
     flexDirection: "column",
     alignItems: "flex-start",
   },
   badgeGreen: {
-    borderColor: "#16A34A",
+    borderColor: colors.primary,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: radii.sm,
     paddingHorizontal: 8,
     paddingVertical: 2,
     marginBottom: 5,
   },
   badgeYellow: {
-    borderColor: "#FFC107",
+    borderColor: colors.gold,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: radii.sm,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
   badgeTextGreen: {
-    color: "#16A34A",
+    color: colors.primary,
     fontSize: 12,
   },
   badgeTextYellow: {
-    color: "#FFC107",
+    color: colors.gold,
     fontSize: 12,
   },
   statTitle: {
     fontSize: 16,
-    color: "#666",
+    color: colors.muted,
   },
   statValue: {
     fontSize: 24,
@@ -555,16 +584,17 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     backgroundColor: "white",
-    borderRadius: 20,
+    borderRadius: radii.lg,
     padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E8E8E8",
+    borderColor: colors.border,
+    ...shadows.card,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
     ...rtlText,
   },
   titleRight: {
@@ -572,7 +602,7 @@ const styles = StyleSheet.create({
   },
   subTitle: {
     fontSize: 12,
-    color: "#888",
+    color: colors.placeholder,
     ...rtlText,
   },
   datesRow: {
@@ -586,13 +616,13 @@ const styles = StyleSheet.create({
   },
   dateLabel: {
     fontSize: 12,
-    color: "#AAA",
+    color: colors.placeholder,
     marginBottom: 5,
   },
   dateValue: {
     fontSize: 13,
     fontWeight: "bold",
-    color: "#444",
+    color: colors.textSecondary,
     marginEnd: 5,
   },
   dateValueRow: {
@@ -603,9 +633,9 @@ const styles = StyleSheet.create({
     marginStart: 5,
   },
   progressContainer: {
-    backgroundColor: "#F0F9F0",
+    backgroundColor: colors.soft,
     padding: 12,
-    borderRadius: 10,
+    borderRadius: radii.sm,
   },
   progressHeader: {
     flexDirection: row,
@@ -613,27 +643,27 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   progressTitle: {
-    color: "#16A34A",
+    color: colors.primary,
     fontWeight: "bold",
   },
   progressText: {
-    color: "#444",
+    color: colors.textSecondary,
   },
   progressBarFull: {
     height: 8,
-    backgroundColor: "#E8E8E8",
+    backgroundColor: colors.border,
     borderRadius: 4,
     overflow: "hidden",
   },
   progressBarFill: {
     height: "100%",
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.primary,
   },
   editButton: {
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.primary,
     paddingVertical: 8,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: radii.sm,
   },
   editButtonText: {
     color: "white",
@@ -642,7 +672,7 @@ const styles = StyleSheet.create({
   },
   currentProgressLabel: {
     fontSize: 14,
-    color: "#666",
+    color: colors.muted,
     ...rtlText,
     marginTop: 16,
     marginBottom: 4,
@@ -650,14 +680,14 @@ const styles = StyleSheet.create({
   percentageText: {
     fontSize: 32,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
     marginVertical: 8,
     ...rtlText,
   },
   noteBox: {
     backgroundColor: "#FFF8E7",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: radii.md,
     marginTop: 16,
     borderWidth: 1,
     borderColor: "#FFE0B2",
@@ -670,15 +700,15 @@ const styles = StyleSheet.create({
   },
   // 🆕 STYLES POUR LE BOUTON SUPPRIMER
   deleteButton: {
-    backgroundColor: "#EF4444",
+    backgroundColor: colors.red,
     marginTop: 8,
     marginBottom: 16,
     paddingVertical: 18,
-    borderRadius: 14,
+    borderRadius: radii.lg,
     flexDirection: row,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#EF4444",
+    shadowColor: colors.red,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -693,7 +723,7 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 18,
     fontWeight: "bold",
-    writingDirection: "rtl",
+    ...rtlText,
   },
   bottomPadding: {
     height: 20,
@@ -707,10 +737,11 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: "white",
-    borderRadius: 24,
+    borderRadius: radii.xl,
     padding: 24,
     width: width * 0.9,
     maxWidth: 400,
+    ...shadows.card,
   },
   modalHeader: {
     flexDirection: row,
@@ -721,13 +752,13 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 22,
     fontWeight: "bold",
-    color: "#16A34A",
-    writingDirection: "rtl",
+    color: colors.primary,
+    ...rtlText,
   },
   modalSubtitle: {
     fontSize: 14,
-    color: "#666",
-    writingDirection: "rtl",
+    color: colors.muted,
+    ...rtlText,
     marginBottom: 20,
   },
   currentProgressContainer: {
@@ -738,13 +769,13 @@ const styles = StyleSheet.create({
   },
   currentProgressLabel: {
     fontSize: 15,
-    color: "#666",
-    writingDirection: "rtl",
+    color: colors.muted,
+    ...rtlText,
   },
   currentProgressValue: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
   },
   adjustSection: {
     marginTop: 20,
@@ -753,8 +784,8 @@ const styles = StyleSheet.create({
   adjustLabel: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#444",
-    writingDirection: "rtl",
+    color: colors.textSecondary,
+    ...rtlText,
     marginBottom: 16,
   },
   sliderContainer: {
@@ -764,7 +795,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   sliderButton: {
-    backgroundColor: "#F0F0F0",
+    backgroundColor: colors.inputBg,
     width: 50,
     height: 50,
     borderRadius: 25,
@@ -774,13 +805,13 @@ const styles = StyleSheet.create({
   sliderButtonText: {
     fontSize: 28,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
   },
   progressInputContainer: {
     flexDirection: row,
     alignItems: "center",
-    backgroundColor: "#F5F5F5",
-    borderRadius: 12,
+    backgroundColor: colors.inputBg,
+    borderRadius: radii.md,
     paddingHorizontal: 16,
     paddingVertical: 8,
     minWidth: 100,
@@ -788,13 +819,13 @@ const styles = StyleSheet.create({
   progressInput: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#16A34A",
+    color: colors.primary,
     textAlign: "center",
     minWidth: 60,
   },
   percentSymbol: {
     fontSize: 18,
-    color: "#666",
+    color: colors.muted,
     marginStart: 4,
   },
   modalActions: {
@@ -803,9 +834,9 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     flex: 1,
-    backgroundColor: "#16A34A",
+    backgroundColor: colors.primary,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: radii.md,
     alignItems: "center",
   },
   saveButtonText: {
@@ -815,13 +846,13 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: "#F0F0F0",
+    backgroundColor: colors.inputBg,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: radii.md,
     alignItems: "center",
   },
   cancelButtonText: {
-    color: "#666",
+    color: colors.muted,
     fontWeight: "bold",
     fontSize: 16,
   },
@@ -829,7 +860,7 @@ const styles = StyleSheet.create({
     flexDirection: row,
     backgroundColor: "#FFF8E7",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: radii.md,
     marginTop: 20,
     borderWidth: 1,
     borderColor: "#FFE0B2",
@@ -843,6 +874,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#B76E3C",
     lineHeight: 20,
-    writingDirection: "rtl",
+    ...rtlText,
   },
 });

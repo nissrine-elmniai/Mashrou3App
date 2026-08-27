@@ -1,26 +1,39 @@
-# إرسال البريد (Resend + Edge Function)
+# إرسال البريد إلى أي عنوان (SMTP)
 
-البريد الحقيقي يمر عبر الدالة `send-app-email`.
+Resend في وضع الاختبار لا يرسل إلا إلى بريد حسابك
+(`lamyae.hamdaoui.23@ump.ac.ma`). لإرسال دعوات المشرفين لأي Gmail وغيره،
+استخدم SMTP (Gmail أو Outlook UMP).
 
-## 1) حساب Resend
-1. أنشئ حساباً على https://resend.com
-2. أنشئ API Key
-3. للاختبار: يمكنك الإرسال من `onboarding@resend.dev` **إلى بريد حسابك في Resend فقط**
-4. للإنتاج: أضف وتحقق من نطاقك، ثم غيّر `FROM_EMAIL`
+## 1) كلمة مرور التطبيق (Gmail)
 
-## 2) أسرار Supabase
-في الطرفية (من جذر المشروع، بعد `npx supabase login` وربط المشروع):
+1. فعّل التحقق بخطوتين على Google
+2. أنشئ [App Password](https://myaccount.google.com/apppasswords)
+3. انسخ الرمز من 16 حرفاً
+
+إذا كان بريدك `...@ump.ac.ma` (Outlook):
+- `SMTP_HOST=smtp.office365.com`
+- `SMTP_PORT=587`
+- نفس بريد UMP + كلمة المرور (أو كلمة مرور التطبيق إن طُلبت)
+
+## 2) أسرار Supabase ثم النشر
+
+من جذر المشروع:
 
 ```bash
 npx supabase link --project-ref okqmyayjeiwzjkwlkmia
-npx supabase secrets set RESEND_API_KEY=re_xxxxxxxx
-npx supabase secrets set FROM_EMAIL="مهندس حامل لكتاب الله <onboarding@resend.dev>"
+
+npx supabase secrets set SMTP_USER=ton.gmail@gmail.com
+npx supabase secrets set SMTP_PASS="xxxx xxxx xxxx xxxx"
+
+# UMP / Outlook فقط :
+# npx supabase secrets set SMTP_HOST=smtp.office365.com
+# npx supabase secrets set SMTP_PORT=587
+
 npx supabase functions deploy send-app-email
+npx supabase functions deploy send-password-reset --no-verify-jwt
 ```
 
 ## 3) التطبيق
-- `USE_MOCK_EMAIL=false` في `app/constants/email.js`
-- يجب أن يكون المستخدم مسجّل دخول كـ admin عند القبول (الجلسة تُمرَّر للدالة)
 
-## 4) اختبار
-اقبل طلباً من لوحة الإدارة → يجب أن يصل البريد مع **رمز الدعوة**.
+- `USE_MOCK_EMAIL=false` في `app/constants/email.js`
+- أعد إضافة المشرف: يجب أن يصل البريد لأي عنوان

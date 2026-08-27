@@ -23,6 +23,8 @@ export const colors = {
   borderGold: "#FDE68A",
   soft: "#E8F3EA",
   inputBg: "#F2F2F2",
+  /** Dégradé du header d'accueil membre (maquette) */
+  gradientHeader: ["#2E7D32", "#388E3C"],
 };
 
 export const radii = {

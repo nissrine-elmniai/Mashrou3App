@@ -3,6 +3,7 @@
 // Deploy: npx supabase functions deploy send-password-reset --no-verify-jwt
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { sendTransactionalEmail } from "../_shared/sendMail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,21 +40,6 @@ Deno.serve(async (req) => {
     }
 
     const otp = data.properties.email_otp;
-    const resendKey = Deno.env.get("RESEND_API_KEY");
-    if (!resendKey) {
-      return json(
-        {
-          ok: false,
-          error: "RESEND_API_KEY غير مُعدّ على Supabase",
-        },
-        500
-      );
-    }
-
-    const fromEmail =
-      Deno.env.get("FROM_EMAIL") ||
-      "مهندس حامل لكتاب الله <onboarding@resend.dev>";
-
     const subject = "رمز استعادة كلمة المرور — مهندس حامل لكتاب الله";
     const text = [
       "السلام عليكم،",
@@ -64,38 +50,25 @@ Deno.serve(async (req) => {
       "أدخل هذا الرمز في التطبيق مع كلمة المرور الجديدة.",
       "إذا لم تطلب ذلك، تجاهل هذه الرسالة.",
     ].join("\n");
-
-    const resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [email],
-        subject,
-        text,
-        html: `
+    const html = `
           <p>السلام عليكم،</p>
           <p>رمز التحقق لإعادة تعيين كلمة المرور:</p>
           <p style="font-size:28px;font-weight:bold;letter-spacing:4px;">${otp}</p>
           <p>أدخل هذا الرمز في التطبيق مع كلمة المرور الجديدة.</p>
           <p>إذا لم تطلب ذلك، تجاهل هذه الرسالة.</p>
-        `,
-      }),
-    });
+        `;
 
-    const resendData = await resendRes.json().catch(() => ({}));
-    if (!resendRes.ok) {
-      const errMsg =
-        resendData?.message ||
-        resendData?.error ||
-        "فشل إرسال البريد عبر Resend";
-      return json({ ok: false, error: String(errMsg) }, 502);
+    const sent = await sendTransactionalEmail({
+      to: email,
+      subject,
+      text,
+      html,
+    });
+    if (!sent.ok) {
+      return json({ ok: false, error: sent.error }, 502);
     }
 
-    return json({ ok: true, via: "resend", id: resendData.id });
+    return json({ ok: true, via: sent.via, id: sent.id });
   } catch (e) {
     return json(
       { ok: false, error: e?.message || "خطأ غير متوقع" },

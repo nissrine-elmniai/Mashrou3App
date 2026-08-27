@@ -14,46 +14,20 @@ export async function getSupervisorActiveSeance(supervisorAuthId) {
 
 /**
  * Membres inscrits (statut='accepte') d'une séance, normalisés en
- * [{ userId, nom, prenom, email, telephone, dateNaissance, genre, statutInscription, dateInscription }].
- * `statutInscription`/`dateInscription` viennent de la ligne `inscriptions` elle-même
- * (colonnes `statut`/`date_inscription`, déjà sélectionnées via `select("*")` mais pas
- * remontées jusqu'ici).
- * Tente la jointure imbriquée PostgREST inscriptions -> membres -> users ;
- * si elle échoue, retombe sur 3 requêtes séparées plutôt que de deviner un
- * nom de contrainte FK.
+ * [{ userId, nom, prenom, email, dateNaissance, genre }].
+ * L'identité des membres est portée par la table profiles (source unique) :
+ * on joint inscriptions -> profiles via la FK membre_id -> profiles.id.
+ * (Plus aucune requête vers des tables membres/users inexistantes.)
+ *
+ * dateNaissance / genre restent à null : profiles ne porte pas de colonnes
+ * équivalentes (dette technique documentée — hors périmètre de cette tâche).
  */
 export async function getSeanceMembers(seanceId) {
-  const nested = await supabase
+  const { data, error } = await supabase
     .from("inscriptions")
-    .select("*, membres(*, users(*))")
+    .select("membre_id, statut, profiles(*)")
     .eq("seance_id", seanceId)
     .eq("statut", "accepte");
-
-  if (!nested.error) {
-    return (nested.data || [])
-      .filter((row) => row.membres?.users)
-      .map((row) => ({
-        userId: row.membres.users.id,
-        nom: row.membres.users.nom,
-        prenom: row.membres.users.prenom,
-        email: row.membres.users.email,
-        telephone: row.membres.users.telephone,
-        dateNaissance: row.membres.date_naissance,
-        genre: row.membres.genre,
-        statutInscription: row.statut,
-        dateInscription: row.date_inscription,
-      }));
-  }
-
-  const { data: inscriptions, error: inscriptionsError } = await supabase
-    .from("inscriptions")
-    .select("*")
-    .eq("seance_id", seanceId)
-    .eq("statut", "accepte");
-  if (inscriptionsError) throw inscriptionsError;
-
-  const membreIds = (inscriptions || []).map((i) => i.membre_id);
-  if (membreIds.length === 0) return [];
 
   const [{ data: membres, error: membresError }, { data: users, error: usersError }] =
     await Promise.all([
@@ -85,6 +59,20 @@ export async function getSeanceMembers(seanceId) {
         genre: m?.genre,
         statutInscription: i?.statut,
         dateInscription: i?.date_inscription,
+  if (error) throw error;
+
+  return (data || [])
+    .map((row) => {
+      const p = row.profiles;
+      if (!p) return null;
+      return {
+        userId: p.id,
+        nom: p.last_name,
+        prenom: p.first_name,
+        email: p.email,
+        dateNaissance: null,
+        genre: null,
       };
-    });
+    })
+    .filter(Boolean);
 }

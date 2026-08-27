@@ -1,9 +1,13 @@
-// Supabase Edge Function — envoi d'e-mails via Resend
-// Deploy: supabase functions deploy send-app-email
-// Secret: supabase secrets set RESEND_API_KEY=re_xxx
-// Optionnel: supabase secrets set FROM_EMAIL="Nom <noreply@votredomaine.com>"
+// Deploy: npx supabase functions deploy send-app-email
+// Secrets: SMTP_USER + SMTP_PASS (recommandé, n'importe quel destinataire)
+// Optionnel: SMTP_HOST, SMTP_PORT, SMTP_SECURE, FROM_NAME
+// Repli: RESEND_API_KEY (mode test = un seul destinataire)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  htmlFromText,
+  sendTransactionalEmail,
+} from "../_shared/sendMail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,22 +36,33 @@ Deno.serve(async (req) => {
       data: { user },
       error: userError,
     } = await userClient.auth.getUser();
+
     if (userError || !user) {
+      console.error("Auth error:", userError);
       return json({ ok: false, error: "جلسة غير صالحة" }, 401);
     }
 
-    // Seuls admin / supervisor peuvent envoyer
-    const { data: profile } = await userClient
+    const { data: profile, error: profileError } = await userClient
       .from("profiles")
       .select("role")
       .eq("id", user.id)
       .maybeSingle();
 
+    if (profileError) {
+      console.error("Profile fetch error:", profileError);
+    }
+
     if (!profile || !["admin", "supervisor"].includes(profile.role)) {
       return json({ ok: false, error: "ليس لديك صلاحية إرسال البريد" }, 403);
     }
 
-    const body = await req.json();
+    let body: Record<string, unknown>;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ ok: false, error: "جسم الطلب غير صالح (JSON)" }, 400);
+    }
+
     const toEmail = String(body.toEmail || "").trim().toLowerCase();
     const subject = String(body.subject || "").trim();
     const message = String(body.message || "").trim();
@@ -55,66 +70,33 @@ Deno.serve(async (req) => {
 
     if (!toEmail || !subject || !message) {
       return json(
-        { ok: false, error: "بيانات البريد غير مكتملة" },
+        { ok: false, error: "بيانات البريد غير مكتملة (toEmail, subject, message)" },
         400
       );
     }
 
-    const resendKey = Deno.env.get("RESEND_API_KEY");
-    if (!resendKey) {
-      return json(
-        {
-          ok: false,
-          error:
-            "RESEND_API_KEY غير مُعدّ. أضفه عبر: supabase secrets set RESEND_API_KEY=...",
-        },
-        500
-      );
-    }
-
-    const fromEmail =
-      Deno.env.get("FROM_EMAIL") ||
-      "مهندس حامل لكتاب الله <onboarding@resend.dev>";
-
-    const resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [toEmail],
-        subject,
-        text: message,
-        html: message
-          .split("\n")
-          .map((line: string) => `<p style="margin:0 0 8px;">${escapeHtml(line) || "&nbsp;"}</p>`)
-          .join(""),
-      }),
+    const sent = await sendTransactionalEmail({
+      to: toEmail,
+      subject,
+      text: message,
+      html: htmlFromText(message),
     });
 
-    const resendData = await resendRes.json();
-    if (!resendRes.ok) {
-      const errMsg =
-        resendData?.message ||
-        resendData?.error ||
-        "فشل إرسال البريد عبر Resend";
-      return json({ ok: false, error: String(errMsg) }, 502);
+    if (!sent.ok) {
+      return json({ ok: false, error: sent.error }, 502);
     }
 
     return json({
       ok: true,
-      via: "resend",
-      id: resendData.id,
+      via: sent.via,
+      id: sent.id,
       to: toEmail,
       toName,
     });
-  } catch (e) {
-    return json(
-      { ok: false, error: e?.message || "خطأ غير متوقع في إرسال البريد" },
-      500
-    );
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : "خطأ غير متوقع";
+    console.error("Edge function fatal error:", e);
+    return json({ ok: false, error: errMsg }, 500);
   }
 });
 
@@ -123,12 +105,4 @@ function json(payload: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

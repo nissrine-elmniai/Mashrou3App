@@ -121,6 +121,7 @@ export async function signUpWithProfile({
   firstName,
   lastName,
   accountStatus = ACCOUNT_STATUS.ACTIVE,
+  signOutAfter = true,
 }) {
   const mail = String(email || "").trim().toLowerCase();
   const { data, error } = await supabase.auth.signUp({
@@ -137,14 +138,30 @@ export async function signUpWithProfile({
   });
 
   if (error) {
-    // Compte Auth déjà existant → tenter une connexion (réactivation locale)
     if (/already registered|already been registered/i.test(error.message || "")) {
+      if (role === ROLES.MEMBER) {
+        return {
+          ok: false,
+          error:
+            "هذا البريد لحساب موجود مسبقاً (مشرف أو إدارة). حساب المشرف ليس حساب عضو — استخدم بريداً آخر لإنشاء حساب العضو.",
+        };
+      }
+      // Même rôle : réactivation éventuelle si le mot de passe correspond
       const signedIn = await signInWithEmailPassword(mail, password);
       if (!signedIn.ok) {
         return {
           ok: false,
           error:
             "هذا البريد مسجّل مسبقاً. سجّل الدخول أو استخدم استعادة كلمة المرور",
+        };
+      }
+      const existingRole = signedIn.profile?.role;
+      if (existingRole && existingRole !== role) {
+        await supabase.auth.signOut();
+        return {
+          ok: false,
+          error:
+            "هذا البريد مرتبط بدور آخر. استخدم بريداً مختلفاً لهذا الحساب.",
         };
       }
       const updated = await upsertProfile({
@@ -180,6 +197,20 @@ export async function signUpWithProfile({
     firstName,
     lastName,
   });
+
+  // Lier la demande d'inscription (si existante) tant que la session signup est active
+  if (data.session && role === ROLES.MEMBER) {
+    await supabase
+      .from("member_applications")
+      .update({
+        status: "activated",
+        user_id: data.user.id,
+        activated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("email", mail)
+      .in("status", ["invited", "pending"]);
+  }
 
   // Ne pas laisser une session "signup" ouverte : l'utilisateur se connecte ensuite
   if (data.session) {

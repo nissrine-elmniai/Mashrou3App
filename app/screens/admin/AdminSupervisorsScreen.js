@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -8,13 +8,24 @@ import {
   ScrollView,
   Alert,
   Modal,
+  ActivityIndicator,
+  Keyboard,
+  Platform,
+  Pressable,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Search, Trash2, Plus, X } from "lucide-react-native";
+import { Search, Trash2, Plus, X, Menu, Bell, Ban } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { ACCOUNT_STATUS, ROLES, userHasRole } from "../../constants/roles";
+import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
+import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
+import {
+  createSupervisorInvitation,
+  listSupervisorInvitations,
+  revokeSupervisorInvitation,
+  deleteSupervisorAccount,
+} from "../../lib/supervisorInvitationsApi";
 
 const palette = {
   primary: "#2E7D32",
@@ -29,12 +40,22 @@ const palette = {
   border: "#E0E0E0",
 };
 
+function hissaLabel(count) {
+  if (count <= 0) return "بدون حصة";
+  if (count === 1) return "1 حصة";
+  return `${count} حصص`;
+}
+
 export default function AdminSupervisorsScreen({ navigation }) {
-  const { users, addSupervisor, removeSupervisor, getSupervisorGroups } =
-    useApp();
+  const { openSidebar, sidebar } = useAdminSidebar(navigation, "supervisors");
+  const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const fabBottom = Math.max(insets.bottom, 16) + 16;
-  const supervisors = users.filter((u) => userHasRole(u, ROLES.SUPERVISOR));
+
+  const [supervisors, setSupervisors] = useState([]);
+  const [invitations, setInvitations] = useState([]);
+  const [seances, setSeances] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -45,30 +66,95 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [groupName, setGroupName] = useState("");
   const [sending, setSending] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return supervisors.filter((s) => {
-      const fullName = `${s.firstName || ""} ${s.lastName || ""}`.toLowerCase();
-      const mail = (s.email || "").toLowerCase();
-      if (q && !fullName.includes(q) && !mail.includes(q)) return false;
-      if (filter === "pending") {
-        return s.accountStatus === ACCOUNT_STATUS.INVITED;
-      }
-      return true;
+  const displayName = currentUser
+    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
+    : "";
+  const initial = displayName.charAt(0) || "م";
+  const pendingCount = stats?.pendingRegs ?? 0;
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    const [supRes, invRes, seaRes] = await Promise.all([
+      getSupervisorProfiles(),
+      listSupervisorInvitations(),
+      getAllSeances(),
+    ]);
+    if (supRes.ok) setSupervisors(supRes.supervisors);
+    if (invRes.ok) setInvitations(invRes.invitations);
+    if (seaRes.ok) setSeances(seaRes.seances);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    if (!showAdd) {
+      setKeyboardHeight(0);
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
     });
-  }, [supervisors, search, filter]);
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [showAdd]);
+
+  const groupCount = (supervisorId) =>
+    seances.filter(
+      (s) => s.superviseur_id === supervisorId && s.statut !== "archivee"
+    ).length;
+
+  const pendingInvitations = useMemo(
+    () => invitations.filter((i) => i.status === "pending"),
+    [invitations]
+  );
+
+  const q = search.trim().toLowerCase();
+  const filteredSupervisors = useMemo(() => {
+    return supervisors.filter((s) => {
+      if (!q) return true;
+      const fullName = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
+      const mail = (s.email || "").toLowerCase();
+      return fullName.includes(q) || mail.includes(q);
+    });
+  }, [supervisors, q]);
+
+  const filteredInvitations = useMemo(() => {
+    if (filter !== "pending") return [];
+    return pendingInvitations.filter((i) => {
+      if (!q) return true;
+      const fullName = `${i.first_name || ""} ${i.last_name || ""}`.toLowerCase();
+      const mail = (i.email || "").toLowerCase();
+      return fullName.includes(q) || mail.includes(q);
+    });
+  }, [pendingInvitations, filter, q]);
+
+  const resetForm = () => {
+    setFirstName("");
+    setLastName("");
+    setEmail("");
+    setGroupName("");
+  };
 
   const handleAdd = async () => {
-    if (!groupName.trim()) {
-      Alert.alert("تنبيه", "أدخل اسم المجموعة المعنية بالمشرف");
+    if (!email.trim() || !firstName.trim() || !lastName.trim()) {
+      Alert.alert("تنبيه", "أدخل الاسم واللقب والبريد الإلكتروني");
       return;
     }
     setSending(true);
-    const result = addSupervisor({
+    const result = await createSupervisorInvitation({
+      email,
       firstName,
       lastName,
-      email,
-      groupName: groupName.trim(),
+      groupName,
     });
     if (!result.ok) {
       setSending(false);
@@ -80,7 +166,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
     const mail = await sendSupervisorInviteEmail({
       toEmail: email.trim(),
       fullName,
-      groupName: result.groupName,
+      groupName: groupName.trim(),
     });
     setSending(false);
 
@@ -92,43 +178,106 @@ export default function AdminSupervisorsScreen({ navigation }) {
     } else {
       Alert.alert(
         "تمت الإضافة — فشل إرسال البريد",
-        `${mail.error || ""}\n\nتمت إضافة المشرف. أبلغه أنه يمكنه إنشاء حسابه من التطبيق.`
+        `${mail.error || ""}\n\nتم حفظ الدعوة. أبلغ المشرف أنه يمكنه إنشاء حسابه من التطبيق.`
       );
     }
 
-    setFirstName("");
-    setLastName("");
-    setEmail("");
-    setGroupName("");
+    resetForm();
     setShowAdd(false);
+    loadAll();
   };
 
-  const confirmRemove = (supervisor) => {
-    const fullName = `${supervisor.firstName} ${supervisor.lastName}`;
-    Alert.alert("حذف المشرف", `هل تريد حذف «${fullName}»؟`, [
-      { text: "إلغاء", style: "cancel" },
-      {
-        text: "حذف",
-        style: "destructive",
-        onPress: () => {
-          const result = removeSupervisor(supervisor.id);
-          if (!result.ok) {
-            Alert.alert("خطأ", result.error);
-            return;
-          }
-          Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
+  const confirmDelete = (supervisor) => {
+    const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
+    Alert.alert(
+      "حذف المشرف",
+      `هل تريد حذف «${name || supervisor.email}» نهائياً؟ سيُحذف حسابه وكل بياناته المرتبطة.`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "حذف",
+          style: "destructive",
+          onPress: async () => {
+            const result = await deleteSupervisorAccount({
+              userId: supervisor.id,
+            });
+            if (!result.ok) {
+              Alert.alert("خطأ", result.error);
+              return;
+            }
+            Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
+            loadAll();
+          },
         },
-      },
-    ]);
+      ]
+    );
+  };
+
+  const confirmRevoke = (invitation) => {
+    const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
+    Alert.alert(
+      "إلغاء الدعوة",
+      `هل تريد إلغاء دعوة «${name || invitation.email}»؟ يمكنك إعادة دعوته لاحقاً بنفس البريد.`,
+      [
+        { text: "تراجع", style: "cancel" },
+        {
+          text: "إلغاء الدعوة",
+          style: "destructive",
+          onPress: async () => {
+            const result = await revokeSupervisorInvitation(invitation.id);
+            if (!result.ok) {
+              Alert.alert("خطأ", result.error);
+              return;
+            }
+            Alert.alert("تم", "تم إلغاء الدعوة");
+            loadAll();
+          },
+        },
+      ]
+    );
   };
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={openSidebar}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="فتح القائمة"
+        >
+          <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
+        </TouchableOpacity>
+        <Text style={styles.topBarTitle}>المشرفون</Text>
+        <TouchableOpacity
+          style={styles.topBarAvatar}
+          onPress={() => navigation.navigate("AdminProfile")}
+          hitSlop={8}
+        >
+          <Text style={styles.topBarAvatarText}>{initial}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("AdminRegistrations")}
+          hitSlop={12}
+        >
+          <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
+          {pendingCount > 0 ? (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>
+                {pendingCount > 9 ? "9+" : pendingCount}
+              </Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: fabBottom + 72 },
         ]}
+        showsVerticalScrollIndicator={false}
       >
         <View style={styles.searchContainer}>
           <Search size={20} color={palette.placeholder} style={styles.searchIcon} />
@@ -147,54 +296,103 @@ export default function AdminSupervisorsScreen({ navigation }) {
             style={[styles.filterChip, filter === "all" && styles.filterChipActive]}
             onPress={() => setFilter("all")}
           >
-            <Text style={[styles.filterChipText, filter === "all" && styles.filterChipTextActive]}>
+            <Text
+              style={[
+                styles.filterChipText,
+                filter === "all" && styles.filterChipTextActive,
+              ]}
+            >
               الكل
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.filterChip, filter === "pending" && styles.filterChipActive]}
+            style={[
+              styles.filterChip,
+              filter === "pending" && styles.filterChipActive,
+            ]}
             onPress={() => setFilter("pending")}
           >
-            <Text style={[styles.filterChipText, filter === "pending" && styles.filterChipTextActive]}>
-              بانتظار التفعيل
+            <Text
+              style={[
+                styles.filterChipText,
+                filter === "pending" && styles.filterChipTextActive,
+              ]}
+            >
+              بانتظار التفعيل ({pendingInvitations.length})
             </Text>
           </TouchableOpacity>
         </View>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <View style={styles.emptyCard}>
+            <ActivityIndicator size="large" color={palette.primary} />
+          </View>
+        ) : filter === "pending" ? (
+          filteredInvitations.length === 0 ? (
+            <Text style={styles.emptyText}>لا توجد دعوات معلّقة</Text>
+          ) : (
+            filteredInvitations.map((invitation) => {
+              const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
+              return (
+                <View key={invitation.id} style={styles.card}>
+                  <View style={styles.cardAvatar}>
+                    <Text style={styles.cardAvatarText}>
+                      {name.charAt(0) || "؟"}
+                    </Text>
+                  </View>
+                  <View style={styles.cardInfo}>
+                    <Text style={styles.cardName}>{name || "دعوة مشرف"}</Text>
+                    <Text style={styles.cardEmail}>{invitation.email}</Text>
+                    {invitation.group_name ? (
+                      <Text style={styles.cardGroup}>
+                        المجموعة: {invitation.group_name}
+                      </Text>
+                    ) : null}
+                    <View style={styles.sessionBadge}>
+                      <Text style={styles.sessionBadgeText}>
+                        بانتظار التفعيل
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.deleteBtn]}
+                    onPress={() => confirmRevoke(invitation)}
+                    accessibilityLabel="إلغاء الدعوة"
+                  >
+                    <Ban size={18} color={palette.red} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )
+        ) : filteredSupervisors.length === 0 ? (
           <Text style={styles.emptyText}>لا يوجد مشرفون بعد</Text>
         ) : (
-          filtered.map((supervisor) => {
-            const name = `${supervisor.firstName || ""} ${supervisor.lastName || ""}`.trim();
-            const groups = getSupervisorGroups(supervisor.id);
-            const pending = supervisor.accountStatus === ACCOUNT_STATUS.INVITED;
+          filteredSupervisors.map((supervisor) => {
+            const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
             return (
               <View key={supervisor.id} style={styles.card}>
                 <View style={styles.cardAvatar}>
                   <Text style={styles.cardAvatarText}>
-                    {(supervisor.firstName?.[0] || name.charAt(0) || "?").toUpperCase()}
+                    {name.charAt(0) || "؟"}
                   </Text>
                 </View>
                 <View style={styles.cardInfo}>
-                  <Text style={styles.cardName}>{name}</Text>
+                  <Text style={styles.cardName}>{name || supervisor.email}</Text>
                   <Text style={styles.cardEmail}>{supervisor.email}</Text>
                   <View style={styles.sessionBadge}>
                     <Text style={styles.sessionBadgeText}>
-                      {groups.length > 0
-                        ? groups.map((g) => g.name).join("، ")
-                        : pending
-                          ? "بانتظار التفعيل"
-                          : "بدون مجموعة"}
+                      {hissaLabel(groupCount(supervisor.id))}
                     </Text>
                   </View>
                 </View>
                 <View style={styles.cardActions}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: "#FFEBEE" }]}
-                    onPress={() => confirmRemove(supervisor)}
+                    style={[styles.actionBtn, styles.deleteBtn]}
+                    onPress={() => confirmDelete(supervisor)}
                     accessibilityLabel="حذف المشرف"
                   >
-                    <Trash2 size={20} color={palette.red} />
+                    <Trash2 size={18} color={palette.red} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -205,7 +403,10 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
       <TouchableOpacity
         style={[styles.fab, { bottom: fabBottom }]}
-        onPress={() => setShowAdd(true)}
+        onPress={() => {
+          resetForm();
+          setShowAdd(true);
+        }}
       >
         <Plus size={24} color={palette.textPrimary} />
       </TouchableOpacity>
@@ -216,59 +417,88 @@ export default function AdminSupervisorsScreen({ navigation }) {
         animationType="slide"
         onRequestClose={() => setShowAdd(false)}
       >
-        <View style={[styles.modalOverlay, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View
+          style={[
+            styles.modalOverlay,
+            {
+              paddingBottom:
+                keyboardHeight > 0
+                  ? keyboardHeight
+                  : Math.max(insets.bottom, 16),
+            },
+          ]}
+        >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              Keyboard.dismiss();
+              setShowAdd(false);
+            }}
+          />
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>إضافة مشرف</Text>
-              <TouchableOpacity onPress={() => setShowAdd(false)}>
+              <TouchableOpacity
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setShowAdd(false);
+                }}
+              >
                 <X size={22} color={palette.textSecondary} />
               </TouchableOpacity>
             </View>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="الاسم"
-              placeholderTextColor={palette.placeholder}
-              value={firstName}
-              onChangeText={setFirstName}
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="اللقب"
-              placeholderTextColor={palette.placeholder}
-              value={lastName}
-              onChangeText={setLastName}
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="البريد الإلكتروني"
-              placeholderTextColor={palette.placeholder}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              textAlign={textAlignStart}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="اسم المجموعة (مثال: مجموعة الفجر)"
-              placeholderTextColor={palette.placeholder}
-              value={groupName}
-              onChangeText={setGroupName}
-              textAlign={textAlignStart}
-            />
-            <TouchableOpacity
-              style={[styles.modalSubmit, sending && { opacity: 0.6 }]}
-              onPress={sending ? undefined : handleAdd}
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalScrollContent}
             >
-              <Text style={styles.modalSubmitText}>
-                {sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
-              </Text>
-            </TouchableOpacity>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="الاسم"
+                placeholderTextColor={palette.placeholder}
+                value={firstName}
+                onChangeText={setFirstName}
+                textAlign={textAlignStart}
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="اللقب"
+                placeholderTextColor={palette.placeholder}
+                value={lastName}
+                onChangeText={setLastName}
+                textAlign={textAlignStart}
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="البريد الإلكتروني"
+                placeholderTextColor={palette.placeholder}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                textAlign={textAlignStart}
+              />
+              <TextInput
+                style={styles.modalInput}
+                placeholder="اسم المجموعة (مثال: مجموعة الفجر)"
+                placeholderTextColor={palette.placeholder}
+                value={groupName}
+                onChangeText={setGroupName}
+                textAlign={textAlignStart}
+              />
+              <TouchableOpacity
+                style={[styles.modalSubmit, sending && { opacity: 0.6 }]}
+                onPress={sending ? undefined : handleAdd}
+              >
+                <Text style={styles.modalSubmitText}>
+                  {sending ? "جاري الإرسال..." : "إضافة وإرسال الرسالة"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
+      {sidebar}
     </SafeAreaView>
   );
 }
@@ -278,9 +508,58 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  topBar: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  topBarTitle: {
+    flex: 1,
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 16,
+    ...rtlText,
+  },
+  topBarAvatar: {
+    width: 32,
+    height: 32,
+    backgroundColor: palette.softGreen,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  topBarAvatarText: {
+    color: palette.primary,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  bellBadge: {
+    position: "absolute",
+    top: -4,
+    end: -6,
+    backgroundColor: palette.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "bold",
+  },
+  scroll: {
+    flex: 1,
+  },
   scrollContent: {
     padding: 16,
-    paddingBottom: 80,
   },
   searchContainer: {
     position: "relative",
@@ -313,15 +592,19 @@ const styles = StyleSheet.create({
   filterChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: palette.background,
+    backgroundColor: "#fff",
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   filterChipActive: {
     backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   filterChipText: {
     fontSize: 14,
     color: palette.textSecondary,
+    ...rtlText,
   },
   filterChipTextActive: {
     color: "#fff",
@@ -331,6 +614,12 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     textAlign: "center",
     marginTop: 40,
+  },
+  emptyCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 48,
+    alignItems: "center",
   },
   card: {
     backgroundColor: "#fff",
@@ -371,11 +660,18 @@ const styles = StyleSheet.create({
   cardEmail: {
     color: palette.textSecondary,
     fontSize: 13,
+    marginTop: 2,
+    ...rtlText,
+  },
+  cardGroup: {
+    color: palette.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
     ...rtlText,
   },
   sessionBadge: {
     alignSelf: "flex-start",
-    marginTop: 4,
+    marginTop: 6,
     paddingHorizontal: 8,
     paddingVertical: 2,
     backgroundColor: palette.softGreen,
@@ -384,6 +680,7 @@ const styles = StyleSheet.create({
   sessionBadgeText: {
     color: palette.primary,
     fontSize: 12,
+    ...rtlText,
   },
   cardActions: {
     flexDirection: row,
@@ -392,6 +689,9 @@ const styles = StyleSheet.create({
   actionBtn: {
     padding: 8,
     borderRadius: 8,
+  },
+  deleteBtn: {
+    backgroundColor: "#FFEBEE",
   },
   fab: {
     position: "absolute",
@@ -417,8 +717,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 32,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+    maxHeight: "88%",
+  },
+  modalScrollContent: {
+    paddingBottom: 12,
   },
   modalHeader: {
     flexDirection: row,
