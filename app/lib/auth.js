@@ -3,7 +3,31 @@ import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
 
 export { isSupabaseConfigured };
 
+/** Alias legacy (seed SQL français, metadata Auth) → constantes ROLES JS / profiles.role SQL. */
+const ROLE_ALIASES = {
+  admin: ROLES.ADMIN,
+  administrateur: ROLES.ADMIN,
+  supervisor: ROLES.SUPERVISOR,
+  superviseur: ROLES.SUPERVISOR,
+  member: ROLES.MEMBER,
+  membre: ROLES.MEMBER,
+};
+
+/**
+ * Normalise profiles.role (ou toute valeur brute) vers ROLES.ADMIN | SUPERVISOR | MEMBER.
+ * Point d'entrée unique pour éviter les comparaisons strictes qui échouent (casse, FR/EN).
+ */
+export function normalizeAppRole(raw) {
+  const key = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (!key) return null;
+  return ROLE_ALIASES[key] || null;
+}
+
 export function profileToAppUser(profile, fallback = {}) {
+  const roleFromProfile = normalizeAppRole(profile?.role);
+  const roleFromFallback = normalizeAppRole(fallback?.role);
   return {
     id: fallback.id || profile.id,
     authId: profile.id,
@@ -13,7 +37,7 @@ export function profileToAppUser(profile, fallback = {}) {
     lastName: profile.last_name || fallback.lastName || "",
     birthDate: fallback.birthDate || "2000/01/01",
     gender: fallback.gender || "غير محدد",
-    role: profile.role || fallback.role || ROLES.MEMBER,
+    role: roleFromProfile || roleFromFallback || ROLES.MEMBER,
     accountStatus:
       profile.account_status || fallback.accountStatus || ACCOUNT_STATUS.ACTIVE,
     seasonId: fallback.seasonId || null,
@@ -37,6 +61,32 @@ export async function fetchProfile(userId) {
     return { ok: false, error: "لم يُعثر على ملف المستخدم" };
   }
   return { ok: true, profile: data };
+}
+
+/**
+ * Ligne legacy `public.users` (nom, prenom, telephone, role FR).
+ * Absente sur certaines bases — retourne user: null sans erreur.
+ */
+export async function fetchAppUserRow(userId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!userId) {
+    return { ok: false, error: "معرّف المستخدم مفقود" };
+  }
+  const { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) {
+    const msg = error?.message || "";
+    if (/relation.*does not exist|Could not find the table/i.test(msg)) {
+      return { ok: true, user: null };
+    }
+    return { ok: false, error: mapSupabaseAuthError(error) };
+  }
+  return { ok: true, user: data || null };
 }
 
 export async function upsertProfile({
@@ -86,7 +136,7 @@ export async function signInWithEmailPassword(email, password) {
     const created = await upsertProfile({
       id: data.user.id,
       email: mail,
-      role: meta.role || ROLES.MEMBER,
+      role: normalizeAppRole(meta.role) || ROLES.MEMBER,
       accountStatus: ACCOUNT_STATUS.ACTIVE,
       firstName: meta.first_name || "",
       lastName: meta.last_name || "",

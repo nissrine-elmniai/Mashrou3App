@@ -12,11 +12,10 @@ import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { LegendDot } from "./components/SupervisorWidgets";
-import { useSupervisorMembers } from "./hooks/useSupervisorMembers";
 import { TOTAL_QURAN_PAGES, JUZ_STATUS_DEMO, WEEKLY_PROGRESS_DEMO } from "./supervisorHelpers";
 
-export default function SupervisorProgressScreen() {
-  const { members } = useSupervisorMembers();
+/** Données membres fournies par SupervisorDashboard (un seul fetch). */
+export default function SupervisorProgressScreen({ members = [] }) {
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);

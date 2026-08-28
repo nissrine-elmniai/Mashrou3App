@@ -1,78 +1,146 @@
-import { supabase } from "./supabase";
+import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 
-/** Séance active du superviseur (auth user id), ou null si aucune. */
-export async function getSupervisorActiveSeance(supervisorAuthId) {
-  const { data, error } = await supabase
-    .from("seances")
-    .select("*")
-    .eq("superviseur_id", supervisorAuthId)
-    .eq("statut", "active")
-    .maybeSingle();
-  if (error) throw error;
-  return data;
+const SUPABASE_TIMEOUT_MS = 15000;
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`${label} — انتهت المهلة (${Math.round(ms / 1000)}ث)`)),
+        ms
+      );
+    }),
+  ]);
+}
+
+/** Log structuré d'une erreur PostgREST / Postgres (diagnostic QA). */
+function logSupabaseError(context, error) {
+  if (!error) return;
+  console.error(`[membersApi] ${context}`, {
+    code: error.code,
+    message: error.message,
+    hint: error.hint,
+    details: error.details,
+  });
+}
+
+/** Traduit une erreur de table Supabase (table absente / RLS / doublon / autre). */
+function mapTableError(error, tableLabel) {
+  const msg = error?.message || "";
+  if (/Could not find a relationship|PGRST200/i.test(msg)) {
+    return `علاقة مفقودة بين الجداول (${tableLabel}) — نفّذ migrations Supabase (FK PostgREST)`;
+  }
+  if (/relation.*does not exist|Could not find the table/i.test(msg)) {
+    return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
+  }
+  if (/permission|row-level security|RLS|42501|violates row/i.test(msg)) {
+    return "لا صلاحية كافية لهذه العملية";
+  }
+  if (/duplicate key|23505/i.test(msg)) {
+    return "سجل مكرر — هذه العملية مسجلة مسبقاً";
+  }
+  if (/column.*does not exist/i.test(msg)) {
+    return `عمود مفقود في ${tableLabel} — راجع migrations Supabase`;
+  }
+  return mapSupabaseAuthError(error);
 }
 
 /**
- * Membres inscrits (statut='accepte') d'une séance, normalisés en
- * [{ userId, nom, prenom, email, dateNaissance, genre }].
- * L'identité des membres est portée par la table profiles (source unique) :
- * on joint inscriptions -> profiles via la FK membre_id -> profiles.id.
- * (Plus aucune requête vers des tables membres/users inexistantes.)
+ * Séance active du superviseur connecté (auth user id = profiles.id).
+ * RLS : seances_select_own (superviseur_id = auth.uid()).
+ * @param {string} supervisorAuthId UUID du profil superviseur
+ * @returns {{ ok: boolean, seance?: object|null, error?: string }}
+ */
+export async function getSupervisorActiveSeance(supervisorAuthId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", seance: null };
+  }
+  if (!supervisorAuthId) {
+    return { ok: false, error: "معرّف المشرف مفقود", seance: null };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("seances")
+        .select("*")
+        .eq("superviseur_id", supervisorAuthId)
+        .eq("statut", "active")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الحصة النشطة"
+    );
+    if (error) {
+      logSupabaseError("getSupervisorActiveSeance", error);
+      return { ok: false, error: mapTableError(error, "seances"), seance: null };
+    }
+    return { ok: true, seance: data || null };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      seance: null,
+    };
+  }
+}
+
+/**
+ * Membres inscrits (statut = 'accepte') d'une séance, normalisés pour
+ * useSupervisorMembers : identité via profiles (FK inscriptions.membre_id).
  *
- * dateNaissance / genre restent à null : profiles ne porte pas de colonnes
- * équivalentes (dette technique documentée — hors périmètre de cette tâche).
+ * Colonnes inscriptions : membre_id, seance_id, statut ('accepte' | …),
+ * date_inscription (schéma distant) ou created_at (migration 0003).
+ * dateNaissance / genre / telephone : absents de profiles — retournés null.
+ *
+ * @param {string} seanceId UUID de la séance
+ * @returns {{ ok: boolean, members?: Array, error?: string }}
  */
 export async function getSeanceMembers(seanceId) {
-  const { data, error } = await supabase
-    .from("inscriptions")
-    .select("membre_id, statut, profiles(*)")
-    .eq("seance_id", seanceId)
-    .eq("statut", "accepte");
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!seanceId) {
+    return { ok: false, error: "معرّف الحصة مفقود" };
+  }
 
-  const [{ data: membres, error: membresError }, { data: users, error: usersError }] =
-    await Promise.all([
-      supabase.from("membres").select("*").in("user_id", membreIds),
-      supabase.from("users").select("*").in("id", membreIds),
-    ]);
-  if (membresError) throw membresError;
-  if (usersError) throw usersError;
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select(
+          "membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email)"
+        )
+        .eq("seance_id", seanceId)
+        .eq("statut", "accepte"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة أعضاء الحصة"
+    );
+    if (error) {
+      logSupabaseError("getSeanceMembers", error);
+      return { ok: false, error: mapTableError(error, "inscriptions") };
+    }
 
-  const membresById = new Map((membres || []).map((m) => [m.user_id, m]));
-  const usersById = new Map((users || []).map((u) => [u.id, u]));
-  const inscriptionsByMembreId = new Map(
-    (inscriptions || []).map((i) => [i.membre_id, i])
-  );
+    const members = (data || [])
+      .map((row) => {
+        const p = row.membre;
+        if (!p?.id) return null;
+        return {
+          userId: p.id,
+          nom: p.last_name || "",
+          prenom: p.first_name || "",
+          email: p.email || "",
+          telephone: null,
+          dateNaissance: null,
+          genre: null,
+          statutInscription: row.statut,
+          dateInscription: row.date_inscription || null,
+        };
+      })
+      .filter(Boolean);
 
-  return membreIds
-    .filter((id) => usersById.has(id))
-    .map((id) => {
-      const u = usersById.get(id);
-      const m = membresById.get(id);
-      const i = inscriptionsByMembreId.get(id);
-      return {
-        userId: id,
-        nom: u.nom,
-        prenom: u.prenom,
-        email: u.email,
-        telephone: u.telephone,
-        dateNaissance: m?.date_naissance,
-        genre: m?.genre,
-        statutInscription: i?.statut,
-        dateInscription: i?.date_inscription,
-  if (error) throw error;
-
-  return (data || [])
-    .map((row) => {
-      const p = row.profiles;
-      if (!p) return null;
-      return {
-        userId: p.id,
-        nom: p.last_name,
-        prenom: p.first_name,
-        email: p.email,
-        dateNaissance: null,
-        genre: null,
-      };
-    })
-    .filter(Boolean);
+    return { ok: true, members };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
 }

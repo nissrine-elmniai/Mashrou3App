@@ -216,6 +216,72 @@ export async function sendMessage({ recipientId, seanceId = null, contenu, image
 }
 
 /**
+ * Diffusion superviseur : même contenu envoyé en N messages 1-à-1 (RG6).
+ * Chaque insert passe par sendMessage → policy messages_insert_authorized.
+ *
+ * @param {object} params { memberIds, seanceId, contenu }
+ * @returns {{ ok, sentCount, failedCount, total, failures?, error? }}
+ */
+export async function sendBroadcastToMembers({ memberIds, seanceId, contenu }) {
+  const text = String(contenu || "").trim();
+  if (!text) {
+    return { ok: false, error: "اكتب نص الرسالة" };
+  }
+  if (!seanceId || !UUID_RE.test(seanceId)) {
+    return { ok: false, error: "معرّف الحصة مفقود" };
+  }
+
+  const ids = [...new Set((memberIds || []).filter((id) => UUID_RE.test(id)))];
+  if (ids.length === 0) {
+    return { ok: false, error: "لا يوجد أعضاء للإرسال" };
+  }
+
+  const failures = [];
+  let sentCount = 0;
+
+  // Envoi séquentiel : évite la saturation PostgREST et permet un comptage précis.
+  for (const memberId of ids) {
+    const res = await sendMessage({
+      recipientId: memberId,
+      seanceId,
+      contenu: text,
+    });
+    if (res.ok) {
+      sentCount += 1;
+    } else {
+      const errMsg = res.error || "فشل غير معروف";
+      failures.push({ memberId, error: errMsg });
+      console.warn(
+        `[messagesApi] sendBroadcastToMembers — échec membre ${memberId}:`,
+        errMsg
+      );
+    }
+  }
+
+  const total = ids.length;
+  const failedCount = failures.length;
+
+  if (sentCount === 0) {
+    return {
+      ok: false,
+      error: "تعذر الإرسال إلى جميع الأعضاء",
+      sentCount: 0,
+      failedCount,
+      total,
+      failures,
+    };
+  }
+
+  return {
+    ok: true,
+    sentCount,
+    failedCount,
+    total,
+    failures: failedCount > 0 ? failures : undefined,
+  };
+}
+
+/**
  * Abonnement Realtime aux nouveaux messages de la conversation avec
  * otherUserId (INSERT sur messages, filtré par RLS : seuls les messages où
  * l'on est participant remontent ; on filtre ensuite côté client sur le

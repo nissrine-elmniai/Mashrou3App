@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import Svg, { Circle } from "react-native-svg";
 import { colors, radii, shadows } from "../constants/theme";
 import {
   rtlText,
@@ -308,59 +307,6 @@ export function StatRow({ label, value, color = colors.primary }) {
       iconColor={color}
       borderColor={colors.borderGreen}
     />
-  );
-}
-
-/** Anneau de progression circulaire (react-native-svg), % centré par défaut */
-export function ProgressRing({
-  size = 120,
-  stroke = 10,
-  progress = 0,
-  color = colors.primary,
-  trackColor = colors.border,
-  children,
-}) {
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0, Math.min(100, Number(progress) || 0));
-  const offset = circumference - (clamped / 100) * circumference;
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      <Svg width={size} height={size}>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={trackColor}
-          strokeWidth={stroke}
-          fill="none"
-        />
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={color}
-          strokeWidth={stroke}
-          fill="none"
-          strokeLinecap="round"
-          strokeDasharray={`${circumference}`}
-          strokeDashoffset={offset}
-          rotation="-90"
-          origin={`${size / 2}, ${size / 2}`}
-        />
-      </Svg>
-      <View style={styles.ringCenter}>
-        {children || <Text style={[styles.ringText, { color }]}>{clamped}%</Text>}
-      </View>
-    </View>
   );
 }
 
@@ -666,18 +612,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontFamily: fonts.regular,
     writingDirection: "rtl",
-  },
-
-  ringCenter: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  ringText: {
-    fontSize: 24,
-    fontFamily: fonts.bold,
-    ...rtlText,
-    textAlign: "center",
   },
 
   bottomBar: {

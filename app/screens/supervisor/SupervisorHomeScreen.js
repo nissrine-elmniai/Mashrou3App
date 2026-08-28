@@ -1,16 +1,43 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import React, { useEffect, useState, useMemo } from "react";
+import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import { EmptyState, QuickButton } from "../../components/ui";
-import { MiniStat, OutlineButton } from "./components/SupervisorWidgets";
-import { useSupervisorMembers } from "./hooks/useSupervisorMembers";
+import { MiniStat } from "./components/SupervisorWidgets";
+import BroadcastMessageModal from "./components/BroadcastMessageModal";
+import { formatMemberCount } from "./supervisorHelpers";
 import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 
-export default function SupervisorHomeScreen({ activeGroup, onChangeTab }) {
-  const { members, attendancePct, avgProgress } = useSupervisorMembers(activeGroup);
+/**
+ * Données séance/membres fournies par SupervisorDashboard (un seul fetch hook).
+ */
+export default function SupervisorHomeScreen({
+  activeGroup,
+  members = [],
+  attendancePct = 0,
+  avgProgress = 0,
+  onChangeTab,
+}) {
   const [adminAlerts, setAdminAlerts] = useState([]);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+
+  const memberIds = useMemo(
+    () => members.map((m) => m.user?.id).filter(Boolean),
+    [members]
+  );
+
+  const openBroadcast = () => {
+    if (!activeGroup?.id) {
+      Alert.alert("تنبيه", "لا توجد حصة نشطة");
+      return;
+    }
+    if (memberIds.length === 0) {
+      Alert.alert("تنبيه", "لا يوجد أعضاء لإرسال الرسالة");
+      return;
+    }
+    setBroadcastOpen(true);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +66,7 @@ export default function SupervisorHomeScreen({ activeGroup, onChangeTab }) {
           <View style={styles.sessionMembersRow}>
             <Ionicons name="people-outline" size={16} color={colors.placeholder} />
             <Text style={styles.sessionMembersText}>
-              {activeGroup.memberIds?.length || 0} عضو
+              {formatMemberCount(activeGroup.memberIds?.length ?? members.length)}
             </Text>
           </View>
         </View>
@@ -72,10 +99,18 @@ export default function SupervisorHomeScreen({ activeGroup, onChangeTab }) {
         color={colors.gold}
         onPress={() => onChangeTab("attendance")}
       />
-      <OutlineButton
+      <QuickButton
         label="إرسال رسالة للجميع"
         icon="chatbubble-ellipses-outline"
-        onPress={() => onChangeTab("messages")}
+        color={colors.primary}
+        onPress={openBroadcast}
+      />
+
+      <BroadcastMessageModal
+        visible={broadcastOpen}
+        onClose={() => setBroadcastOpen(false)}
+        memberIds={memberIds}
+        seanceId={activeGroup?.id}
       />
     </ScrollView>
   );
@@ -116,5 +151,5 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: colors.bg,
   },
-  alertText: { color: colors.text, fontSize: 14, lineHeight: 22, ...rtlText },
+  alertText: { color: "#E53935", fontSize: 14, lineHeight: 22, ...rtlText },
 });
