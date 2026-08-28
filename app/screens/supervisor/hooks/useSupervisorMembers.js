@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../../../context/AppContext";
-import { ATTENDANCE_STATUS } from "../../../constants/roles";
-import { deriveLevel, todayIso } from "../supervisorHelpers";
+import { deriveLevel, getCurrentWeekSessionDate } from "../supervisorHelpers";
 import { getSupervisorActiveSeance, getSeanceMembers } from "../../../lib/membersApi";
+import { getSeancePresenceForDate } from "../../../lib/presenceApi";
 
 /** Message UI mode dégradé (mock après échec Supabase réel). */
 export const SUPERVISOR_FETCH_DEGRADED_MESSAGE =
@@ -14,6 +14,12 @@ function buildScheduleLabel(seance) {
   const heures =
     heureDebut && heureFin ? `${heureDebut} - ${heureFin}` : heureDebut || heureFin;
   return [seance.jour, heures].filter(Boolean).join(" ");
+}
+
+function weeklyPresenceToMemberStatus(presence) {
+  if (presence === "present") return "present";
+  if (presence === "absent") return "absent";
+  return "none";
 }
 
 /**
@@ -33,7 +39,6 @@ export function useSupervisorMembers(selectedGroupId = null) {
     getSupervisorGroups,
     getUserById,
     getMemberProgress,
-    attendance,
     supabaseSession,
   } = useApp();
 
@@ -64,12 +69,13 @@ export function useSupervisorMembers(selectedGroupId = null) {
   const [supabaseData, setSupabaseData] = useState({
     myGroups: [],
     members: [],
+    weeklyPresenceByMember: {},
   });
 
   useEffect(() => {
     if (!supervisorAuthId) {
       setFetchState({ loading: false, loaded: false, error: null });
-      setSupabaseData({ myGroups: [], members: [] });
+      setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
       return;
     }
 
@@ -86,7 +92,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             "useSupervisorMembers: échec lecture séance Supabase —",
             seanceRes.error
           );
-          setSupabaseData({ myGroups: [], members: [] });
+          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
           setFetchState({
             loading: false,
             loaded: false,
@@ -97,7 +103,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
         const seance = seanceRes.seance;
         if (!seance) {
-          setSupabaseData({ myGroups: [], members: [] });
+          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
           setFetchState({ loading: false, loaded: true, error: null });
           return;
         }
@@ -110,7 +116,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             "useSupervisorMembers: échec lecture membres Supabase —",
             membersRes.error
           );
-          setSupabaseData({ myGroups: [], members: [] });
+          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
           setFetchState({
             loading: false,
             loaded: false,
@@ -126,6 +132,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
           seasonId: seance.saison_id,
           supervisorId: seance.superviseur_id,
           memberIds: seanceMembers.map((m) => m.userId),
+          jour: seance.jour,
           schedule: buildScheduleLabel(seance),
         };
 
@@ -136,6 +143,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
             lastName: m.nom,
             email: m.email,
             phone: m.telephone,
+            school: m.ecole,
+            level: m.niveau,
+            hifzAmount: m.quantiteHifz,
             birthDate: m.dateNaissance,
             gender: m.genre,
           },
@@ -145,7 +155,26 @@ export function useSupervisorMembers(selectedGroupId = null) {
           registrationDate: m.dateInscription,
         }));
 
-        setSupabaseData({ myGroups: [group], members });
+        let weeklyPresenceByMember = {};
+        const weekSession = getCurrentWeekSessionDate(seance.jour);
+        if (weekSession.hasOccurred && weekSession.sessionDate) {
+          const presRes = await getSeancePresenceForDate(
+            seance.id,
+            weekSession.sessionDate,
+            group.memberIds
+          );
+          if (cancelled) return;
+          if (presRes.ok) {
+            weeklyPresenceByMember = presRes.byMemberId || {};
+          } else {
+            console.warn(
+              "useSupervisorMembers: échec lecture présence hebdo —",
+              presRes.error
+            );
+          }
+        }
+
+        setSupabaseData({ myGroups: [group], members, weeklyPresenceByMember });
         setFetchState({ loading: false, loaded: true, error: null });
       } catch (e) {
         console.warn(
@@ -153,7 +182,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
           e?.message || e
         );
         if (!cancelled) {
-          setSupabaseData({ myGroups: [], members: [] });
+          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
           setFetchState({
             loading: false,
             loaded: false,
@@ -191,15 +220,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
   const activeGroup =
     myGroups.find((g) => g.id === selectedGroupId) || myGroups[0] || null;
 
-  const todaysRecord = useMemo(
-    () =>
-      activeGroup
-        ? attendance.find(
-            (a) => a.groupId === activeGroup.id && a.date === todayIso()
-          )
-        : null,
-    [attendance, activeGroup]
-  );
+  const weeklyPresenceByMember = usingSupabase ? supabaseData.weeklyPresenceByMember : {};
 
   const membersWithStatus = useMemo(
     () =>
@@ -208,16 +229,12 @@ export function useSupervisorMembers(selectedGroupId = null) {
           100,
           Math.round(((m.prog?.hifzPages || 0) / (m.prog?.targetPages || 1)) * 100)
         );
-        const st = todaysRecord?.records?.[m.user.id];
-        const status =
-          st === ATTENDANCE_STATUS.PRESENT
-            ? "present"
-            : st === ATTENDANCE_STATUS.ABSENT
-            ? "absent"
-            : "none";
+        const status = usingSupabase
+          ? weeklyPresenceToMemberStatus(weeklyPresenceByMember[m.user.id])
+          : "none";
         return { ...m, pct, level: deriveLevel(pct), status };
       }),
-    [members, todaysRecord]
+    [members, usingSupabase, weeklyPresenceByMember]
   );
 
   const presentCount = membersWithStatus.filter((m) => m.status === "present").length;

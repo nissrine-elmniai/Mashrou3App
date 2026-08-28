@@ -91,7 +91,7 @@ export async function getSupervisorActiveSeance(supervisorAuthId) {
  *
  * Colonnes inscriptions : membre_id, seance_id, statut ('accepte' | …),
  * date_inscription (schéma distant) ou created_at (migration 0003).
- * dateNaissance / genre / telephone : absents de profiles — retournés null.
+ * dateNaissance / genre : non disponibles via profiles — restent null (jointure membres non faite).
  *
  * @param {string} seanceId UUID de la séance
  * @returns {{ ok: boolean, members?: Array, error?: string }}
@@ -109,7 +109,7 @@ export async function getSeanceMembers(seanceId) {
       supabase
         .from("inscriptions")
         .select(
-          "membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email)"
+          "membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email, phone, school, level, hifz_amount)"
         )
         .eq("seance_id", seanceId)
         .eq("statut", "accepte"),
@@ -125,12 +125,16 @@ export async function getSeanceMembers(seanceId) {
       .map((row) => {
         const p = row.membre;
         if (!p?.id) return null;
+        const contact = mergeContactFields(p, null);
         return {
           userId: p.id,
           nom: p.last_name || "",
           prenom: p.first_name || "",
           email: p.email || "",
-          telephone: null,
+          telephone: contact.telephone,
+          ecole: contact.ecole,
+          niveau: contact.niveau,
+          quantiteHifz: contact.quantiteHifz,
           dateNaissance: null,
           genre: null,
           statutInscription: row.statut,
@@ -139,7 +143,115 @@ export async function getSeanceMembers(seanceId) {
       })
       .filter(Boolean);
 
-    return { ok: true, members };
+    const appsByUser = await fetchLatestMemberApplications(members.map((m) => m.userId));
+    const enrichedMembers = members.map((m) => {
+      const merged = mergeContactFields(m, appsByUser[m.userId]);
+      return {
+        ...m,
+        telephone: merged.telephone,
+        ecole: merged.ecole,
+        niveau: merged.niveau,
+        quantiteHifz: merged.quantiteHifz,
+      };
+    });
+
+    return { ok: true, members: enrichedMembers };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+function pickProfileText(value) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function mergeContactFields(primary, fallback) {
+  return {
+    telephone:
+      pickProfileText(primary?.phone ?? primary?.telephone) ||
+      pickProfileText(fallback?.phone),
+    ecole:
+      pickProfileText(primary?.school ?? primary?.ecole) ||
+      pickProfileText(fallback?.school),
+    niveau:
+      pickProfileText(primary?.level ?? primary?.niveau) ||
+      pickProfileText(fallback?.level),
+    quantiteHifz:
+      pickProfileText(primary?.hifz_amount ?? primary?.quantiteHifz) ||
+      pickProfileText(fallback?.hifz_amount),
+  };
+}
+
+async function fetchLatestMemberApplications(userIds) {
+  if (!userIds?.length) return {};
+
+  const { data, error } = await withTimeout(
+    supabase
+      .from("member_applications")
+      .select("user_id, phone, school, level, hifz_amount, updated_at")
+      .in("user_id", userIds)
+      .order("updated_at", { ascending: false }),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة طلبات الأعضاء"
+  );
+
+  if (error) {
+    logSupabaseError("fetchLatestMemberApplications", error);
+    return {};
+  }
+
+  const byUser = {};
+  for (const row of data || []) {
+    if (!byUser[row.user_id]) byUser[row.user_id] = row;
+  }
+  return byUser;
+}
+
+/**
+ * Champs contact / inscription depuis profiles, repli member_applications si vides.
+ * Source profiles (décision actée) ; la demande membre peut encore porter phone/school/level/hifz.
+ */
+export async function getMemberProfileFields(membreId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!membreId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+
+  try {
+    let profileData = null;
+
+    const profileRes = await withTimeout(
+      supabase
+        .from("profiles")
+        .select("phone, school, level, hifz_amount")
+        .eq("id", membreId)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة ملف العضو"
+    );
+
+    if (!profileRes.error && profileRes.data) {
+      profileData = profileRes.data;
+    } else if (
+      profileRes.error &&
+      !/column.*does not exist/i.test(profileRes.error?.message || "")
+    ) {
+      logSupabaseError("getMemberProfileFields profiles", profileRes.error);
+    }
+
+    const appsByUser = await fetchLatestMemberApplications([membreId]);
+    const merged = mergeContactFields(profileData, appsByUser[membreId]);
+
+    return {
+      ok: true,
+      telephone: merged.telephone,
+      ecole: merged.ecole,
+      niveau: merged.niveau,
+      quantiteHifz: merged.quantiteHifz,
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
