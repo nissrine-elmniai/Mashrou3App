@@ -6,13 +6,12 @@ import { colors, radii } from "../../constants/theme";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { MemberRow } from "./components/SupervisorWidgets";
-import { useSupervisorMembers } from "./hooks/useSupervisorMembers";
 import { initials } from "./supervisorHelpers";
 
-export default function SupervisorMembersScreen({ activeGroup }) {
+/** Liste membres — données fournies par SupervisorDashboard (un seul fetch). */
+export default function SupervisorMembersScreen({ membersWithStatus = [] }) {
   const navigation = useNavigation();
   const [search, setSearch] = useState("");
-  const { membersWithStatus } = useSupervisorMembers(activeGroup);
 
   const openChat = (m) => {
     const name = `${m.user.firstName} ${m.user.lastName}`;

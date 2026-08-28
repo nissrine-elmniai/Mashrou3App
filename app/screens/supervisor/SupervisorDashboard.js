@@ -1,10 +1,23 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, StatusBar, I18nManager } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  StatusBar,
+  I18nManager,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
+import {
+  useSupervisorMembers,
+  SUPERVISOR_FETCH_DEGRADED_MESSAGE,
+} from "./hooks/useSupervisorMembers";
 
 import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
@@ -24,28 +37,59 @@ const NAV_TABS = [
 
 /**
  * Conteneur léger : header + bottomBar communs, état `tab` pour basculer entre
- * les 5 écrans supervisor, et `selectedGroupId` partagé entre Home/Members/Attendance
- * (qui ont tous besoin du même groupe actif pour rester cohérents entre onglets).
+ * les 5 écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
 export default function SupervisorDashboard({ navigation }) {
-  const { currentUser, getSupervisorGroups, logout } = useApp();
+  const { currentUser, logout } = useApp();
 
   const [tab, setTab] = useState("home");
   const [selectedGroupId, setSelectedGroupId] = useState(null);
 
+  const {
+    myGroups,
+    activeGroup,
+    members,
+    membersWithStatus,
+    attendancePct,
+    avgProgress,
+    loading,
+    fetchError,
+  } = useSupervisorMembers(selectedGroupId);
+
   const fullName = currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : "";
-  const myGroups = getSupervisorGroups(currentUser?.id);
-  const activeGroup =
-    myGroups.find((g) => g.id === selectedGroupId) || myGroups[0] || null;
 
   useEffect(() => {
-    if (!selectedGroupId && myGroups[0]) setSelectedGroupId(myGroups[0].id);
+    if (!selectedGroupId && myGroups[0]) {
+      setSelectedGroupId(myGroups[0].id);
+    }
+  }, [myGroups, selectedGroupId]);
+
+  useEffect(() => {
+    if (
+      selectedGroupId &&
+      myGroups.length > 0 &&
+      !myGroups.some((g) => g.id === selectedGroupId)
+    ) {
+      setSelectedGroupId(myGroups[0].id);
+    }
   }, [myGroups, selectedGroupId]);
 
   const handleLogout = () => {
-    logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
+
+  const showDegradedBanner = !!fetchError;
+  const degradedMessage = SUPERVISOR_FETCH_DEGRADED_MESSAGE;
 
   return (
     <SafeAreaView
@@ -64,7 +108,11 @@ export default function SupervisorDashboard({ navigation }) {
               <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={22} color="white" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.profileBtn}>
+              <TouchableOpacity
+                style={styles.profileBtn}
+                onPress={() => navigation.navigate("SupervisorProfile")}
+                activeOpacity={0.7}
+              >
                 <Ionicons name="person-circle-outline" size={24} color="white" />
               </TouchableOpacity>
             </View>
@@ -72,23 +120,48 @@ export default function SupervisorDashboard({ navigation }) {
         </View>
       )}
 
+      {showDegradedBanner ? (
+        <View style={styles.degradedBanner}>
+          <Ionicons name="cloud-offline-outline" size={18} color={colors.gold} />
+          <Text style={styles.degradedBannerText}>{degradedMessage}</Text>
+        </View>
+      ) : null}
+
       <View style={styles.body}>
-        {tab === "home" && (
-          <SupervisorHomeScreen activeGroup={activeGroup} onChangeTab={setTab} />
+        {loading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        ) : (
+          <>
+            {tab === "home" && (
+              <SupervisorHomeScreen
+                activeGroup={activeGroup}
+                members={members}
+                attendancePct={attendancePct}
+                avgProgress={avgProgress}
+                onChangeTab={setTab}
+              />
+            )}
+            {tab === "members" && (
+              <SupervisorMembersScreen membersWithStatus={membersWithStatus} />
+            )}
+            {tab === "attendance" && (
+              <SupervisorAttendanceScreen
+                myGroups={myGroups}
+                activeGroup={activeGroup}
+                selectedGroupId={selectedGroupId}
+                onSelectGroup={setSelectedGroupId}
+              />
+            )}
+            {tab === "progress" && (
+              <SupervisorProgressScreen members={members} />
+            )}
+            {tab === "messages" && (
+              <SupervisorMessagesScreen navigation={navigation} />
+            )}
+          </>
         )}
-        {tab === "members" && (
-          <SupervisorMembersScreen activeGroup={activeGroup} onChangeTab={setTab} />
-        )}
-        {tab === "attendance" && (
-          <SupervisorAttendanceScreen
-            myGroups={myGroups}
-            activeGroup={activeGroup}
-            selectedGroupId={selectedGroupId}
-            onSelectGroup={setSelectedGroupId}
-          />
-        )}
-        {tab === "progress" && <SupervisorProgressScreen />}
-        {tab === "messages" && <SupervisorMessagesScreen navigation={navigation} />}
       </View>
 
       <View style={styles.bottomBar}>
@@ -120,6 +193,32 @@ export default function SupervisorDashboard({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   body: { flex: 1 },
+
+  loadingWrap: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  degradedBanner: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.gold,
+  },
+  degradedBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.text,
+    lineHeight: 20,
+    ...rtlText,
+  },
 
   headerWrap: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10 },
   headerCard: {

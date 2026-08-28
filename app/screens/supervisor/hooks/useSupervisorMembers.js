@@ -4,6 +4,10 @@ import { ATTENDANCE_STATUS } from "../../../constants/roles";
 import { deriveLevel, todayIso } from "../supervisorHelpers";
 import { getSupervisorActiveSeance, getSeanceMembers } from "../../../lib/membersApi";
 
+/** Message UI mode dégradé (mock après échec Supabase réel). */
+export const SUPERVISOR_FETCH_DEGRADED_MESSAGE =
+  "تعذر تحميل بيانات المجموعة، يتم عرض بيانات محلية";
+
 function buildScheduleLabel(seance) {
   const heureDebut = seance.heure_debut ? seance.heure_debut.slice(0, 5) : "";
   const heureFin = seance.heure_fin ? seance.heure_fin.slice(0, 5) : "";
@@ -13,19 +17,17 @@ function buildScheduleLabel(seance) {
 }
 
 /**
- * Membres de toutes les groupes du superviseur connecté, avec statut de présence
- * du jour calculé si `activeGroup` est fourni (sinon status/pct/level sont omis
- * par les écrans qui n'en ont pas besoin, comme Progress ou Messages).
+ * Séance active + membres du superviseur connecté.
  *
- * `myGroups`/`members` sont lus depuis Supabase quand une session Supabase existe
- * (compte superviseur seedé côté Supabase) et retombent sur le mock sinon ou en cas
- * d'erreur réseau. `membersWithStatus` est dérivé de `members` (donc Supabase ou mock
- * selon le cas). `attendancePct`/`avgProgress` restent à 0 en mode Supabase (Présence et
- * Progression non encore migrées côté Supabase — étape future) ; `presentCount` en
- * découle naturellement puisqu'aucun membre n'a de statut "present" tant que la Présence
- * n'est pas branchée.
+ * @param {string|null} selectedGroupId — id du groupe/séance sélectionné (Dashboard)
+ * @returns activeGroup dérivé de myGroups + selectedGroupId
+ *
+ * États exposés :
+ * - loading : premier fetch Supabase en cours (pas de flash mock)
+ * - fetchError : échec réel Supabase → repli mock signalé côté UI
+ * - dataSource : 'supabase' | 'mock'
  */
-export function useSupervisorMembers(activeGroup = null) {
+export function useSupervisorMembers(selectedGroupId = null) {
   const {
     currentUser,
     getSupervisorGroups,
@@ -54,33 +56,70 @@ export function useSupervisorMembers(activeGroup = null) {
 
   const supervisorAuthId = supabaseSession?.user?.id || null;
 
-  const [supabaseData, setSupabaseData] = useState({
+  const [fetchState, setFetchState] = useState({
+    loading: false,
     loaded: false,
+    error: null,
+  });
+  const [supabaseData, setSupabaseData] = useState({
     myGroups: [],
     members: [],
   });
 
   useEffect(() => {
     if (!supervisorAuthId) {
-      setSupabaseData({ loaded: false, myGroups: [], members: [] });
+      setFetchState({ loading: false, loaded: false, error: null });
+      setSupabaseData({ myGroups: [], members: [] });
       return;
     }
 
     let cancelled = false;
+    setFetchState({ loading: true, loaded: false, error: null });
 
     (async () => {
       try {
-        const seance = await getSupervisorActiveSeance(supervisorAuthId);
+        const seanceRes = await getSupervisorActiveSeance(supervisorAuthId);
         if (cancelled) return;
 
-        if (!seance) {
-          setSupabaseData({ loaded: true, myGroups: [], members: [] });
+        if (!seanceRes.ok) {
+          console.warn(
+            "useSupervisorMembers: échec lecture séance Supabase —",
+            seanceRes.error
+          );
+          setSupabaseData({ myGroups: [], members: [] });
+          setFetchState({
+            loading: false,
+            loaded: false,
+            error: seanceRes.error || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
+          });
           return;
         }
 
-        const seanceMembers = await getSeanceMembers(seance.id);
+        const seance = seanceRes.seance;
+        if (!seance) {
+          setSupabaseData({ myGroups: [], members: [] });
+          setFetchState({ loading: false, loaded: true, error: null });
+          return;
+        }
+
+        const membersRes = await getSeanceMembers(seance.id);
         if (cancelled) return;
 
+        if (!membersRes.ok) {
+          console.warn(
+            "useSupervisorMembers: échec lecture membres Supabase —",
+            membersRes.error
+          );
+          setSupabaseData({ myGroups: [], members: [] });
+          setFetchState({
+            loading: false,
+            loaded: false,
+            error: membersRes.error || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
+          });
+          return;
+        }
+
+        const seanceMembers = membersRes.members;
         const group = {
           id: seance.id,
           name: seance.nom,
@@ -102,20 +141,24 @@ export function useSupervisorMembers(activeGroup = null) {
           },
           group,
           prog: null,
-          // Colonnes de la ligne `inscriptions` elle-même (statut/date de rattachement
-          // à la séance) — distinctes des infos personnelles du membre ci-dessus.
           registrationStatus: m.statutInscription,
           registrationDate: m.dateInscription,
         }));
 
-        setSupabaseData({ loaded: true, myGroups: [group], members });
+        setSupabaseData({ myGroups: [group], members });
+        setFetchState({ loading: false, loaded: true, error: null });
       } catch (e) {
         console.warn(
-          "useSupervisorMembers: échec de lecture Supabase, repli sur le mock —",
+          "useSupervisorMembers: erreur réseau/timeout, repli sur le mock —",
           e?.message || e
         );
         if (!cancelled) {
-          setSupabaseData({ loaded: false, myGroups: [], members: [] });
+          setSupabaseData({ myGroups: [], members: [] });
+          setFetchState({
+            loading: false,
+            loaded: false,
+            error: e?.message || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
+          });
         }
       }
     })();
@@ -125,9 +168,28 @@ export function useSupervisorMembers(activeGroup = null) {
     };
   }, [supervisorAuthId]);
 
-  const usingSupabase = !!supervisorAuthId && supabaseData.loaded;
-  const myGroups = usingSupabase ? supabaseData.myGroups : myGroupsMock;
-  const members = usingSupabase ? supabaseData.members : mockMembers;
+  const loading = !!supervisorAuthId && fetchState.loading;
+  const fetchError =
+    supervisorAuthId && !fetchState.loading && fetchState.error
+      ? fetchState.error
+      : null;
+  const usingSupabase =
+    !!supervisorAuthId && fetchState.loaded && !fetchState.error;
+
+  // Pendant le chargement Supabase : pas de mock ni EmptyState trompeur.
+  const myGroups = loading
+    ? []
+    : usingSupabase
+    ? supabaseData.myGroups
+    : myGroupsMock;
+  const members = loading
+    ? []
+    : usingSupabase
+    ? supabaseData.members
+    : mockMembers;
+
+  const activeGroup =
+    myGroups.find((g) => g.id === selectedGroupId) || myGroups[0] || null;
 
   const todaysRecord = useMemo(
     () =>
@@ -139,11 +201,6 @@ export function useSupervisorMembers(activeGroup = null) {
     [attendance, activeGroup]
   );
 
-  // Dérivé de `members` (source réelle : Supabase si usingSupabase, mock sinon), pas de
-  // mockMembers en dur — sinon SupervisorMembersScreen n'affiche jamais les vrais membres.
-  // `prog` vaut null pour les membres Supabase (Progression non migrée) : le calcul de `pct`
-  // retombe alors naturellement sur 0 grâce aux valeurs par défaut ci-dessous, sans branche
-  // spéciale à ajouter et sans casser la forme d'objet attendue par MemberRow.
   const membersWithStatus = useMemo(
     () =>
       members.map((m) => {
@@ -165,11 +222,6 @@ export function useSupervisorMembers(activeGroup = null) {
 
   const presentCount = membersWithStatus.filter((m) => m.status === "present").length;
 
-  // Présence/Progression ne sont pas encore migrées côté Supabase (pas de table
-  // presences/progression branchée ici) : en mode Supabase on renvoie 0 explicitement
-  // plutôt qu'un pourcentage calculé sur des données absentes. Le mode mock est inchangé.
-  // 0 plutôt que null pour ne pas afficher "null%" dans SupervisorHomeScreen (MiniStat),
-  // en attendant le branchement réel lors de la migration des blocs Présence et Progression.
   const attendancePct = usingSupabase
     ? 0
     : members.length === 0
@@ -185,11 +237,14 @@ export function useSupervisorMembers(activeGroup = null) {
 
   return {
     myGroups,
+    activeGroup,
     members,
     membersWithStatus,
     attendancePct,
     avgProgress,
     presentCount,
+    loading,
+    fetchError,
     dataSource: usingSupabase ? "supabase" : "mock",
   };
 }

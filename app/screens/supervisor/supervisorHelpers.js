@@ -65,3 +65,12 @@ export function deriveLevel(pct) {
 export function initials(name = "") {
   return name.trim().charAt(0) || "؟";
 }
+
+/** Libellé arabe du nombre de membres (carte séance superviseur). */
+export function formatMemberCount(count) {
+  const n = Number(count) || 0;
+  if (n === 0) return "لا يوجد اعضاء";
+  if (n === 1) return "عضو واحد";
+  if (n === 2) return "عضوين";
+  return `${n} اعضاء`;
+}

@@ -14,7 +14,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { Paperclip, Send } from "lucide-react-native";
 import { colors, radii } from "../../constants/theme";
 import { row, rtlText, rtlTextBold, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
 import { useApp } from "../../context/AppContext";
@@ -103,8 +102,9 @@ export default function ChatConversationScreen({ navigation, route }) {
           otherId = contactId;
         } else if (isSupervisor) {
           // Chat superviseur <-> membre : séance active du superviseur
-          const mySeance = await getSupervisorActiveSeance(authId);
-          seanceId = mySeance?.id || null;
+          const seanceRes = await getSupervisorActiveSeance(authId);
+          seanceId =
+            seanceRes?.ok && seanceRes.seance ? seanceRes.seance.id : null;
           otherId = contactId;
         }
 
@@ -227,7 +227,7 @@ export default function ChatConversationScreen({ navigation, route }) {
 
         <View style={styles.inputBar}>
           <TouchableOpacity style={styles.attachBtn} activeOpacity={0.7}>
-            <Paperclip size={22} color={colors.muted} />
+            <Ionicons name="attach-outline" size={22} color={colors.muted} />
           </TouchableOpacity>
           <TextInput
             style={styles.input}
@@ -239,7 +239,7 @@ export default function ChatConversationScreen({ navigation, route }) {
             onSubmitEditing={handleSend}
           />
           <TouchableOpacity style={styles.sendBtn} onPress={handleSend} activeOpacity={0.8}>
-            <Send size={20} color="white" style={styles.sendIcon} />
+            <Ionicons name="send" size={20} color="white" style={styles.sendIcon} />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
