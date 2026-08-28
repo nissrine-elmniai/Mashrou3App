@@ -1,12 +1,11 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextBold, fonts } from "../../constants/rtl";
 import { EmptyState, QuickButton } from "../../components/ui";
 import { MiniStat } from "./components/SupervisorWidgets";
 import BroadcastMessageModal from "./components/BroadcastMessageModal";
-import { formatMemberCount } from "./supervisorHelpers";
 import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 
 /**
@@ -19,8 +18,24 @@ export default function SupervisorHomeScreen({
   avgProgress = 0,
   onChangeTab,
 }) {
-  const [adminAlerts, setAdminAlerts] = useState([]);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [recentAlerts, setRecentAlerts] = useState([]);
+
+  const loadRecentAlerts = useCallback(async () => {
+    const res = await getVisibleAlerts();
+    if (res.ok) setRecentAlerts(res.alerts.slice(0, 3));
+  }, []);
+
+  useEffect(() => {
+    loadRecentAlerts();
+    return subscribeToNewAlerts(() => loadRecentAlerts());
+  }, [loadRecentAlerts]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadRecentAlerts();
+    }, [loadRecentAlerts])
+  );
 
   const memberIds = useMemo(
     () => members.map((m) => m.user?.id).filter(Boolean),
@@ -39,53 +54,20 @@ export default function SupervisorHomeScreen({
     setBroadcastOpen(true);
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const res = await getVisibleAlerts();
-      if (!cancelled && res.ok) setAdminAlerts(res.alerts);
-    };
-    load();
-    const unsub = subscribeToNewAlerts(() => {
-      load();
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, []);
-
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
       {activeGroup ? (
         <View style={[styles.sessionCard, shadows.card]}>
           <Text style={styles.sessionTitle}>{activeGroup.name}</Text>
           {activeGroup.schedule ? (
-            <Text style={styles.sessionSchedule}>{activeGroup.schedule}</Text>
-          ) : null}
-          <View style={styles.sessionMembersRow}>
-            <Ionicons name="people-outline" size={16} color={colors.placeholder} />
-            <Text style={styles.sessionMembersText}>
-              {formatMemberCount(activeGroup.memberIds?.length ?? members.length)}
+            <Text style={styles.sessionSchedule} numberOfLines={1}>
+              {activeGroup.schedule}
             </Text>
-          </View>
+          ) : null}
         </View>
       ) : (
         <EmptyState text="لا توجد مجموعة مسندة إليك بعد — انتظر تعيين الإدارة" />
       )}
-
-      <View style={[styles.alertsCard, shadows.card]}>
-        <Text style={styles.alertsTitle}>تنبيهات الإدارة</Text>
-        {adminAlerts.length === 0 ? (
-          <Text style={styles.alertsEmpty}>لا توجد تنبيهات بعد</Text>
-        ) : (
-          adminAlerts.slice(0, 5).map((a) => (
-            <View key={a.id} style={styles.alertItem}>
-              <Text style={styles.alertText}>{a.message}</Text>
-            </View>
-          ))
-        )}
-      </View>
 
       <View style={styles.statsRow}>
         <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
@@ -105,6 +87,19 @@ export default function SupervisorHomeScreen({
         color={colors.primary}
         onPress={openBroadcast}
       />
+
+      <View style={styles.alertsCard}>
+        <Text style={styles.sessionTitle}>تنبيهات الإدارة</Text>
+        {recentAlerts.length === 0 ? (
+          <Text style={styles.sessionSchedule}>لا توجد تنبيهات بعد</Text>
+        ) : (
+          recentAlerts.map((alert) => (
+            <View key={alert.id} style={styles.alertRow}>
+              <Text style={styles.alertText}>{alert.message}</Text>
+            </View>
+          ))
+        )}
+      </View>
 
       <BroadcastMessageModal
         visible={broadcastOpen}
@@ -126,30 +121,30 @@ const styles = StyleSheet.create({
   },
   sessionTitle: { fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
   sessionSchedule: { color: colors.muted, fontSize: 13, marginTop: 4, ...rtlText },
-  sessionMembersRow: { flexDirection: row, alignItems: "center", gap: 6, marginTop: 8 },
-  sessionMembersText: { color: colors.placeholder, fontSize: 13, ...rtlText },
-  statsRow: { flexDirection: row, gap: 10, marginBottom: 14 },
+  statsRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
   alertsCard: {
     backgroundColor: colors.card,
     borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
     padding: 16,
     marginBottom: 14,
   },
   alertsTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
+    fontFamily: fonts.regular,
+    fontSize: 16,
     color: colors.text,
-    marginBottom: 10,
-    ...rtlTextBold,
+    ...rtlText,
   },
-  alertsEmpty: { color: colors.muted, fontSize: 13, ...rtlText },
-  alertItem: {
+  alertRow: {
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: "#FFFAFA",
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    padding: 10,
-    marginBottom: 8,
-    backgroundColor: colors.bg,
+    borderColor: "#FFF5F5",
+    borderRadius: 14,
+    overflow: "hidden",
   },
-  alertText: { color: "#E53935", fontSize: 14, lineHeight: 22, ...rtlText },
+  alertText: { color: "#000", fontSize: 14, lineHeight: 22, ...rtlText },
 });
