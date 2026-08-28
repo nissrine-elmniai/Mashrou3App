@@ -32,6 +32,7 @@ import {
 } from "../../components/ui";
 import { ProgressRing } from "../../components/ProgressRing";
 import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import ChangePasswordModal from "../../components/ChangePasswordModal";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -57,6 +58,7 @@ export default function MemberDashboardScreen({ navigation }) {
   const [adminAlerts, setAdminAlerts] = useState([]);
   const [selectedTimes, setSelectedTimes] = useState([]);
   const [summerTimes, setSummerTimes] = useState([]);
+  const [passwordModal, setPasswordModal] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -461,9 +463,14 @@ export default function MemberDashboardScreen({ navigation }) {
               label="تاريخ الميلاد"
               value={currentUser?.birthDate || "—"}
             />
-            <InfoRow label="الجنس" value={currentUser?.gender || "—"} />
             {myGroup ? <InfoRow label="مجموعتي" value={myGroup.name} /> : null}
 
+            <QuickButton
+              color={colors.primary}
+              icon="lock-closed-outline"
+              label="تغيير كلمة المرور"
+              onPress={() => setPasswordModal(true)}
+            />
             <QuickButton
               color={colors.red}
               icon="log-out-outline"
@@ -484,6 +491,12 @@ export default function MemberDashboardScreen({ navigation }) {
           <Ionicons name="chatbubble-ellipses" size={24} color="white" />
         </TouchableOpacity>
       </View>
+
+      <ChangePasswordModal
+        visible={passwordModal}
+        onClose={() => setPasswordModal(false)}
+        bottomInset={Math.max(insets.bottom, 16)}
+      />
     </SafeAreaView>
   );
 }

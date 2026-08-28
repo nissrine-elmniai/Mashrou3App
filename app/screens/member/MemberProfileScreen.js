@@ -8,7 +8,7 @@ import {
   StatusBar,
   Switch,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
@@ -16,6 +16,7 @@ import { ROLE_LABELS, SEASON_TYPES } from "../../constants/roles";
 import { colors, radii, shadows } from "../../constants/theme";
 import { row, arrowBack, rtlText, fonts } from "../../constants/rtl";
 import { EmptyState, StatChip } from "../../components/ui";
+import ChangePasswordModal from "../../components/ChangePasswordModal";
 
 export default function MemberProfileScreen({ navigation }) {
   const { currentUser, logout, seasons, exams, getMemberProgress } = useApp();
@@ -24,6 +25,8 @@ export default function MemberProfileScreen({ navigation }) {
     : "";
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [passwordModal, setPasswordModal] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const activeSeason =
     seasons.find((s) => s.active && s.type === SEASON_TYPES.REGULAR) ||
@@ -125,11 +128,6 @@ export default function MemberProfileScreen({ navigation }) {
               yellow
             />
             <InfoItem
-              label="الجنس"
-              value={currentUser?.gender || "—"}
-              icon="person-outline"
-            />
-            <InfoItem
               label="البريد"
               value={currentUser?.email || "—"}
               icon="mail-outline"
@@ -183,6 +181,12 @@ export default function MemberProfileScreen({ navigation }) {
             </View>
 
             <ActionButton
+              label="تغيير كلمة المرور"
+              color={colors.primary}
+              icon="lock-closed-outline"
+              onPress={() => setPasswordModal(true)}
+            />
+            <ActionButton
               label="تسجيل الخروج"
               color={colors.red}
               icon="log-out-outline"
@@ -191,6 +195,12 @@ export default function MemberProfileScreen({ navigation }) {
           </View>
         </View>
       </ScrollView>
+
+      <ChangePasswordModal
+        visible={passwordModal}
+        onClose={() => setPasswordModal(false)}
+        bottomInset={Math.max(insets.bottom, 16)}
+      />
     </SafeAreaView>
   );
 }
