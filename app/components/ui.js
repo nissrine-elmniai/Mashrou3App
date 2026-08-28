@@ -189,7 +189,14 @@ export function SectionCard({
   );
 }
 
-export function QuickButton({ color = colors.primary, icon, label, onPress }) {
+export function QuickButton({ color = colors.primary, icon, label, onPress, badgeCount }) {
+  const count = Number(badgeCount) || 0;
+  const showBadge = count > 0;
+
+  const iconNode = icon ? (
+    <Ionicons name={icon} size={22} color="white" />
+  ) : null;
+
   return (
     <TouchableOpacity
       style={[styles.quickBtn, { backgroundColor: color }]}
@@ -197,7 +204,18 @@ export function QuickButton({ color = colors.primary, icon, label, onPress }) {
       activeOpacity={0.85}
     >
       <Text style={styles.quickBtnText}>{label}</Text>
-      {icon ? <Ionicons name={icon} size={22} color="white" /> : null}
+      {icon && showBadge ? (
+        <View style={styles.quickBtnIconWrap}>
+          {iconNode}
+          <View style={styles.quickBtnBadge}>
+            <Text style={styles.quickBtnBadgeText}>
+              {count > 9 ? "9+" : count}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        iconNode
+      )}
     </TouchableOpacity>
   );
 }
@@ -510,6 +528,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     gap: 6,
     flexDirection: row,
+  },
+  quickBtnIconWrap: { position: "relative" },
+  quickBtnBadge: {
+    position: "absolute",
+    top: -6,
+    right: -8,
+    backgroundColor: colors.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  quickBtnBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontFamily: fonts.bold,
   },
   quickBtnText: {
     color: "white",

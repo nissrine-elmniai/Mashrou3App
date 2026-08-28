@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { colors, radii } from "../../constants/theme";
@@ -18,6 +19,7 @@ import {
   useSupervisorMembers,
   SUPERVISOR_FETCH_DEGRADED_MESSAGE,
 } from "./hooks/useSupervisorMembers";
+import { getUnacknowledgedAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 
 import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
@@ -44,6 +46,7 @@ export default function SupervisorDashboard({ navigation }) {
 
   const [tab, setTab] = useState("home");
   const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [pendingAlertCount, setPendingAlertCount] = useState(0);
 
   const {
     myGroups,
@@ -91,12 +94,32 @@ export default function SupervisorDashboard({ navigation }) {
   const showDegradedBanner = !!fetchError;
   const degradedMessage = SUPERVISOR_FETCH_DEGRADED_MESSAGE;
 
+  // Compte non-acquitté centralisé (RG9) : absence de alert_acknowledgments.alert_id.
+  const loadPendingAlertCount = useCallback(async () => {
+    const res = await getUnacknowledgedAlerts();
+    if (res.ok) setPendingAlertCount(res.alerts.length);
+  }, []);
+
+  useEffect(() => {
+    loadPendingAlertCount();
+    return subscribeToNewAlerts(() => loadPendingAlertCount());
+  }, [loadPendingAlertCount]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPendingAlertCount();
+    }, [loadPendingAlertCount])
+  );
+
+  const openAlerts = () => navigation.navigate("SupervisorAlerts");
+
   return (
     <SafeAreaView
       style={[styles.container, { paddingBottom: 16 }]}
       edges={["top", "bottom"]}
     >
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+
       {tab === "home" && (
         <View style={styles.headerWrap}>
           <View style={styles.headerCard}>
@@ -107,6 +130,22 @@ export default function SupervisorDashboard({ navigation }) {
             <View style={styles.headerEnd}>
               <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={22} color="white" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.headerIconWrap}
+                onPress={openAlerts}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="تنبيهات الإدارة"
+              >
+                <Ionicons name="notifications-outline" size={22} color="white" />
+                {pendingAlertCount > 0 ? (
+                  <View style={styles.headerBellBadge}>
+                    <Text style={styles.headerBellBadgeText}>
+                      {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                    </Text>
+                  </View>
+                ) : null}
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.profileBtn}
@@ -240,8 +279,28 @@ const styles = StyleSheet.create({
     marginTop: 2,
     flexShrink: 1,
   },
-  headerEnd: { flexDirection: row, alignItems: "center", gap: 8 },
+  headerEnd: { flexDirection: row, alignItems: "center", gap: 8, marginTop: -6 },
   headerBtn: { flexDirection: row, alignItems: "center", gap: 6 },
+  headerIconWrap: { position: "relative", padding: 2 },
+  headerBellBadge: {
+    position: "absolute",
+    top: -4,
+    left: -6,
+    backgroundColor: colors.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  headerBellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontFamily: fonts.bold,
+  },
   profileBtn: { padding: 2 },
 
   bottomBar: {
