@@ -161,12 +161,11 @@ export function StatCard({
 }) {
   return (
     <View style={[styles.statCard, { borderColor }, shadows.card]}>
-      {/* Valeur à gauche, libellé+icône à droite (flux arabe) */}
-      <Text style={[styles.statValue, { color: valueColor }]}>{value}</Text>
-      <View style={styles.statLabelRow}>
-        <Text style={styles.statLabel}>{label}</Text>
+      <View style={styles.statValueColumn}>
+        <Text style={[styles.statValue, { color: valueColor }]}>{value}</Text>
         {icon ? <Ionicons name={icon} size={22} color={iconColor} /> : null}
       </View>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -366,8 +365,11 @@ export function ProgressRing({
 
 /** Barre d'onglets basse interne (icônes lucide passées via tabs[].icon) */
 export function MemberBottomTabBar({ tabs, activeKey, onChange }) {
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, MIN_BOTTOM_GAP);
+
   return (
-    <View style={styles.bottomBar}>
+    <View style={[styles.bottomBar, { paddingBottom: bottomPad }]}>
       {tabs.map((t) => {
         const active = t.key === activeKey;
         const Icon = t.icon;
@@ -516,22 +518,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1.5,
   },
+  statValueColumn: {
+    alignItems: "center",
+    gap: 4,
+    minWidth: 48,
+  },
   statValue: {
     fontSize: 28,
     fontFamily: fonts.bold,
     ...rtlTextBold,
   },
-  statLabelRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
-  },
   statLabel: {
     color: colors.muted,
     fontSize: 14,
     fontFamily: fonts.regular,
-    ...rtlText,
+    flex: 1,
+    writingDirection: "rtl",
+    textAlign: I18nManager.isRTL ? "left" : "right",
   },
 
   sectionCard: {
@@ -688,7 +691,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingTop: 10,
-    paddingBottom: 8,
     ...shadows.card,
   },
   bottomTab: {

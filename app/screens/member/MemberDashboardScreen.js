@@ -216,23 +216,25 @@ export default function MemberDashboardScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.gradientHeader[0]} />
+      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
 
-      <LinearGradient colors={colors.gradientHeader} style={styles.header}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerTextWrap}>
-            <Text style={styles.headerGreeting}>
-              مرحباً، {currentUser?.firstName || ""}
-            </Text>
-            <Text style={styles.headerSubtitle}>
-              متابعة برامجك وحفظك — {fullName}
-            </Text>
+      <View style={styles.headerWrap}>
+        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerGreeting}>
+                مرحباً، {currentUser?.firstName || ""}
+              </Text>
+              <Text style={styles.headerSubtitle}>
+                متابعة برامجك وحفظك — {fullName}
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
+              <Ionicons name="log-out-outline" size={20} color="white" />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={20} color="white" />
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
+        </LinearGradient>
+      </View>
 
       <ScrollView
         style={styles.flex}
@@ -475,7 +477,7 @@ export default function MemberDashboardScreen({ navigation }) {
       <View style={styles.bottomWrap}>
         <MemberBottomTabBar tabs={TABS} activeKey={tab} onChange={setTab} />
         <TouchableOpacity
-          style={styles.fab}
+          style={[styles.fab, { bottom: 70 + Math.max(insets.bottom, 16) }]}
           onPress={openChat}
           activeOpacity={0.85}
         >
@@ -600,9 +602,16 @@ function InfoRow({ label, value }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
 
+  headerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 0,
+  },
   header: {
-    paddingTop: 12,
-    paddingBottom: 26,
+    borderRadius: radii.lg,
+    overflow: "hidden",
+    paddingTop: 14,
+    paddingBottom: 18,
     paddingHorizontal: 16,
   },
   headerRow: {
