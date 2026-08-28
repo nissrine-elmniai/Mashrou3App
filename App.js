@@ -36,27 +36,11 @@ import ActivateAccountScreen from "./app/screens/ActivateAccountScreen";
 import ForgotPasswordScreen from "./app/screens/ForgotPasswordScreen";
 import ResetPasswordScreen from "./app/screens/ResetPasswordScreen";
 
-import MemberDashboardScreen from "./app/screens/member/MemberDashboardScreen";
-import MemberProfileScreen from "./app/screens/member/MemberProfileScreen";
-import ProgrammeDetailsScreen from "./app/screens/member/ProgrammeDetailsScreen";
-import MemberChatInboxScreen from "./app/screens/member/MemberChatInboxScreen";
-
 import SupervisorDashboard from "./app/screens/supervisor/SupervisorDashboard";
 import ChatConversationScreen from "./app/screens/supervisor/ChatConversationScreen";
-
-import AdminDashboard from "./app/screens/admin/AdminDashboard";
-import AdminSeasonsScreen from "./app/screens/admin/AdminSeasonsScreen";
-import AdminSummerSchoolScreen from "./app/screens/admin/AdminSummerSchoolScreen";
-import AdminRegistrationsScreen from "./app/screens/admin/AdminRegistrationsScreen";
-import AdminGroupsScreen from "./app/screens/admin/AdminGroupsScreen";
-import AdminSupervisorsScreen from "./app/screens/admin/AdminSupervisorsScreen";
-import AdminStatsScreen from "./app/screens/admin/AdminStatsScreen";
-import AdminTestsScreen from "./app/screens/admin/AdminTestsScreen";
-import AdminProfileScreen from "./app/screens/admin/AdminProfileScreen";
-import AdminSettingsScreen from "./app/screens/admin/AdminSettingsScreen";
-import AdminMembersScreen from "./app/screens/admin/AdminMembersScreen";
-import AdminNotificationsScreen from "./app/screens/admin/AdminNotificationsScreen";
-import AdminChatScreen from "./app/screens/admin/AdminChatScreen";
+import SupervisorMemberProfileScreen from "./app/screens/supervisor/MemberProfileScreen";
+import SupervisorProfileScreen from "./app/screens/supervisor/SupervisorProfileScreen";
+import SupervisorAlertsScreen from "./app/screens/supervisor/SupervisorAlertsScreen";
 
 const Stack = createStackNavigator();
 
@@ -161,90 +145,107 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
 
+        {/* require() statique — Metro refuse require(path) dynamique */}
         <Stack.Screen
           name="AdminDashboard"
-          component={AdminDashboard}
+          getComponent={() => require("./app/screens/admin/AdminDashboard").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminSeasons"
-          component={AdminSeasonsScreen}
+          getComponent={() => require("./app/screens/admin/AdminSeasonsScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminSummerSchool"
-          component={AdminSummerSchoolScreen}
+          getComponent={() =>
+            require("./app/screens/admin/AdminSummerSchoolScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminRegistrations"
-          component={AdminRegistrationsScreen}
+          getComponent={() =>
+            require("./app/screens/admin/AdminRegistrationsScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminGroups"
-          component={AdminGroupsScreen}
+          getComponent={() => require("./app/screens/admin/AdminGroupsScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminSupervisors"
-          component={AdminSupervisorsScreen}
+          getComponent={() =>
+            require("./app/screens/admin/AdminSupervisorsScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminStats"
-          component={AdminStatsScreen}
+          getComponent={() => require("./app/screens/admin/AdminStatsScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminTests"
-          component={AdminTestsScreen}
+          getComponent={() => require("./app/screens/admin/AdminTestsScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminProfile"
-          component={AdminProfileScreen}
+          getComponent={() => require("./app/screens/admin/AdminProfileScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminSettings"
-          component={AdminSettingsScreen}
+          getComponent={() => require("./app/screens/admin/AdminSettingsScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminMembers"
-          component={AdminMembersScreen}
+          getComponent={() => require("./app/screens/admin/AdminMembersScreen").default}
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminNotifications"
-          component={AdminNotificationsScreen}
+          getComponent={() =>
+            require("./app/screens/admin/AdminNotificationsScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="AdminChat"
-          component={AdminChatScreen}
+          getComponent={() => require("./app/screens/admin/AdminChatScreen").default}
           options={{ headerShown: false }}
         />
 
         <Stack.Screen
           name="MemberDashboardScreen"
-          component={MemberDashboardScreen}
+          getComponent={() =>
+            require("./app/screens/member/MemberDashboardScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="MemberProfileScreen"
-          component={MemberProfileScreen}
+          getComponent={() =>
+            require("./app/screens/member/MemberProfileScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="ProgrammeDetails"
-          component={ProgrammeDetailsScreen}
+          getComponent={() =>
+            require("./app/screens/member/ProgrammeDetailsScreen").default
+          }
           options={{ headerShown: false }}
         />
         <Stack.Screen
           name="MemberChatInbox"
-          component={MemberChatInboxScreen}
+          getComponent={() =>
+            require("./app/screens/member/MemberChatInboxScreen").default
+          }
           options={{ headerShown: false }}
         />
 
@@ -256,6 +257,21 @@ function RootNavigator() {
         <Stack.Screen
           name="ChatConversation"
           component={ChatConversationScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="MemberProfile"
+          component={SupervisorMemberProfileScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="SupervisorProfile"
+          component={SupervisorProfileScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="SupervisorAlerts"
+          component={SupervisorAlertsScreen}
           options={{ headerShown: false }}
         />
       </Stack.Navigator>

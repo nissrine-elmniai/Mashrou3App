@@ -28,9 +28,9 @@ import {
   SectionCard,
   QuickButton,
   EmptyState,
-  ProgressRing,
   MemberBottomTabBar,
 } from "../../components/ui";
+import { ProgressRing } from "../../components/ProgressRing";
 import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";

@@ -32,6 +32,20 @@ export function userHasRole(user, role) {
   return normalizeRoles(user).includes(role);
 }
 
+/**
+ * Rôle de session pour le routing (Admin > Superviseur > Membre), avec preferredRole
+ * optionnel (ex. écran de connexion dédié).
+ */
+export function resolveSessionRole(user, preferredRole = null) {
+  if (preferredRole && userHasRole(user, preferredRole)) {
+    return preferredRole;
+  }
+  if (userHasRole(user, ROLES.ADMIN)) return ROLES.ADMIN;
+  if (userHasRole(user, ROLES.SUPERVISOR)) return ROLES.SUPERVISOR;
+  if (userHasRole(user, ROLES.MEMBER)) return ROLES.MEMBER;
+  return user?.role || ROLES.MEMBER;
+}
+
 export function withMergedRoles(user, extraRole) {
   const roles = normalizeRoles({
     ...user,

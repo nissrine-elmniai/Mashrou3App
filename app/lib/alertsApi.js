@@ -275,6 +275,55 @@ export async function getVisibleAlerts() {
 }
 
 /**
+ * Alertes visibles avec statut d'acquittement (alert_acknowledgments.alert_id).
+ * @returns { ok, alerts: [{ id, message, audience, createdAt, acknowledged }] }
+ */
+export async function getVisibleAlertsWithAckStatus() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const [visibleRes, acksRes] = await Promise.all([
+      withTimeout(
+        supabase
+          .from("alerts")
+          .select("id, message, title, body, audience, created_at")
+          .order("created_at", { ascending: false })
+          .limit(50),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة التنبيهات"
+      ),
+      withTimeout(
+        supabase.from("alert_acknowledgments").select("alert_id"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الإقرارات"
+      ),
+    ]);
+
+    if (visibleRes.error || acksRes.error) {
+      return {
+        ok: false,
+        error: mapTableError(visibleRes.error || acksRes.error, "alerts"),
+      };
+    }
+
+    const acked = new Set((acksRes.data || []).map((a) => a.alert_id));
+    return {
+      ok: true,
+      alerts: (visibleRes.data || []).map((a) => ({
+        id: a.id,
+        message: a.message || a.body || a.title || "",
+        audience: a.audience,
+        createdAt: a.created_at,
+        acknowledged: acked.has(a.id),
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
  * Realtime : nouvel INSERT sur alerts (filtré par RLS — seuls les destinataires
  * reçoivent l'événement). @returns {() => void}
  */

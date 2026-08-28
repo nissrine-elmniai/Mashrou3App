@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import Svg, { Circle } from "react-native-svg";
 import { colors, radii, shadows } from "../constants/theme";
 import {
   rtlText,
@@ -189,7 +188,14 @@ export function SectionCard({
   );
 }
 
-export function QuickButton({ color = colors.primary, icon, label, onPress }) {
+export function QuickButton({ color = colors.primary, icon, label, onPress, badgeCount }) {
+  const count = Number(badgeCount) || 0;
+  const showBadge = count > 0;
+
+  const iconNode = icon ? (
+    <Ionicons name={icon} size={22} color="white" />
+  ) : null;
+
   return (
     <TouchableOpacity
       style={[styles.quickBtn, { backgroundColor: color }]}
@@ -197,7 +203,18 @@ export function QuickButton({ color = colors.primary, icon, label, onPress }) {
       activeOpacity={0.85}
     >
       <Text style={styles.quickBtnText}>{label}</Text>
-      {icon ? <Ionicons name={icon} size={22} color="white" /> : null}
+      {icon && showBadge ? (
+        <View style={styles.quickBtnIconWrap}>
+          {iconNode}
+          <View style={styles.quickBtnBadge}>
+            <Text style={styles.quickBtnBadgeText}>
+              {count > 9 ? "9+" : count}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        iconNode
+      )}
     </TouchableOpacity>
   );
 }
@@ -307,59 +324,6 @@ export function StatRow({ label, value, color = colors.primary }) {
       iconColor={color}
       borderColor={colors.borderGreen}
     />
-  );
-}
-
-/** Anneau de progression circulaire (react-native-svg), % centré par défaut */
-export function ProgressRing({
-  size = 120,
-  stroke = 10,
-  progress = 0,
-  color = colors.primary,
-  trackColor = colors.border,
-  children,
-}) {
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const clamped = Math.max(0, Math.min(100, Number(progress) || 0));
-  const offset = circumference - (clamped / 100) * circumference;
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      <Svg width={size} height={size}>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={trackColor}
-          strokeWidth={stroke}
-          fill="none"
-        />
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={color}
-          strokeWidth={stroke}
-          fill="none"
-          strokeLinecap="round"
-          strokeDasharray={`${circumference}`}
-          strokeDashoffset={offset}
-          rotation="-90"
-          origin={`${size / 2}, ${size / 2}`}
-        />
-      </Svg>
-      <View style={styles.ringCenter}>
-        {children || <Text style={[styles.ringText, { color }]}>{clamped}%</Text>}
-      </View>
-    </View>
   );
 }
 
@@ -568,6 +532,24 @@ const styles = StyleSheet.create({
     gap: 6,
     flexDirection: row,
   },
+  quickBtnIconWrap: { position: "relative" },
+  quickBtnBadge: {
+    position: "absolute",
+    top: -6,
+    right: -8,
+    backgroundColor: colors.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  quickBtnBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontFamily: fonts.bold,
+  },
   quickBtnText: {
     color: "white",
     fontFamily: fonts.bold,
@@ -669,18 +651,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontFamily: fonts.regular,
     writingDirection: "rtl",
-  },
-
-  ringCenter: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  ringText: {
-    fontSize: 24,
-    fontFamily: fonts.bold,
-    ...rtlText,
-    textAlign: "center",
   },
 
   bottomBar: {

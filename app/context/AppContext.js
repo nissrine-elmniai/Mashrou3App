@@ -15,6 +15,7 @@ import {
   REGISTRATION_STATUS,
   ROLES,
   normalizeRoles,
+  resolveSessionRole,
   userHasRole,
   withMergedRoles,
 } from "../constants/roles";
@@ -29,6 +30,7 @@ import {
   getCurrentAuthSession,
   fetchProfile,
   profileToAppUser,
+  normalizeAppRole,
 } from "../lib/auth";
 import {
   upsertMemberApplication,
@@ -66,6 +68,36 @@ function normalizeName(value) {
     .trim()
     .replace(/\s+/g, " ")
     .toLowerCase();
+}
+
+/** Union des rôles Supabase (profiles.role) et mock locaux pour le routing multi-rôle. */
+function mergeRolesForRouting(profile, local) {
+  const merged = new Set();
+  const profileRole = normalizeAppRole(profile?.role);
+  if (profileRole) merged.add(profileRole);
+  if (local) {
+    normalizeRoles(local).forEach((r) => {
+      const n = normalizeAppRole(r);
+      if (n) merged.add(n);
+    });
+  }
+  if (merged.size === 0) merged.add(ROLES.MEMBER);
+  return [...merged];
+}
+
+/** Applique le rôle de routing (session) sur un utilisateur issu du profil Supabase. */
+function applySupabaseSessionRole(appUser, profile, local, preferredRole) {
+  const profileRole = normalizeAppRole(profile?.role) || ROLES.MEMBER;
+  const rolesForRouting = mergeRolesForRouting(profile, local);
+  const sessionRole = resolveSessionRole(
+    { ...appUser, roles: rolesForRouting },
+    preferredRole
+  );
+  return {
+    ...appUser,
+    role: sessionRole,
+    roles: rolesForRouting,
+  };
 }
 
 export function AppProvider({ children }) {
@@ -114,7 +146,18 @@ export function AppProvider({ children }) {
             const local =
               loadedUsers.find((u) => u.email?.toLowerCase() === mail) ||
               loadedUsers.find((u) => u.authId === profileResult.profile.id);
-            restored = profileToAppUser(profileResult.profile, local || {});
+            const restoredBase = profileToAppUser(
+              profileResult.profile,
+              local || {}
+            );
+            if (local) restoredBase.id = local.id;
+            restored = applySupabaseSessionRole(
+              restoredBase,
+              profileResult.profile,
+              local,
+              null
+            );
+            setSupabaseSession(sessionResult.session);
           }
         }
       } else if (saved?.currentUserId) {
@@ -157,12 +200,14 @@ export function AppProvider({ children }) {
     currentUser,
   ]);
 
-  // garder currentUser synchronisé si le profil change
+  // Synchroniser les champs mock (nom, groupe…) sans écraser le rôle de routing
+  // fixé par Supabase — bug : setCurrentUser(fresh) remettait role='member' quand
+  // profiles.role était erroné mais la fiche seed locale avait le bon rôle.
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || supabaseSession?.user?.id) return;
     const fresh = users.find((u) => u.id === currentUser.id);
     if (fresh && fresh !== currentUser) setCurrentUser(fresh);
-  }, [users]);
+  }, [users, currentUser, supabaseSession]);
 
   const login = async (email, password, options = {}) => {
     const mail = String(email || "").trim().toLowerCase();
@@ -171,6 +216,7 @@ export function AppProvider({ children }) {
     if (isSupabaseConfigured()) {
       const authResult = await signInWithEmailPassword(mail, password);
       if (!authResult.ok) return authResult;
+      setSupabaseSession(authResult.session);
 
       const profile = authResult.profile;
       let local = users.find(
@@ -183,19 +229,21 @@ export function AppProvider({ children }) {
       // Conserver l'id local pour les groupes / progress
       if (local) {
         appUser.id = local.id;
-        appUser.roles = normalizeRoles({
-          ...local,
-          role: profile.role || local.role,
-        });
-        appUser.role = profile.role || local.role;
+        const rolesForRouting = mergeRolesForRouting(profile, local);
+        const sessionRole = resolveSessionRole(
+          { ...appUser, roles: rolesForRouting },
+          preferredRole
+        );
+        appUser.roles = rolesForRouting;
+        appUser.role = sessionRole;
         setUsers((prev) =>
           prev.map((u) =>
             u.id === local.id
               ? {
                   ...u,
                   authId: profile.id,
-                  role: appUser.role,
-                  roles: appUser.roles,
+                  role: sessionRole,
+                  roles: rolesForRouting,
                   accountStatus: ACCOUNT_STATUS.ACTIVE,
                   password: null,
                   firstName: appUser.firstName || u.firstName,
@@ -206,34 +254,35 @@ export function AppProvider({ children }) {
         );
       } else {
         // Premier login Auth sans fiche locale (ex. admin créé dans Supabase)
+        const rolesForRouting = mergeRolesForRouting(profile, null);
+        const sessionRole = resolveSessionRole(
+          { ...appUser, roles: rolesForRouting },
+          preferredRole
+        );
         const created = {
           ...appUser,
           id: uid("u"),
-          roles: normalizeRoles(appUser),
+          role: sessionRole,
+          roles: rolesForRouting,
         };
         setUsers((prev) => [...prev, created]);
         local = created;
         appUser.id = created.id;
-        appUser.roles = created.roles;
+        appUser.roles = rolesForRouting;
+        appUser.role = sessionRole;
       }
 
-      let sessionRole = appUser.role;
-      if (preferredRole && userHasRole(appUser, preferredRole)) {
-        sessionRole = preferredRole;
-      } else if (userHasRole(appUser, ROLES.ADMIN)) {
-        sessionRole = ROLES.ADMIN;
-      } else if (userHasRole(appUser, ROLES.SUPERVISOR)) {
-        sessionRole = ROLES.SUPERVISOR;
-      } else if (userHasRole(appUser, ROLES.MEMBER)) {
-        sessionRole = ROLES.MEMBER;
-      }
-
-      const sessionUser = { ...appUser, role: sessionRole };
+      const sessionUser = applySupabaseSessionRole(
+        appUser,
+        profile,
+        local,
+        preferredRole
+      );
       setCurrentUser(sessionUser);
       return {
         ok: true,
         user: sessionUser,
-        dashboard: DASHBOARD_BY_ROLE[sessionRole],
+        dashboard: DASHBOARD_BY_ROLE[sessionUser.role],
       };
     }
 
@@ -251,16 +300,7 @@ export function AppProvider({ children }) {
     if (user.password !== password) {
       return { ok: false, error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" };
     }
-    let sessionRole = user.role;
-    if (preferredRole && userHasRole(user, preferredRole)) {
-      sessionRole = preferredRole;
-    } else if (userHasRole(user, ROLES.ADMIN)) {
-      sessionRole = ROLES.ADMIN;
-    } else if (userHasRole(user, ROLES.SUPERVISOR)) {
-      sessionRole = ROLES.SUPERVISOR;
-    } else if (userHasRole(user, ROLES.MEMBER)) {
-      sessionRole = ROLES.MEMBER;
-    }
+    const sessionRole = resolveSessionRole(user, preferredRole);
     const sessionUser = {
       ...user,
       role: sessionRole,

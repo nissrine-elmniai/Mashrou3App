@@ -65,3 +65,20 @@ export function deriveLevel(pct) {
 export function initials(name = "") {
   return name.trim().charAt(0) || "؟";
 }
+
+/** Libellé arabe du nombre de membres (carte séance superviseur). */
+export function formatMemberCount(count) {
+  const n = Number(count) || 0;
+  if (n === 0) return "لا يوجد اعضاء";
+  if (n === 1) return "عضو واحد";
+  if (n === 2) return "عضوين";
+  return `${n} اعضاء`;
+}
+
+/** Libellé bannière : alertes admin non acquittées (RG9). */
+export function formatNewAlertsBannerLabel(count) {
+  const n = Number(count) || 0;
+  if (n === 1) return "لديك تنبيه واحد جديد";
+  if (n === 2) return "لديك تنبيهان جديدان";
+  return `لديك ${n} تنبيهات جديدة`;
+}
