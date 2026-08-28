@@ -74,6 +74,14 @@ export default function SupervisorHomeScreen({
         <EmptyState text="لا توجد مجموعة مسندة إليك بعد — انتظر تعيين الإدارة" />
       )}
 
+    
+
+      <View style={styles.statsRow}>
+        <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
+        <MiniStat value={`${attendancePct}%`} label="نسبة الحضور" color={colors.primary} />
+        <MiniStat value={`${avgProgress}%`} label="متوسط التقدم" color={colors.primary} />
+      </View>
+
       <View style={[styles.alertsCard, shadows.card]}>
         <Text style={styles.alertsTitle}>تنبيهات الإدارة</Text>
         {adminAlerts.length === 0 ? (
@@ -85,12 +93,6 @@ export default function SupervisorHomeScreen({
             </View>
           ))
         )}
-      </View>
-
-      <View style={styles.statsRow}>
-        <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
-        <MiniStat value={`${attendancePct}%`} label="نسبة الحضور" color={colors.primary} />
-        <MiniStat value={`${avgProgress}%`} label="متوسط التقدم" color={colors.primary} />
       </View>
 
       <QuickButton
