@@ -166,6 +166,46 @@ function pickProfileText(value) {
   return text || null;
 }
 
+/** Normalise genre (CdC M/F ou arabe) pour affichage UI. */
+export function formatGenderLabel(raw) {
+  const text = pickProfileText(raw);
+  if (!text) return null;
+  const key = text.toLowerCase();
+  if (key === "m" || key === "male" || key === "homme" || text === "ذكر") return "ذكر";
+  if (
+    key === "f" ||
+    key === "female" ||
+    key === "femme" ||
+    text === "أنثى" ||
+    text === "انثى"
+  ) {
+    return "أنثى";
+  }
+  return text;
+}
+
+async function fetchMembreGenre(membreId) {
+  const { data, error } = await withTimeout(
+    supabase.from("membres").select("genre").eq("user_id", membreId).maybeSingle(),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة جنس العضو"
+  );
+
+  if (error) {
+    const msg = error?.message || "";
+    if (
+      /relation.*does not exist|Could not find the table/i.test(msg) ||
+      /permission|row-level security|RLS|42501|violates row/i.test(msg)
+    ) {
+      return null;
+    }
+    logSupabaseError("fetchMembreGenre", error);
+    return null;
+  }
+
+  return formatGenderLabel(data?.genre);
+}
+
 function mergeContactFields(primary, fallback) {
   return {
     telephone:
@@ -244,6 +284,7 @@ export async function getMemberProfileFields(membreId) {
 
     const appsByUser = await fetchLatestMemberApplications([membreId]);
     const merged = mergeContactFields(profileData, appsByUser[membreId]);
+    const genre = await fetchMembreGenre(membreId);
 
     return {
       ok: true,
@@ -251,7 +292,119 @@ export async function getMemberProfileFields(membreId) {
       ecole: merged.ecole,
       niveau: merged.niveau,
       quantiteHifz: merged.quantiteHifz,
+      genre,
     };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+function buildEditableProfilePayload(fields = {}) {
+  const payload = {};
+  if (fields.phone !== undefined) {
+    payload.phone = pickProfileText(fields.phone);
+  }
+  if (fields.school !== undefined) {
+    payload.school = pickProfileText(fields.school);
+  }
+  if (fields.level !== undefined) {
+    payload.level = pickProfileText(fields.level);
+  }
+  if (fields.hifzAmount !== undefined) {
+    payload.hifz_amount = pickProfileText(fields.hifzAmount);
+  }
+  return payload;
+}
+
+/**
+ * Met à jour les champs contact/inscription d'un membre (profiles uniquement).
+ * Colonnes autorisées : phone, school, level, hifz_amount — jamais identité.
+ * Sécurité serveur : policy profiles_update_superviseur (migration 0026).
+ */
+export async function updateMemberInfo(memberId, fields = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!memberId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+
+  const payload = buildEditableProfilePayload(fields);
+  if (Object.keys(payload).length === 0) {
+    return { ok: false, error: "لا توجد بيانات للتحديث" };
+  }
+
+  payload.updated_at = new Date().toISOString();
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("profiles")
+        .update(payload)
+        .eq("id", memberId)
+        .select("phone, school, level, hifz_amount")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "تحديث ملف العضو"
+    );
+
+    if (error) {
+      logSupabaseError("updateMemberInfo", error);
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+
+    return {
+      ok: true,
+      telephone: pickProfileText(data?.phone),
+      ecole: pickProfileText(data?.school),
+      niveau: pickProfileText(data?.level),
+      quantiteHifz: pickProfileText(data?.hifz_amount),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Retire un membre de sa séance : supprime la ligne inscriptions (RG3).
+ * Ne touche pas profiles, presences ni progression.
+ * Sécurité serveur : inscriptions_delete_superviseur (migration 0027).
+ */
+export async function removeMemberFromSeance(memberId, seanceId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!memberId || !seanceId) {
+    return { ok: false, error: "معرّف العضو أو الحصة مفقود" };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .delete()
+        .eq("membre_id", memberId)
+        .eq("seance_id", seanceId)
+        .eq("statut", "accepte")
+        .select("id")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "إزالة العضو من الحصة"
+    );
+
+    if (error) {
+      logSupabaseError("removeMemberFromSeance", error);
+      return { ok: false, error: mapTableError(error, "inscriptions") };
+    }
+
+    if (!data?.id) {
+      return {
+        ok: false,
+        error: "لم يتم العثور على تسجيل مقبول لهذا العضو في هذه الحصة",
+      };
+    }
+
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
