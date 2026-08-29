@@ -2,6 +2,41 @@ import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
+/** Valeurs enum Postgres jour_semaine (semaine commençant le samedi). */
+export const JOUR_SEMAINE_VALUES = [
+  "السبت",
+  "الأحد",
+  "الاثنين",
+  "الثلاثاء",
+  "الأربعاء",
+  "الخميس",
+  "الجمعة",
+];
+
+const JOUR_SEMAINE_INDEX = Object.fromEntries(
+  JOUR_SEMAINE_VALUES.map((jour, index) => [jour, index])
+);
+
+/** Compare deux jours enum pour tri logique (السبت → الجمعة), pas alphabétique. */
+export function compareJourSemaine(a, b) {
+  const ia = JOUR_SEMAINE_INDEX[a] ?? 99;
+  const ib = JOUR_SEMAINE_INDEX[b] ?? 99;
+  return ia - ib;
+}
+
+/** Tri stable par jour de semaine puis par nom de séance. */
+export function sortSeancesByJour(seances = []) {
+  return [...seances].sort((a, b) => {
+    const byJour = compareJourSemaine(a?.jour, b?.jour);
+    if (byJour !== 0) return byJour;
+    return String(a?.nom || "").localeCompare(String(b?.nom || ""), "ar");
+  });
+}
+
+function isValidJourSemaine(jour) {
+  return JOUR_SEMAINE_VALUES.includes(jour);
+}
+
 /** UUID v4 de profile — toute autre valeur (ex. "admin") est refusée. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -98,6 +133,9 @@ export async function createSeance({
   if (superviseurId && !UUID_RE.test(superviseurId)) {
     return { ok: false, error: "المشرف المحدد غير صالح" };
   }
+  if (jour && !isValidJourSemaine(jour)) {
+    return { ok: false, error: "يوم الحصة غير صالح" };
+  }
 
   const row = {
     nom: cleanNom,
@@ -147,6 +185,9 @@ export async function updateSeance({ seanceId, patch }) {
     if (!UUID_RE.test(clean.superviseur_id)) {
       return { ok: false, error: "المشرف المحدد غير صالح" };
     }
+  }
+  if (clean.jour !== undefined && clean.jour !== null && !isValidJourSemaine(clean.jour)) {
+    return { ok: false, error: "يوم الحصة غير صالح" };
   }
 
   try {
