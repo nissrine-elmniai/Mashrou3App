@@ -20,6 +20,9 @@ function mapTableError(error, tableLabel) {
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }
+  if (/column.*does not exist/i.test(msg)) {
+    return msg;
+  }
   if (/permission|row-level security|RLS|42501|violates row/i.test(msg)) {
     return "لا صلاحية كافية لهذه العملية";
   }
@@ -27,6 +30,27 @@ function mapTableError(error, tableLabel) {
     return "سجل مكرر — هذه العملية مسجلة مسبقاً";
   }
   return mapSupabaseAuthError(error);
+}
+
+/** Tri sans created_at (absent sur certaines bases CdC distantes). */
+function applyProgressionOrder(query) {
+  return query.order("date_saisie", { ascending: false });
+}
+
+async function fetchProgressionOrdered(buildQuery, label) {
+  let { data, error } = await withTimeout(
+    applyProgressionOrder(buildQuery()),
+    SUPABASE_TIMEOUT_MS,
+    label
+  );
+  if (error && /column.*date_saisie.*does not exist/i.test(error?.message || "")) {
+    ({ data, error } = await withTimeout(
+      buildQuery().order("date", { ascending: false }),
+      SUPABASE_TIMEOUT_MS,
+      label
+    ));
+  }
+  return { data, error };
 }
 
 /** Id du membre connecté via la session Supabase, ou null. */
@@ -49,14 +73,8 @@ export async function getMyProgress() {
   }
 
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("progression")
-        .select("*")
-        .eq("membre_id", userId)
-        .order("date_saisie", { ascending: false })
-        .order("created_at", { ascending: false }),
-      SUPABASE_TIMEOUT_MS,
+    const { data, error } = await fetchProgressionOrdered(
+      () => supabase.from("progression").select("*").eq("membre_id", userId),
       "قراءة التقدم"
     );
     if (error) {
@@ -148,20 +166,115 @@ export async function getSeanceMemberProgress(seanceId) {
       return { ok: true, entries: [] };
     }
 
-    const { data, error } = await withTimeout(
-      supabase
-        .from("progression")
-        .select("*, membre:profiles!progression_membre_id_fkey(first_name, last_name, email)")
-        .in("membre_id", membreIds)
-        .order("date_saisie", { ascending: false })
-        .order("created_at", { ascending: false }),
-      SUPABASE_TIMEOUT_MS,
+    const { data, error } = await fetchProgressionOrdered(
+      () =>
+        supabase
+          .from("progression")
+          .select("*, membre:profiles!progression_membre_id_fkey(first_name, last_name, email)")
+          .in("membre_id", membreIds),
       "قراءة التقدم"
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "progression") };
     }
     return { ok: true, entries: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/** Total des ثمن (8 × 60 حزب) pour le % global du Coran. */
+export const PROGRESS_TOTAL_TUMUN = 480;
+
+/**
+ * Calcule le % global et les indicateurs depuis une ligne progression (juze/tumun).
+ * Formule : (nb_hizb_completes × 8 + tumun_courant) / 480
+ * — nb_hizb_completes = juze − 1 (جزء كامل محفوظ قبل الجزء الحالي)
+ */
+export function computeProgressMetrics(row) {
+  if (!row?.juze) {
+    return null;
+  }
+  const juze = Number(row.juze);
+  const tumunCourant = row.tumun != null && row.tumun !== "" ? Number(row.tumun) : 0;
+  const nbHizbCompletes = Math.max(0, juze - 1);
+  const tumunTotal = nbHizbCompletes * 8 + tumunCourant;
+  const globalPct = Math.min(
+    100,
+    Math.round((tumunTotal / PROGRESS_TOTAL_TUMUN) * 100)
+  );
+  return {
+    juzeCourant: juze,
+    tumunCourant: row.tumun != null && row.tumun !== "" ? Number(row.tumun) : null,
+    nbHizbCompletes,
+    globalPct,
+    dateSaisie: row.date_saisie || null,
+  };
+}
+
+/**
+ * Dernière saisie de progression d'un membre (superviseur / admin via RLS).
+ * @returns {{ ok, hasData?, entry?, metrics?, error? }}
+ */
+export async function getMemberProgressionSummary(membreId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!membreId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+
+  try {
+    const { data, error } = await fetchProgressionOrdered(
+      () => supabase.from("progression").select("*").eq("membre_id", membreId).limit(1),
+      "قراءة تقدم العضو"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "progression") };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      return { ok: true, hasData: false };
+    }
+    const metrics = computeProgressMetrics(row);
+    return { ok: true, hasData: true, entry: row, metrics };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Objectif de saison (hifz_amount / level depuis member_applications).
+ * Pas de table objectifs — retourne null si absent ou sans permission RLS.
+ */
+export async function getMemberSeasonObjectif(membreId, saisonId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!membreId || !saisonId) {
+    return { ok: true, objectif: null };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("hifz_amount, level")
+        .eq("user_id", membreId)
+        .eq("season_id", saisonId)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة هدف العضو"
+    );
+    if (error) {
+      const msg = error?.message || "";
+      if (/permission|row-level security|RLS|42501/i.test(msg)) {
+        return { ok: true, objectif: null };
+      }
+      return { ok: false, error: mapTableError(error, "member_applications") };
+    }
+    const objectif = data?.hifz_amount || data?.level || null;
+    return { ok: true, objectif };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -177,13 +290,11 @@ export async function getAllProgressionAdmin() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("progression")
-        .select("*, membre:profiles!progression_membre_id_fkey(first_name, last_name, email)")
-        .order("date_saisie", { ascending: false })
-        .order("created_at", { ascending: false }),
-      SUPABASE_TIMEOUT_MS,
+    const { data, error } = await fetchProgressionOrdered(
+      () =>
+        supabase
+          .from("progression")
+          .select("*, membre:profiles!progression_membre_id_fkey(first_name, last_name, email)"),
       "قراءة التقدم الكلي"
     );
     if (error) {

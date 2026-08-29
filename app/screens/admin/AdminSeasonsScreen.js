@@ -24,6 +24,8 @@ import {
   updateSeance,
   archiveSeance,
   getSupervisorProfiles,
+  JOUR_SEMAINE_VALUES,
+  sortSeancesByJour,
 } from "../../lib/seancesApi";
 
 const palette = {
@@ -42,6 +44,7 @@ const palette = {
 const EMPTY_FORM = {
   nom: "",
   superviseurId: null,
+  jour: null,
 };
 
 export default function AdminSeasonsScreen({ navigation }) {
@@ -71,7 +74,7 @@ export default function AdminSeasonsScreen({ navigation }) {
       getAllSeances(),
       getSupervisorProfiles(),
     ]);
-    if (seancesRes.ok) setSeances(seancesRes.seances);
+    if (seancesRes.ok) setSeances(sortSeancesByJour(seancesRes.seances));
     if (supervisorsRes.ok) setSupervisors(supervisorsRes.supervisors);
     setLoading(false);
   }, []);
@@ -109,6 +112,7 @@ export default function AdminSeasonsScreen({ navigation }) {
     setForm({
       nom: seance.nom || "",
       superviseurId: seance.superviseur_id || null,
+      jour: JOUR_SEMAINE_VALUES.includes(seance.jour) ? seance.jour : null,
     });
     setModalVisible(true);
   };
@@ -123,6 +127,10 @@ export default function AdminSeasonsScreen({ navigation }) {
       Alert.alert("تنبيه", "اختر مشرفاً للحصة");
       return;
     }
+    if (!form.jour) {
+      Alert.alert("تنبيه", "اختر يوم الحصة");
+      return;
+    }
     setSaving(true);
     let result;
     if (editingId) {
@@ -131,12 +139,14 @@ export default function AdminSeasonsScreen({ navigation }) {
         patch: {
           nom,
           superviseur_id: form.superviseurId,
+          jour: form.jour,
         },
       });
     } else {
       result = await createSeance({
         nom,
         superviseurId: form.superviseurId,
+        jour: form.jour,
       });
     }
     setSaving(false);
@@ -286,6 +296,9 @@ export default function AdminSeasonsScreen({ navigation }) {
                 {supName ? (
                   <Text style={styles.cardSup}>المشرف: {supName}</Text>
                 ) : null}
+                {seance.jour ? (
+                  <Text style={styles.cardSup}>اليوم: {seance.jour}</Text>
+                ) : null}
 
                 <View style={styles.badgesRow}>
                   <View style={styles.badgeMember}>
@@ -359,6 +372,34 @@ export default function AdminSeasonsScreen({ navigation }) {
               onChangeText={(v) => setField("nom", v)}
               textAlign={textAlignStart}
             />
+
+            <Text style={styles.modalLabel}>يوم الحصة</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.jourChipsRow}
+            >
+              {JOUR_SEMAINE_VALUES.map((jour) => {
+                const active = form.jour === jour;
+                return (
+                  <TouchableOpacity
+                    key={jour}
+                    style={[styles.jourChip, active && styles.jourChipActive]}
+                    onPress={() => setField("jour", jour)}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={[
+                        styles.jourChipText,
+                        active && styles.jourChipTextActive,
+                      ]}
+                    >
+                      {jour}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
 
             <Text style={styles.modalLabel}>المشرف</Text>
             <View style={styles.supervisorChips}>
@@ -634,6 +675,32 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     marginBottom: 6,
     ...rtlText,
+  },
+  jourChipsRow: {
+    flexDirection: row,
+    gap: 8,
+    paddingBottom: 10,
+  },
+  jourChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: palette.background,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  jourChipActive: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
+  },
+  jourChipText: {
+    fontSize: 13,
+    color: palette.textSecondary,
+    ...rtlText,
+  },
+  jourChipTextActive: {
+    color: "#fff",
+    fontWeight: "600",
   },
   supervisorChips: {
     flexDirection: row,
