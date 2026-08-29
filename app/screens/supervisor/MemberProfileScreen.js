@@ -421,7 +421,7 @@ export default function MemberProfileScreen({ navigation, route }) {
             {removingFromSeance ? (
               <ActivityIndicator color="white" size="small" />
             ) : (
-              <Ionicons name="trash-outline" size={22} color="#FCA5A5" />
+              <Ionicons name="trash-outline" size={22} color="white" />
             )}
           </TouchableOpacity>
         ) : (
