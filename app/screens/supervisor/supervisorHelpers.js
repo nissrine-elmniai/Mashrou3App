@@ -40,6 +40,67 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10).replace(/-/g, "/");
 }
 
+const FRENCH_WEEKDAY_INDEX = {
+  dimanche: 0,
+  sunday: 0,
+  lundi: 1,
+  monday: 1,
+  mardi: 2,
+  tuesday: 2,
+  mercredi: 3,
+  wednesday: 3,
+  jeudi: 4,
+  thursday: 4,
+  vendredi: 5,
+  friday: 5,
+  samedi: 6,
+  saturday: 6,
+};
+
+/** Mappe seances.jour (arabe / français / anglais) vers index JS getDay() (0 = dimanche). */
+export function parseSeanceWeekday(jourText) {
+  const raw = String(jourText || "").trim();
+  if (!raw) return null;
+
+  for (let i = 0; i < ARABIC_WEEKDAYS_SHORT.length; i += 1) {
+    const label = ARABIC_WEEKDAYS_SHORT[i];
+    if (raw === label || raw.includes(label)) return i;
+  }
+
+  const normalized = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return FRENCH_WEEKDAY_INDEX[normalized] ?? null;
+}
+
+function formatDateSlash(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}/${m}/${d}`;
+}
+
+/**
+ * Date de la séance dans la semaine calendaire courante + indicateur si déjà passée.
+ * @returns {{ sessionDate: string|null, hasOccurred: boolean }}
+ */
+export function getCurrentWeekSessionDate(jourText, refDate = new Date()) {
+  const weekday = parseSeanceWeekday(jourText);
+  if (weekday == null) {
+    return { sessionDate: null, hasOccurred: false };
+  }
+
+  const ref = new Date(refDate);
+  ref.setHours(0, 0, 0, 0);
+  const session = new Date(ref);
+  session.setDate(ref.getDate() + (weekday - ref.getDay()));
+
+  const sessionDate = formatDateSlash(session);
+  const todayStr = formatDateSlash(ref);
+  return {
+    sessionDate,
+    hasOccurred: todayStr >= sessionDate,
+  };
+}
+
 export function buildDateChips() {
   const chips = [];
   const base = new Date();

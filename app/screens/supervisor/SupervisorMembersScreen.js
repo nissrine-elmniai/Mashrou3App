@@ -24,15 +24,20 @@ export default function SupervisorMembersScreen({ membersWithStatus = [] }) {
 
   const openProfile = (m) => {
     navigation.navigate("MemberProfile", {
+      memberId: m.user.id,
+      seanceId: m.group?.id,
+      saisonId: m.group?.seasonId,
       firstName: m.user.firstName,
       lastName: m.user.lastName,
       email: m.user.email,
       phone: m.user.phone,
+      school: m.user.school,
+      level: m.user.level,
+      hifzAmount: m.user.hifzAmount,
       birthDate: m.user.birthDate,
       gender: m.user.gender,
       groupName: m.group?.name,
       groupSchedule: m.group?.schedule,
-      registrationStatus: m.registrationStatus,
       registrationDate: m.registrationDate,
     });
   };
