@@ -1,6 +1,5 @@
 /**
- * Fiche membre superviseur — données Supabase réelles.
- * Champs éditables par le superviseur : phone, school, level, hifz_amount (profiles).
+ * Fiche membre superviseur — données Supabase réelles (lecture seule sur les infos contact).
  *
  * Décisions techniques actées (ne pas migrer vers le schéma CdC pour ces points) :
  * 1. Identité : profiles (legacy) via inscriptions → profiles FK, pas users+membres/superviseurs.
@@ -19,20 +18,19 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  TextInput,
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
+import { rtlText, rtlTextBold, fonts, arrowBack, row } from "../../constants/rtl";
 import {
   getMemberProgressionSummary,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { getMemberProfileFields, updateMemberInfo, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
+import { getMemberProfileFields, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
 import { initials, deriveLevel, STATUS_COLORS } from "./supervisorHelpers";
 
 const PRESENCE_LABELS = {
@@ -50,27 +48,6 @@ function ProfileRow({ icon, label, value }) {
       <View style={styles.rowTextWrap}>
         <Text style={styles.rowLabel}>{label}</Text>
         <Text style={styles.rowValue}>{value}</Text>
-      </View>
-    </View>
-  );
-}
-
-function ProfileEditRow({ icon, label, value, onChangeText, placeholder }) {
-  return (
-    <View style={styles.row}>
-      <View style={styles.rowIcon}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
-      </View>
-      <View style={styles.rowTextWrap}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <TextInput
-          style={styles.rowInput}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder || label}
-          placeholderTextColor={colors.placeholder}
-          textAlign={textAlignStart}
-        />
       </View>
     </View>
   );
@@ -227,14 +204,6 @@ export default function MemberProfileScreen({ navigation, route }) {
     hifzAmount: hifzAmount || null,
     gender: formatGenderLabel(gender) || null,
   });
-  const [isEditingInfo, setIsEditingInfo] = useState(false);
-  const [editDraft, setEditDraft] = useState({
-    phone: "",
-    school: "",
-    level: "",
-    hifzAmount: "",
-  });
-  const [savingInfo, setSavingInfo] = useState(false);
   const [removingFromSeance, setRemovingFromSeance] = useState(false);
 
   const confirmRemoveFromSeance = () => {
@@ -261,44 +230,6 @@ export default function MemberProfileScreen({ navigation, route }) {
     Alert.alert("تم", "تم إزالة العضو من الحصة بنجاح", [
       { text: "حسناً", onPress: () => navigation.goBack() },
     ]);
-  };
-
-  const startEditingInfo = () => {
-    setEditDraft({
-      phone: contactFields.phone || "",
-      school: contactFields.school || "",
-      level: contactFields.level || "",
-      hifzAmount: contactFields.hifzAmount || "",
-    });
-    setIsEditingInfo(true);
-  };
-
-  const cancelEditingInfo = () => {
-    setIsEditingInfo(false);
-    setEditDraft({ phone: "", school: "", level: "", hifzAmount: "" });
-  };
-
-  const handleSaveInfo = async () => {
-    if (!memberId || savingInfo) return;
-    setSavingInfo(true);
-    const res = await updateMemberInfo(memberId, {
-      phone: editDraft.phone,
-      school: editDraft.school,
-      level: editDraft.level,
-      hifzAmount: editDraft.hifzAmount,
-    });
-    setSavingInfo(false);
-    if (!res.ok) {
-      Alert.alert("تنبيه", res.error || "تعذر حفظ البيانات");
-      return;
-    }
-    setContactFields({
-      phone: res.telephone,
-      school: res.ecole,
-      level: res.niveau,
-      hifzAmount: res.quantiteHifz,
-    });
-    setIsEditingInfo(false);
   };
 
   useEffect(() => {
@@ -414,7 +345,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           <TouchableOpacity
             style={styles.headerRemoveBtn}
             onPress={confirmRemoveFromSeance}
-            disabled={removingFromSeance || isEditingInfo}
+            disabled={removingFromSeance}
             activeOpacity={0.7}
             accessibilityLabel="إزالة من الحصة"
           >
@@ -437,87 +368,20 @@ export default function MemberProfileScreen({ navigation, route }) {
         </View>
 
         <View style={[styles.card, shadows.card]}>
-          <View style={styles.cardHeader}>
-            {!isEditingInfo ? (
-              <TouchableOpacity
-                style={styles.editBtn}
-                onPress={startEditingInfo}
-                activeOpacity={0.7}
-                accessibilityLabel="تعديل المعلومات"
-              >
-                <Ionicons name="create-outline" size={20} color={colors.primary} />
-              </TouchableOpacity>
-            ) : null}
-          </View>
           <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
-          {!isEditingInfo ? (
-            <ProfileRow
-              icon="male-female-outline"
-              label="الجنس"
-              value={contactFields.gender || "—"}
-            />
-          ) : null}
-          {isEditingInfo ? (
-            <>
-              <ProfileEditRow
-                icon="call-outline"
-                label="رقم الهاتف"
-                value={editDraft.phone}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, phone: v }))}
-              />
-              <ProfileEditRow
-                icon="school-outline"
-                label="المدرسة"
-                value={editDraft.school}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, school: v }))}
-              />
-              <ProfileEditRow
-                icon="bar-chart-outline"
-                label="المستوى التعليمي"
-                value={editDraft.level}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, level: v }))}
-              />
-              <ProfileEditRow
-                icon="book-outline"
-                label="مقدار الحفظ"
-                value={editDraft.hifzAmount}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, hifzAmount: v }))}
-              />
-              <View style={styles.editActions}>
-                <TouchableOpacity
-                  style={styles.cancelBtn}
-                  onPress={cancelEditingInfo}
-                  disabled={savingInfo}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.cancelBtnText}>إلغاء</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.saveBtn, savingInfo && styles.saveBtnDisabled]}
-                  onPress={handleSaveInfo}
-                  disabled={savingInfo}
-                  activeOpacity={0.7}
-                >
-                  {savingInfo ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    <Text style={styles.saveBtnText}>حفظ</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <>
-              <ProfileRow icon="call-outline" label="رقم الهاتف" value={contactFields.phone} />
-              <ProfileRow icon="school-outline" label="المدرسة" value={contactFields.school} />
-              <ProfileRow
-                icon="bar-chart-outline"
-                label="المستوى التعليمي"
-                value={contactFields.level}
-              />
-              <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
-            </>
-          )}
+          <ProfileRow
+            icon="male-female-outline"
+            label="الجنس"
+            value={contactFields.gender || "—"}
+          />
+          <ProfileRow icon="call-outline" label="رقم الهاتف" value={contactFields.phone} />
+          <ProfileRow icon="school-outline" label="المدرسة" value={contactFields.school} />
+          <ProfileRow
+            icon="bar-chart-outline"
+            label="المستوى التعليمي"
+            value={contactFields.level}
+          />
+          <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
         </View>
 
         <View style={[styles.card, shadows.card, styles.cardSpacing]}>
@@ -589,14 +453,6 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardSpacing: { marginTop: 14 },
-  cardHeader: {
-    flexDirection: row,
-    justifyContent: "flex-end",
-    marginBottom: 4,
-  },
-  editBtn: {
-    padding: 4,
-  },
   cardTitle: {
     fontFamily: fonts.bold,
     fontSize: 16,
@@ -626,55 +482,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semiBold,
     marginTop: 2,
     ...rtlText,
-  },
-  rowInput: {
-    fontSize: 15,
-    color: colors.text,
-    fontFamily: fonts.regular,
-    marginTop: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.bg,
-    ...rtlText,
-  },
-  editActions: {
-    flexDirection: row,
-    justifyContent: "flex-end",
-    gap: 10,
-    marginTop: 12,
-  },
-  cancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: radii.md,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  cancelBtnText: {
-    color: colors.muted,
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    ...rtlText,
-  },
-  saveBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: radii.md,
-    backgroundColor: colors.primary,
-    minWidth: 72,
-    alignItems: "center",
-  },
-  saveBtnDisabled: {
-    opacity: 0.7,
-  },
-  saveBtnText: {
-    color: "white",
-    fontFamily: fonts.bold,
-    fontSize: 14,
-    ...rtlTextBold,
   },
   loader: { marginVertical: 16 },
   emptyText: {
