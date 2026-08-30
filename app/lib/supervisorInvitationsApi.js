@@ -1,4 +1,7 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { ROLES } from "../constants/roles";
+import { authEmailForRole, canonicalEmail } from "./authEmail";
+import { findActiveSeanceByName } from "./seancesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -40,12 +43,104 @@ function uid(prefix) {
   return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 }
 
+function profileIsSupervisor(profile) {
+  if (!profile) return false;
+  if (profile.role === ROLES.SUPERVISOR) return true;
+  return Array.isArray(profile.roles) && profile.roles.includes(ROLES.SUPERVISOR);
+}
+
+async function findSupervisorProfileByInvitationEmail(mail) {
+  const canonical = canonicalEmail(mail);
+  if (!canonical) return null;
+  const supervisorAuthMail = authEmailForRole(canonical, ROLES.SUPERVISOR);
+
+  const queries = [
+    supabase
+      .from("profiles")
+      .select("id, email, canonical_email, role, roles")
+      .eq("canonical_email", canonical),
+    supabase
+      .from("profiles")
+      .select("id, email, canonical_email, role, roles")
+      .eq("email", canonical),
+  ];
+  if (supervisorAuthMail !== canonical) {
+    queries.push(
+      supabase
+        .from("profiles")
+        .select("id, email, canonical_email, role, roles")
+        .eq("email", supervisorAuthMail)
+    );
+  }
+
+  for (const query of queries) {
+    const { data, error } = await withTimeout(
+      query,
+      SUPABASE_TIMEOUT_MS,
+      "البحث عن المشرف"
+    );
+    if (error) continue;
+    const match = (data || []).find(profileIsSupervisor);
+    if (match) return match;
+  }
+  return null;
+}
+
+/**
+ * (Admin) Rattache la séance de l'invitation au profil superviseur (RPC 0032).
+ * @returns {{ ok, error? }}
+ */
+export async function assignSupervisorSeanceFromInvitation(profileId, invitationEmail) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  const mail = canonicalEmail(invitationEmail);
+  if (!profileId || !mail) {
+    return { ok: false, error: "بيانات الربط غير مكتملة" };
+  }
+  try {
+    const { error } = await withTimeout(
+      supabase.rpc("assign_supervisor_seance_from_invitation", {
+        p_profile_id: profileId,
+        p_canonical_email: mail,
+      }),
+      SUPABASE_TIMEOUT_MS,
+      "ربط الحصة بالمشرف"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "seances") };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Tente de rattacher les séances pour tous les superviseurs existants.
+ * @returns {{ ok }}
+ */
+export async function syncSupervisorSeanceLinks(supervisors = []) {
+  if (!isSupabaseConfigured() || !supervisors.length) {
+    return { ok: true };
+  }
+  await Promise.all(
+    supervisors.map((supervisor) =>
+      assignSupervisorSeanceFromInvitation(
+        supervisor.id,
+        supervisor.canonical_email || supervisor.email
+      )
+    )
+  );
+  return { ok: true };
+}
+
 /**
  * (Admin) Création d'une invitation superviseur (migration 0013).
  * L'index unique partiel (lower(email) where status <> 'revoked') rejette
  * toute seconde invitation « en cours » pour le même email : l'erreur
  * 23505 est traduite en message explicite.
- * @param {object} payload { email, firstName?, lastName?, groupName? }
+ * @param {object} payload { email, firstName?, lastName?, groupName?, seanceId? }
  * @returns { ok, invitation? }
  */
 export async function createSupervisorInvitation({
@@ -53,6 +148,7 @@ export async function createSupervisorInvitation({
   firstName,
   lastName,
   groupName,
+  seanceId = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -69,12 +165,23 @@ export async function createSupervisorInvitation({
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
+  const cleanGroupName = String(groupName || "").trim();
+  let resolvedSeanceId = seanceId || null;
+  if (!resolvedSeanceId && cleanGroupName) {
+    const lookup = await findActiveSeanceByName(cleanGroupName);
+    if (!lookup.ok) {
+      return { ok: false, error: lookup.error };
+    }
+    resolvedSeanceId = lookup.seance?.id || null;
+  }
+
   const row = {
     id: uid("sinv"),
     email: mail,
     first_name: String(firstName).trim(),
     last_name: String(lastName).trim(),
-    group_name: String(groupName || "").trim() || null,
+    group_name: cleanGroupName || null,
+    seance_id: resolvedSeanceId,
     status: "pending",
     created_by: userId,
   };
@@ -88,6 +195,12 @@ export async function createSupervisorInvitation({
     if (error) {
       return { ok: false, error: mapTableError(error, "supervisor_invitations") };
     }
+
+    const existingProfile = await findSupervisorProfileByInvitationEmail(mail);
+    if (existingProfile) {
+      await assignSupervisorSeanceFromInvitation(existingProfile.id, mail);
+    }
+
     return { ok: true, invitation: data };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

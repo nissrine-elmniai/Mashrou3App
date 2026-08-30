@@ -157,7 +157,18 @@ export function StatCard({
   label,
   value,
   valueColor = colors.primary,
+  layout = "default",
 }) {
+  if (layout === "inline") {
+    return (
+      <View style={[styles.statCardInline, { borderColor }, shadows.card]}>
+        {icon ? <Ionicons name={icon} size={22} color={iconColor} /> : null}
+        <Text style={[styles.statValueInline, { color: valueColor }]}>{value}</Text>
+        <Text style={styles.statLabelInline}>{label}</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.statCard, { borderColor }, shadows.card]}>
       <View style={styles.statValueColumn}>
@@ -482,6 +493,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1.5,
   },
+  statCardInline: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1.5,
+  },
   statValueColumn: {
     alignItems: "center",
     gap: 4,
@@ -492,6 +514,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     ...rtlTextBold,
   },
+  statValueInline: {
+    fontSize: 24,
+    fontFamily: fonts.bold,
+    ...rtlTextBold,
+    minWidth: 24,
+    textAlign: "center",
+  },
   statLabel: {
     color: colors.muted,
     fontSize: 14,
@@ -499,6 +528,13 @@ const styles = StyleSheet.create({
     flex: 1,
     writingDirection: "rtl",
     textAlign: I18nManager.isRTL ? "left" : "right",
+  },
+  statLabelInline: {
+    color: colors.muted,
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    flex: 1,
+    ...rtlText,
   },
 
   sectionCard: {

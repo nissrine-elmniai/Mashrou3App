@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -8,12 +8,15 @@ import {
   ScrollView,
   StatusBar,
   I18nManager,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { Home, BookOpen, User } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import { getMyProgress, computeProgressMetrics } from "../../lib/progressApi";
 import {
   REGISTRATION_STATUS_LABELS,
   SEASON_TYPES,
@@ -36,6 +39,34 @@ import ChangePasswordModal from "../../components/ChangePasswordModal";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
+function parseActivityTimestamp(raw) {
+  if (!raw) return 0;
+  const s = String(raw).trim();
+  if (!s) return 0;
+  if (s.includes("T")) {
+    const t = new Date(s).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  }
+  const t = new Date(s.replace(/\//g, "-")).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function formatActivityWhen(ts) {
+  if (!ts) return "";
+  const diffMin = Math.floor((Date.now() - ts) / 60000);
+  if (diffMin < 1) return "الآن";
+  if (diffMin < 60) return `منذ ${diffMin} د`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `منذ ${diffH} س`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `منذ ${diffD} ي`;
+  return new Date(ts).toLocaleDateString("ar-MA", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 const TABS = [
   { key: "home", label: "الرئيسية", icon: Home },
   { key: "programs", label: "برامجي", icon: BookOpen },
@@ -52,13 +83,31 @@ export default function MemberDashboardScreen({ navigation }) {
     submitSeasonRegistration,
     getMemberGroup,
     getMemberProgress,
+    getNotificationsForUser,
   } = useApp();
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
+  const [progressEntries, setProgressEntries] = useState([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [selectedTimes, setSelectedTimes] = useState([]);
   const [summerTimes, setSummerTimes] = useState([]);
   const [passwordModal, setPasswordModal] = useState(false);
+
+  const loadProgressEntries = useCallback(async () => {
+    setActivitiesLoading(true);
+    const res = await getMyProgress();
+    if (res.ok) {
+      setProgressEntries(res.entries || []);
+    }
+    setActivitiesLoading(false);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProgressEntries();
+    }, [loadProgressEntries])
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +183,96 @@ export default function MemberDashboardScreen({ navigation }) {
           ((myProgress ? progressPct : 0) + (mySummerProgress ? summerPct : 0)) /
             activePrograms
         );
+
+  const userNotifications = useMemo(
+    () => getNotificationsForUser(currentUser),
+    [currentUser, getNotificationsForUser]
+  );
+
+  const recentActivities = useMemo(() => {
+    const items = [];
+    if (!currentUser?.id) return items;
+
+    progressEntries.forEach((entry, idx) => {
+      const metrics = computeProgressMetrics(entry);
+      const juze = entry.juze;
+      const tumun = entry.tumun;
+      let body = `الجزء ${juze}`;
+      if (tumun != null && tumun !== "") {
+        body += ` — الثمن ${tumun}`;
+      }
+      if (metrics?.globalPct != null) {
+        body += ` • ${metrics.globalPct}% من القرآن`;
+      }
+      items.push({
+        id: `progress-${entry.id || idx}`,
+        at: parseActivityTimestamp(
+          entry.date_saisie || entry.date || entry.created_at
+        ),
+        title: "تحديث التقدم",
+        body,
+        icon: "book-outline",
+        color: colors.primary,
+        action: "program",
+      });
+    });
+
+    myRegs.forEach((r) => {
+      const season = seasons.find((s) => s.id === r.seasonId);
+      const statusLabel =
+        REGISTRATION_STATUS_LABELS[r.status] || r.status || "—";
+      items.push({
+        id: `reg-${r.id}`,
+        at: Math.max(
+          parseActivityTimestamp(r.createdAt),
+          parseActivityTimestamp(r.acceptedAt)
+        ),
+        title: "طلب تسجيل",
+        body: `${season?.name || "موسم"} — ${statusLabel}`,
+        icon: "document-text-outline",
+        color: colors.orange,
+        action: "programs",
+      });
+    });
+
+    myExams.forEach((e) => {
+      items.push({
+        id: `exam-${e.id}`,
+        at: parseActivityTimestamp(e.date),
+        title: "نتيجة اختبار",
+        body: `${e.level || e.title || "اختبار"} — الدرجة: ${e.score}`,
+        icon: "school-outline",
+        color: colors.gold,
+        action: "programs",
+      });
+    });
+
+    userNotifications
+      .filter((n) => n.audience === "user" && n.userId === currentUser.id)
+      .forEach((n) => {
+        items.push({
+          id: `notif-${n.id}`,
+          at: parseActivityTimestamp(n.createdAt),
+          title: n.title,
+          body: n.body,
+          icon: "notifications-outline",
+          color: colors.primaryDark,
+          action: null,
+        });
+      });
+
+    return items
+      .filter((item) => item.at > 0)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 5);
+  }, [
+    currentUser?.id,
+    progressEntries,
+    myRegs,
+    myExams,
+    seasons,
+    userNotifications,
+  ]);
 
   const programs = useMemo(() => {
     const list = [];
@@ -214,6 +353,16 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const openChat = () => navigation.navigate("MemberChatInbox");
 
+  const handleActivityPress = (activity) => {
+    if (activity.action === "program" && programs[0]) {
+      openProgramme(programs[0]);
+      return;
+    }
+    if (activity.action === "programs") {
+      setTab("programs");
+    }
+  };
+
   const insets = useSafeAreaInsets();
 
   return (
@@ -259,6 +408,7 @@ export default function MemberDashboardScreen({ navigation }) {
             </View>
 
             <StatCard
+              layout="inline"
               icon="folder-outline"
               iconColor={colors.primary}
               borderColor={colors.borderGreen}
@@ -267,6 +417,7 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.primary}
             />
             <StatCard
+              layout="inline"
               icon="book-outline"
               iconColor={colors.gold}
               borderColor={colors.borderGold}
@@ -292,44 +443,28 @@ export default function MemberDashboardScreen({ navigation }) {
             </SectionCard>
 
             <SectionCard
-              title="الإجراءات السريعة"
-              subtitle="الوصول السريع إلى الوظائف الرئيسية"
+              title="آخر النشاطات"
+              subtitle="آخر ما قمت به في التطبيق"
             >
-              <QuickButton
-                color={colors.orange}
-                icon="school-outline"
-                label="برامجي والتسجيل"
-                onPress={() => setTab("programs")}
-              />
-              <QuickButton
-                color={colors.primary}
-                icon="person-outline"
-                label="ملفي الشخصي"
-                onPress={() => setTab("profile")}
-              />
-            </SectionCard>
-
-            <SectionCard
-              title="برامجي الأخيرة"
-              subtitle="نظرة سريعة على تقدمك الفعلي"
-            >
-              {programs.length === 0 ? (
-                <EmptyState text="لا يوجد برنامج بعد — سجّل في موسم مفتوح أولاً" />
+              {activitiesLoading && recentActivities.length === 0 ? (
+                <View style={styles.activityLoading}>
+                  <ActivityIndicator color={colors.primary} />
+                </View>
+              ) : recentActivities.length === 0 ? (
+                <EmptyState text="لا يوجد نشاط بعد — حدّث تقدمك أو سجّل في موسم" />
               ) : (
-                programs.slice(0, 2).map((p) => (
-                  <ProgramCard
-                    key={p.id}
-                    program={p}
-                    onPress={() => openProgramme(p)}
+                recentActivities.map((activity) => (
+                  <ActivityCard
+                    key={activity.id}
+                    activity={activity}
+                    onPress={
+                      activity.action
+                        ? () => handleActivityPress(activity)
+                        : undefined
+                    }
                   />
                 ))
               )}
-              <QuickButton
-                color={colors.primary}
-                icon="list-outline"
-                label="عرض البرامج والتسجيل"
-                onPress={() => setTab("programs")}
-              />
             </SectionCard>
           </>
         )}
@@ -498,6 +633,42 @@ export default function MemberDashboardScreen({ navigation }) {
         bottomInset={Math.max(insets.bottom, 16)}
       />
     </SafeAreaView>
+  );
+}
+
+function ActivityCard({ activity, onPress }) {
+  const when = formatActivityWhen(activity.at);
+  const content = (
+    <View style={styles.activityRow}>
+      <View style={[styles.activityIcon, { backgroundColor: `${activity.color}18` }]}>
+        <Ionicons name={activity.icon} size={20} color={activity.color} />
+      </View>
+      <View style={styles.activityBody}>
+        <View style={styles.activityHead}>
+          <Text style={styles.activityTitle}>{activity.title}</Text>
+          {when ? <Text style={styles.activityWhen}>{when}</Text> : null}
+        </View>
+        <Text style={styles.activityText} numberOfLines={2}>
+          {activity.body}
+        </Text>
+      </View>
+      {onPress ? (
+        <Ionicons name={arrowForward} size={18} color={colors.muted} />
+      ) : null}
+    </View>
+  );
+
+  if (!onPress) {
+    return <View style={styles.activityCard}>{content}</View>;
+  }
+  return (
+    <TouchableOpacity
+      style={styles.activityCard}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      {content}
+    </TouchableOpacity>
   );
 }
 
@@ -674,6 +845,58 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: fonts.regular,
     marginTop: 6,
+    ...rtlText,
+  },
+
+  activityLoading: {
+    paddingVertical: 20,
+    alignItems: "center",
+  },
+  activityCard: {
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    borderRadius: radii.lg,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: colors.soft,
+  },
+  activityRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 10,
+  },
+  activityIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  activityBody: {
+    flex: 1,
+  },
+  activityHead: {
+    flexDirection: row,
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  activityTitle: {
+    flex: 1,
+    color: colors.primary,
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    ...rtlText,
+  },
+  activityWhen: {
+    color: colors.muted,
+    fontSize: 11,
+    ...rtlText,
+  },
+  activityText: {
+    color: colors.muted,
+    fontSize: 13,
     ...rtlText,
   },
 
