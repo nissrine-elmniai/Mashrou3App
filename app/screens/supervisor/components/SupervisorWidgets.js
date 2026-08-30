@@ -24,6 +24,7 @@ export function OutlineButton({ label, icon, onPress }) {
 }
 
 export function MemberRow({ member, onMessage, onOpenProfile }) {
+  const showStatusDot = member.status === "present" || member.status === "absent";
   const statusColor = STATUS_COLORS[member.status];
   const name = `${member.user.firstName} ${member.user.lastName}`;
   return (
@@ -37,7 +38,9 @@ export function MemberRow({ member, onMessage, onOpenProfile }) {
           <View style={styles.memberAvatar}>
             <Text style={styles.memberAvatarText}>{initials(member.user.firstName)}</Text>
           </View>
-          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+          {showStatusDot ? (
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+          ) : null}
         </View>
         <View style={styles.memberInfo}>
           <Text style={styles.memberName}>{name}</Text>
@@ -50,7 +53,86 @@ export function MemberRow({ member, onMessage, onOpenProfile }) {
   );
 }
 
-export function AttendanceRow({ name, initial, value, onToggle }) {
+export function AttendanceHistoryRow({
+  sessionDate,
+  presentCount,
+  absentCount,
+  pct,
+  isMarked,
+  memberTotal,
+  markingHint,
+  highlightUnmarked = false,
+  unmarkedPrompt,
+  onPress,
+}) {
+  const dateLabel = String(sessionDate || "").replace(/-/g, "/");
+  const showStats = isMarked;
+  const total =
+    memberTotal > 0 ? memberTotal : presentCount + absentCount;
+  const presentPct =
+    total > 0 ? Math.round((presentCount / total) * 100) : pct ?? 0;
+  const absentPct = total > 0 ? Math.round((absentCount / total) * 100) : 0;
+
+  const rowStyle = [
+    styles.historyRow,
+    shadows.card,
+    highlightUnmarked && styles.historyRowUnmarked,
+  ];
+
+  const content = (
+    <>
+      <Text style={styles.historyDate}>{dateLabel}</Text>
+      {markingHint && !highlightUnmarked ? (
+        <Text style={styles.historyMarkingHint}>{markingHint}</Text>
+      ) : null}
+      {showStats ? (
+        <View style={styles.historyStatsRow}>
+          <Text style={styles.historyStatGreen}>
+            {presentCount} حاضر ({presentPct}%)
+          </Text>
+          <Text style={styles.historyStatDash}>—</Text>
+          <Text style={styles.historyStatRed}>
+            {absentCount} غائب ({absentPct}%)
+          </Text>
+        </View>
+      ) : (
+        <Text style={styles.historyUnset}>غير مسجل</Text>
+      )}
+      {highlightUnmarked && unmarkedPrompt ? (
+        <Text style={styles.historyUnmarkedPrompt}>{unmarkedPrompt}</Text>
+      ) : null}
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        style={rowStyle}
+        onPress={onPress}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+      >
+        {content}
+      </TouchableOpacity>
+    );
+  }
+
+  return <View style={rowStyle}>{content}</View>;
+}
+
+export function AttendanceRow({
+  name,
+  initial,
+  value,
+  onToggle,
+  readOnly = false,
+  unset = false,
+  statusLabel: statusLabelProp,
+}) {
+  const statusLabel =
+    statusLabelProp ?? (unset ? "غير مسجل" : value ? "حاضر" : "غائب");
+  const statusColor = unset ? colors.muted : value ? colors.primary : colors.placeholder;
+
   return (
     <View style={[styles.attendanceRow, shadows.card]}>
       <View style={styles.attendanceLeft}>
@@ -60,20 +142,17 @@ export function AttendanceRow({ name, initial, value, onToggle }) {
         <Text style={styles.attendanceName}>{name}</Text>
       </View>
       <View style={styles.attendanceRight}>
-        <Text
-          style={[
-            styles.attendanceStatusText,
-            { color: value ? colors.primary : colors.placeholder },
-          ]}
-        >
-          {value ? "حاضر" : "غائب"}
+        <Text style={[styles.attendanceStatusText, { color: statusColor }]}>
+          {statusLabel}
         </Text>
-        <Switch
-          value={value}
-          onValueChange={onToggle}
-          trackColor={{ false: colors.border, true: `${colors.gold}90` }}
-          thumbColor={value ? colors.gold : "#FFFFFF"}
-        />
+        {readOnly ? null : (
+          <Switch
+            value={value}
+            onValueChange={onToggle}
+            trackColor={{ false: colors.border, true: `${colors.gold}90` }}
+            thumbColor={value ? colors.gold : "#FFFFFF"}
+          />
+        )}
       </View>
     </View>
   );
@@ -165,6 +244,73 @@ const styles = StyleSheet.create({
   attendanceName: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.text, ...rtlText },
   attendanceRight: { flexDirection: row, alignItems: "center", gap: 8 },
   attendanceStatusText: { fontSize: 13, fontFamily: fonts.medium },
+
+  historyRow: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: 12,
+    marginBottom: 10,
+  },
+  historyRowUnmarked: {
+    backgroundColor: colors.goldSoft,
+  },
+  historyDate: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: colors.text,
+    marginBottom: 4,
+    ...rtlText,
+  },
+  historyMarkingHint: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.gold,
+    marginBottom: 6,
+    ...rtlText,
+  },
+  historyStats: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.muted,
+    ...rtlText,
+  },
+  historyStatsRow: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 2,
+  },
+  historyStatGreen: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.green,
+    ...rtlText,
+  },
+  historyStatRed: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.red,
+    ...rtlText,
+  },
+  historyStatDash: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.muted,
+  },
+  historyUnset: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.muted,
+    ...rtlText,
+  },
+  historyUnmarkedPrompt: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.gold,
+    marginTop: 8,
+    ...rtlText,
+  },
 
   legendItem: { flexDirection: row, alignItems: "center", gap: 4 },
   legendSwatch: { width: 12, height: 12, borderRadius: 3 },
