@@ -61,21 +61,55 @@ export async function getSupervisorActiveSeance(supervisorAuthId) {
   }
 
   try {
-    const { data, error } = await withTimeout(
+    let data;
+    let error;
+
+    const withSaison = await withTimeout(
       supabase
         .from("seances")
-        .select("*")
+        .select("*, saisons(date_debut)")
         .eq("superviseur_id", supervisorAuthId)
         .eq("statut", "active")
         .maybeSingle(),
       SUPABASE_TIMEOUT_MS,
       "قراءة الحصة النشطة"
     );
+    data = withSaison.data;
+    error = withSaison.error;
+
+    if (error && /relationship|PGRST200|Could not find a relationship/i.test(error?.message || "")) {
+      const fallback = await withTimeout(
+        supabase
+          .from("seances")
+          .select("*")
+          .eq("superviseur_id", supervisorAuthId)
+          .eq("statut", "active")
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الحصة النشطة"
+      );
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) {
       logSupabaseError("getSupervisorActiveSeance", error);
       return { ok: false, error: mapTableError(error, "seances"), seance: null };
     }
-    return { ok: true, seance: data || null };
+
+    let seance = data || null;
+    if (seance && !seance.saisons?.date_debut && seance.saison_id) {
+      const saisonRes = await withTimeout(
+        supabase.from("saisons").select("date_debut").eq("id", seance.saison_id).maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة تاريخ الموسم"
+      );
+      if (!saisonRes.error && saisonRes.data?.date_debut) {
+        seance = { ...seance, saisons: { date_debut: saisonRes.data.date_debut } };
+      }
+    }
+
+    return { ok: true, seance };
   } catch (e) {
     return {
       ok: false,

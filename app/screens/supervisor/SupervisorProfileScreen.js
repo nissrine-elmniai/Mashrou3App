@@ -136,7 +136,6 @@ export default function SupervisorProfileScreen({ navigation }) {
             value={currentUser?.birthDate}
           />
           <ProfileRow icon="male-female-outline" label="الجنس" value={currentUser?.gender} />
-          <ProfileRow icon="call-outline" label="الهاتف" value={usersRow?.telephone} />
           <ProfileRow
             icon="time-outline"
             label="تاريخ إنشاء الحساب"

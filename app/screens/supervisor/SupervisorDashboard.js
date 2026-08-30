@@ -26,6 +26,10 @@ import SupervisorMembersScreen from "./SupervisorMembersScreen";
 import SupervisorAttendanceScreen from "./SupervisorAttendanceScreen";
 import SupervisorProgressScreen from "./SupervisorProgressScreen";
 import SupervisorMessagesScreen from "./SupervisorMessagesScreen";
+import {
+  registerSupervisorAttendanceSaved,
+  unregisterSupervisorAttendanceSaved,
+} from "./supervisorAttendanceBridge";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -57,6 +61,8 @@ export default function SupervisorDashboard({ navigation }) {
     avgProgress,
     loading,
     fetchError,
+    dataSource,
+    refetch,
   } = useSupervisorMembers(selectedGroupId);
 
   const fullName = currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : "";
@@ -110,6 +116,11 @@ export default function SupervisorDashboard({ navigation }) {
       loadPendingAlertCount();
     }, [loadPendingAlertCount])
   );
+
+  useEffect(() => {
+    registerSupervisorAttendanceSaved(refetch);
+    return () => unregisterSupervisorAttendanceSaved();
+  }, [refetch]);
 
   const openAlerts = () => navigation.navigate("SupervisorAlerts");
 
@@ -187,10 +198,12 @@ export default function SupervisorDashboard({ navigation }) {
             )}
             {tab === "attendance" && (
               <SupervisorAttendanceScreen
-                myGroups={myGroups}
-                activeGroup={activeGroup}
+                myGroups={dataSource === "supabase" ? myGroups : []}
+                activeGroup={dataSource === "supabase" ? activeGroup : null}
                 selectedGroupId={selectedGroupId}
                 onSelectGroup={setSelectedGroupId}
+                members={dataSource === "supabase" ? members : []}
+                usingSupabase={dataSource === "supabase"}
               />
             )}
             {tab === "progress" && (
