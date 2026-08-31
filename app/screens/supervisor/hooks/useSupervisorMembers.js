@@ -9,6 +9,7 @@ import { getSupervisorActiveSeance, getSeanceMembers } from "../../../lib/member
 import {
   buildSeanceAttendanceHistory,
   getSeancePresenceForDate,
+  getPresenceReminderForOccurrence,
 } from "../../../lib/presenceApi";
 
 /** Message UI mode dégradé (mock après échec Supabase réel). */
@@ -83,6 +84,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     weeklyPresenceByMember: {},
     occurrenceMeta: null,
     globalAttendancePct: null,
+    showPresenceReminder: false,
   });
 
   useEffect(() => {
@@ -94,6 +96,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
         weeklyPresenceByMember: {},
         occurrenceMeta: null,
         globalAttendancePct: null,
+        showPresenceReminder: false,
       });
       return;
     }
@@ -117,6 +120,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             weeklyPresenceByMember: {},
             occurrenceMeta: null,
             globalAttendancePct: null,
+            showPresenceReminder: false,
           });
           setFetchState({
             loading: false,
@@ -134,6 +138,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             weeklyPresenceByMember: {},
             occurrenceMeta: null,
             globalAttendancePct: null,
+            showPresenceReminder: false,
           });
           setFetchState({ loading: false, loaded: true, error: null });
           return;
@@ -153,6 +158,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             weeklyPresenceByMember: {},
             occurrenceMeta: null,
             globalAttendancePct: null,
+            showPresenceReminder: false,
           });
           setFetchState({
             loading: false,
@@ -220,6 +226,23 @@ export function useSupervisorMembers(selectedGroupId = null) {
           }
         }
 
+        let showPresenceReminder = false;
+        if (occurrence.withinMarkingWindow && occurrence.sessionDate) {
+          const isMarked = Object.values(weeklyPresenceByMember).some(
+            (s) => s === "present" || s === "absent"
+          );
+          if (!isMarked) {
+            const rappelRes = await getPresenceReminderForOccurrence(
+              seance.id,
+              occurrence.sessionDate
+            );
+            if (cancelled) return;
+            if (rappelRes.ok && (rappelRes.nbRappels ?? 0) > 0) {
+              showPresenceReminder = true;
+            }
+          }
+        }
+
         let globalAttendancePct = null;
         const memberIds = group.memberIds;
         const canLoadGlobalHistory =
@@ -261,6 +284,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
           weeklyPresenceByMember,
           occurrenceMeta,
           globalAttendancePct,
+          showPresenceReminder,
         });
         setFetchState({ loading: false, loaded: true, error: null });
       } catch (e) {
@@ -275,6 +299,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             weeklyPresenceByMember: {},
             occurrenceMeta: null,
             globalAttendancePct: null,
+            showPresenceReminder: false,
           });
           setFetchState({
             loading: false,
@@ -318,6 +343,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
   const isMarkingWindowOpen =
     usingSupabase && occurrenceMeta?.withinMarkingWindow === true;
+
+  const showPresenceReminder =
+    usingSupabase && supabaseData.showPresenceReminder === true;
 
   const membersWithStatus = useMemo(
     () =>
@@ -369,6 +397,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     avgProgress,
     presentCount,
     isMarkingWindowOpen,
+    showPresenceReminder,
     loading,
     fetchError,
     dataSource: usingSupabase ? "supabase" : "mock",
