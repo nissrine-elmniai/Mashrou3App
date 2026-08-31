@@ -71,7 +71,6 @@ export function AttendanceHistoryRow({
     memberTotal > 0 ? memberTotal : presentCount + absentCount;
   const presentPct =
     total > 0 ? Math.round((presentCount / total) * 100) : pct ?? 0;
-  const absentPct = total > 0 ? Math.round((absentCount / total) * 100) : 0;
 
   const rowStyle = [
     styles.historyRow,
@@ -86,15 +85,7 @@ export function AttendanceHistoryRow({
         <Text style={styles.historyMarkingHint}>{markingHint}</Text>
       ) : null}
       {showStats ? (
-        <View style={styles.historyStatsRow}>
-          <Text style={styles.historyStatMuted}>
-            {presentCount} حاضر ({presentPct}%)
-          </Text>
-          <Text style={styles.historyStatDash}>—</Text>
-          <Text style={styles.historyStatMuted}>
-            {absentCount} غائب ({absentPct}%)
-          </Text>
-        </View>
+        <Text style={styles.historyStatMuted}>نسبة الحضور {presentPct}%</Text>
       ) : (
         <Text style={styles.historyUnset}>غير مسجل</Text>
       )}

@@ -15,7 +15,7 @@ import { colors } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, arrowBack } from "../../constants/rtl";
 import { QuickButton } from "../../components/ui";
 import { AttendanceRow } from "./components/SupervisorWidgets";
-import { initials } from "./supervisorHelpers";
+import { initials, STATUS_COLORS } from "./supervisorHelpers";
 import {
   formatSessionDateLabel,
   formatDeadlineLabel,
@@ -115,6 +115,23 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
   const deadlineLabel = formatDeadlineLabel(markingWindowEnd);
   const headerTitle = readOnly ? "تفاصيل الحضور" : "تسجيل الحضور";
 
+  const presenceStats = useMemo(() => {
+    let presentCount = 0;
+    let absentCount = 0;
+    memberIds.forEach((id) => {
+      let status = byMemberId[id];
+      if (!readOnly && id in records) {
+        status = records[id] ? "present" : "absent";
+      }
+      if (status === "present") presentCount += 1;
+      else if (status === "absent") absentCount += 1;
+    });
+    return { presentCount, absentCount };
+  }, [memberIds, byMemberId, records, readOnly]);
+
+  const showPresenceSummary =
+    !loading && !error && presenceStats.presentCount + presenceStats.absentCount > 0;
+
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <StatusBar style="light" />
@@ -133,6 +150,13 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
       <View style={styles.banner}>
         <Text style={styles.bannerGroup}>{groupName || "الحصة"}</Text>
         <Text style={styles.bannerDate}>حصة {dateLabel}</Text>
+        {showPresenceSummary ? (
+          <Text style={styles.bannerStats}>
+            <Text style={styles.bannerPresent}>{presenceStats.presentCount} حاضر</Text>
+            <Text style={styles.bannerStatsDash}> — </Text>
+            <Text style={styles.bannerAbsent}>{presenceStats.absentCount} غائب</Text>
+          </Text>
+        ) : null}
         {!readOnly && deadlineLabel ? (
           <Text style={styles.bannerDeadline}>يمكنك التعديل حتى {deadlineLabel}</Text>
         ) : null}
@@ -236,6 +260,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 4,
     ...rtlText,
+  },
+  bannerStats: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+    ...rtlText,
+  },
+  bannerPresent: {
+    color: STATUS_COLORS.present,
+  },
+  bannerStatsDash: {
+    color: colors.muted,
+  },
+  bannerAbsent: {
+    color: STATUS_COLORS.absent,
   },
   bannerDeadline: {
     fontFamily: fonts.semiBold,
