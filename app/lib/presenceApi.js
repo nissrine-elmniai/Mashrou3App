@@ -61,7 +61,9 @@ function extractPresenceDate(row) {
 /**
  * Historique de présence d'un membre (table presences si elle existe en base).
  * Taux = présent / total des séances marquées (present ou absent).
- * @returns {{ ok, hasData?, records?, rate?, tableMissing?, error? }}
+ * records contient tout l'historique marqué (tri décroissant) — la pagination
+ * par mois est gérée côté UI (MemberProfileScreen).
+ * @returns {{ ok, hasData?, records?, rate?, presentCount?, absentCount?, tableMissing?, error? }}
  */
 export async function getMemberPresenceSummary(membreId, seanceId = null) {
   if (!isSupabaseConfigured()) {
@@ -83,7 +85,7 @@ export async function getMemberPresenceSummary(membreId, seanceId = null) {
     let data;
     let error;
     const ordered = await withTimeout(
-      query.order("date", { ascending: false }).limit(20),
+      query.order("date", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
       "قراءة حضور العضو"
     );
@@ -99,7 +101,7 @@ export async function getMemberPresenceSummary(membreId, seanceId = null) {
         fbQuery = fbQuery.eq("seance_id", seanceId);
       }
       const fallback = await withTimeout(
-        fbQuery.order("created_at", { ascending: false }).limit(20),
+        fbQuery.order("created_at", { ascending: false }),
         SUPABASE_TIMEOUT_MS,
         "قراءة حضور العضو"
       );
@@ -109,7 +111,15 @@ export async function getMemberPresenceSummary(membreId, seanceId = null) {
 
     if (error) {
       if (isTableMissingError(error)) {
-        return { ok: true, hasData: false, records: [], rate: null, tableMissing: true };
+        return {
+          ok: true,
+          hasData: false,
+          records: [],
+          rate: null,
+          presentCount: 0,
+          absentCount: 0,
+          tableMissing: true,
+        };
       }
       return { ok: false, error: mapTableError(error, "presences") };
     }
@@ -122,18 +132,18 @@ export async function getMemberPresenceSummary(membreId, seanceId = null) {
       .filter((r) => r.status === "present" || r.status === "absent");
 
     const marked = records;
+    const presentCount = marked.filter((r) => r.status === "present").length;
+    const absentCount = marked.filter((r) => r.status === "absent").length;
     const rate =
-      marked.length > 0
-        ? Math.round(
-            (marked.filter((r) => r.status === "present").length / marked.length) * 100
-          )
-        : null;
+      marked.length > 0 ? Math.round((presentCount / marked.length) * 100) : null;
 
     return {
       ok: true,
       hasData: marked.length > 0,
-      records: marked.slice(0, 5),
+      records: marked,
       rate,
+      presentCount,
+      absentCount,
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
@@ -292,6 +302,267 @@ function countPresenceStats(byMemberId = {}, memberIds = []) {
 }
 
 /**
+ * Dates distinctes avec au moins une présence/absence enregistrée pour la séance.
+ * @returns {{ ok, dates?: string[], degraded?, error? }} dates en YYYY/MM/DD
+ */
+async function getDistinctPresenceDatesForSeance(seanceId) {
+  if (!seanceId) {
+    return { ok: true, dates: [] };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from("presences").select("date, statut").eq("seance_id", seanceId),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تواريخ الحضور"
+    );
+
+    if (error) {
+      console.warn("[presenceApi] getDistinctPresenceDatesForSeance", error);
+      const msg = error?.message || "";
+      if (
+        isTableMissingError(error) ||
+        /permission|row-level security|RLS|42501|violates row/i.test(msg)
+      ) {
+        return { ok: true, dates: [], degraded: true };
+      }
+      return { ok: false, error: mapTableError(error, "presences"), dates: [] };
+    }
+
+    const dates = new Set();
+    for (const row of data || []) {
+      const status = normalizePresenceStatus(row);
+      if (status !== "present" && status !== "absent") continue;
+      if (!row?.date) continue;
+      dates.add(dbDateToSlash(row.date));
+    }
+
+    return { ok: true, dates: [...dates] };
+  } catch (e) {
+    console.warn("[presenceApi] getDistinctPresenceDatesForSeance", e);
+    return { ok: true, dates: [], degraded: true };
+  }
+}
+
+function mergeSessionDates(theoreticalDates = [], recordedDates = []) {
+  const merged = new Set(theoreticalDates);
+  recordedDates.forEach((d) => {
+    if (d) merged.add(d);
+  });
+  return [...merged].sort((a, b) => b.localeCompare(a));
+}
+
+function timestampToSlashDate(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}/${m}/${day}`;
+}
+
+function maxSlashDate(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a >= b ? a : b;
+}
+
+function minSlashDate(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a <= b ? a : b;
+}
+
+function isSessionDateInPeriod(sessionDate, period, refDate = new Date()) {
+  const fromDay = timestampToSlashDate(period.valideDepuis);
+  const toDay = period.valideJusquA
+    ? timestampToSlashDate(period.valideJusquA)
+    : timestampToSlashDate(refDate);
+  if (fromDay && sessionDate < fromDay) return false;
+  if (toDay && sessionDate > toDay) return false;
+  return true;
+}
+
+/**
+ * Périodes de planning pour une séance : historique archivé + période courante (seances).
+ * @returns {{ ok, periods?: Array, error?, degraded? }}
+ */
+export async function getSeancePlanningPeriods(seanceId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", periods: [] };
+  }
+  if (!seanceId) {
+    return { ok: false, error: "معرّف الحصة مفقود", periods: [] };
+  }
+
+  try {
+    const [seanceRes, historyRes] = await Promise.all([
+      withTimeout(
+        supabase
+          .from("seances")
+          .select("jour, heure_debut, heure_fin, planning_valide_depuis")
+          .eq("id", seanceId)
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الحصة"
+      ),
+      withTimeout(
+        supabase
+          .from("seance_planning_history")
+          .select("jour, heure_debut, heure_fin, valide_depuis, valide_jusqu_a")
+          .eq("seance_id", seanceId)
+          .order("valide_depuis", { ascending: true }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة سجل الجدول"
+      ),
+    ]);
+
+    const seanceError = seanceRes.error;
+    const historyError = historyRes.error;
+
+    if (seanceError) {
+      return { ok: false, error: mapTableError(seanceError, "seances"), periods: [] };
+    }
+
+    let degraded = false;
+    let historyRows = [];
+    if (historyError) {
+      const msg = historyError?.message || "";
+      if (
+        isTableMissingError(historyError) ||
+        /permission|row-level security|RLS|42501|violates row/i.test(msg)
+      ) {
+        degraded = true;
+      } else {
+        return {
+          ok: false,
+          error: mapTableError(historyError, "seance_planning_history"),
+          periods: [],
+        };
+      }
+    } else {
+      historyRows = historyRes.data || [];
+    }
+
+    const periods = (historyRows || []).map((row) => ({
+      jour: row.jour,
+      heureDebut: row.heure_debut ?? null,
+      heureFin: row.heure_fin ?? null,
+      valideDepuis: row.valide_depuis,
+      valideJusquA: row.valide_jusqu_a,
+      isCurrent: false,
+    }));
+
+    if (seanceRes.data) {
+      periods.push({
+        jour: seanceRes.data.jour,
+        heureDebut: seanceRes.data.heure_debut ?? null,
+        heureFin: seanceRes.data.heure_fin ?? null,
+        valideDepuis: seanceRes.data.planning_valide_depuis,
+        valideJusquA: null,
+        isCurrent: true,
+      });
+    }
+
+    return { ok: true, periods, degraded };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", periods: [] };
+  }
+}
+
+/**
+ * Occurrences théoriques multi-périodes : chaque période utilise son propre jour/heure_debut.
+ * @returns {{ sessionDates: string[], metaByDate: Map<string, { jour, heureDebut }> }}
+ */
+export function buildTheoreticalOccurrencesFromPeriods(
+  periods = [],
+  saisonDateDebut,
+  refDate = new Date()
+) {
+  const metaByDate = new Map();
+  const allDates = new Set();
+  const refSlash = timestampToSlashDate(refDate);
+
+  periods.forEach((period) => {
+    if (!period?.jour) return;
+
+    const periodFrom = timestampToSlashDate(period.valideDepuis);
+    const periodTo = period.valideJusquA
+      ? timestampToSlashDate(period.valideJusquA)
+      : refSlash;
+
+    const startBound = maxSlashDate(
+      String(saisonDateDebut || "").slice(0, 10).replace(/-/g, "/"),
+      periodFrom
+    );
+    const endBound = minSlashDate(refSlash, periodTo);
+
+    if (!startBound || !endBound || startBound > endBound) return;
+
+    const occurrences = getSeanceOccurrencesBetween(
+      period.jour,
+      startBound,
+      endBound,
+      refDate
+    );
+
+    occurrences.forEach((sessionDate) => {
+      if (!isSessionDateInPeriod(sessionDate, period, refDate)) return;
+      allDates.add(sessionDate);
+      metaByDate.set(sessionDate, {
+        jour: period.jour,
+        heureDebut: period.heureDebut ?? null,
+      });
+    });
+  });
+
+  return {
+    sessionDates: [...allDates].sort((a, b) => b.localeCompare(a)),
+    metaByDate,
+  };
+}
+
+async function buildTheoreticalOccurrencesForSeance(
+  seanceId,
+  fallbackJour,
+  fallbackHeureDebut,
+  saisonDateDebut,
+  refDate
+) {
+  const periodsRes = await getSeancePlanningPeriods(seanceId);
+
+  if (periodsRes.ok && periodsRes.periods?.length > 0) {
+    const { sessionDates, metaByDate } = buildTheoreticalOccurrencesFromPeriods(
+      periodsRes.periods,
+      saisonDateDebut,
+      refDate
+    );
+    return {
+      ok: true,
+      sessionDates,
+      metaByDate,
+      degraded: periodsRes.degraded,
+    };
+  }
+
+  if (!fallbackJour) {
+    return { ok: false, error: periodsRes.error || "تعذر تحميل فترات الجدول", sessionDates: [], metaByDate: new Map() };
+  }
+
+  const sessionDates = getSeanceOccurrencesBetween(
+    fallbackJour,
+    saisonDateDebut,
+    refDate,
+    refDate
+  );
+  const metaByDate = new Map(
+    sessionDates.map((d) => [d, { jour: fallbackJour, heureDebut: fallbackHeureDebut ?? null }])
+  );
+  return { ok: true, sessionDates, metaByDate, degraded: periodsRes.degraded };
+}
+
+/**
  * Historique agrégé par occurrence de séance (depuis date_debut saison).
  * getLatestSeanceOccurrenceStatus reste inchangé pour les pastilles / occurrence courante.
  */
@@ -314,20 +585,45 @@ export async function buildSeanceAttendanceHistory(
   }
 
   const ids = [...new Set((memberIds || []).filter(Boolean))];
-  const occurrences = getSeanceOccurrencesBetween(jour, saisonDateDebut, refDate, refDate);
 
-  if (occurrences.length === 0) {
+  const theoreticalRes = await buildTheoreticalOccurrencesForSeance(
+    seanceId,
+    jour,
+    heureDebut,
+    saisonDateDebut,
+    refDate
+  );
+
+  if (!theoreticalRes.ok) {
+    return { ok: false, error: theoreticalRes.error, rows: [] };
+  }
+
+  const theoreticalOccurrences = theoreticalRes.sessionDates;
+  const metaByDate = theoreticalRes.metaByDate;
+
+  const recordedRes = await getDistinctPresenceDatesForSeance(seanceId);
+  if (!recordedRes.ok) {
+    return { ok: false, error: recordedRes.error, rows: [] };
+  }
+
+  const sessionDates = mergeSessionDates(
+    theoreticalOccurrences,
+    recordedRes.dates || []
+  );
+
+  if (sessionDates.length === 0) {
     return { ok: true, rows: [], markingContext: null };
   }
 
-  const oldest = occurrences[occurrences.length - 1];
-  const newest = occurrences[0];
+  const theoreticalSet = new Set(theoreticalOccurrences);
+  const oldest = sessionDates[sessionDates.length - 1];
+  const newest = sessionDates[0];
   const presRes = await getSeancePresenceForDateRange(seanceId, ids, oldest, newest);
 
   if (!presRes.ok) {
     return { ok: false, error: presRes.error, rows: [] };
   }
-  if (presRes.degraded) {
+  if (presRes.degraded || recordedRes.degraded || theoreticalRes.degraded) {
     return {
       ok: false,
       error: "تعذر قراءة سجل الحضور من قاعدة البيانات",
@@ -336,14 +632,21 @@ export async function buildSeanceAttendanceHistory(
   }
 
   const byDate = presRes.byDate || {};
-  const rows = occurrences.map((sessionDate) => {
+  const rows = sessionDates.map((sessionDate) => {
     const dateMap = byDate[sessionDate] || {};
-    const isMarked = ids.some((id) => {
-      const s = dateMap[id];
-      return s === "present" || s === "absent";
-    });
-    const windowOpen = isOccurrenceMarkingWindowOpen(sessionDate, heureDebut, refDate);
-    const markingWindowEnd = getOccurrenceWindowEnd(sessionDate, heureDebut);
+    const periodMeta = metaByDate.get(sessionDate);
+    const occurrenceHeureDebut = periodMeta?.heureDebut ?? heureDebut ?? null;
+    const fromRecordedOnly = !theoreticalSet.has(sessionDate);
+    const isMarked = fromRecordedOnly
+      ? true
+      : ids.some((id) => {
+          const s = dateMap[id];
+          return s === "present" || s === "absent";
+        });
+    const windowOpen = fromRecordedOnly
+      ? false
+      : isOccurrenceMarkingWindowOpen(sessionDate, occurrenceHeureDebut, refDate);
+    const markingWindowEnd = getOccurrenceWindowEnd(sessionDate, occurrenceHeureDebut);
     const { presentCount, absentCount, pct } = countPresenceStats(dateMap, ids);
 
     return {

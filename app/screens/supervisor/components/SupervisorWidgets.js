@@ -71,7 +71,6 @@ export function AttendanceHistoryRow({
     memberTotal > 0 ? memberTotal : presentCount + absentCount;
   const presentPct =
     total > 0 ? Math.round((presentCount / total) * 100) : pct ?? 0;
-  const absentPct = total > 0 ? Math.round((absentCount / total) * 100) : 0;
 
   const rowStyle = [
     styles.historyRow,
@@ -86,15 +85,7 @@ export function AttendanceHistoryRow({
         <Text style={styles.historyMarkingHint}>{markingHint}</Text>
       ) : null}
       {showStats ? (
-        <View style={styles.historyStatsRow}>
-          <Text style={styles.historyStatGreen}>
-            {presentCount} حاضر ({presentPct}%)
-          </Text>
-          <Text style={styles.historyStatDash}>—</Text>
-          <Text style={styles.historyStatRed}>
-            {absentCount} غائب ({absentPct}%)
-          </Text>
-        </View>
+        <Text style={styles.historyStatMuted}>نسبة الحضور {presentPct}%</Text>
       ) : (
         <Text style={styles.historyUnset}>غير مسجل</Text>
       )}
@@ -131,7 +122,11 @@ export function AttendanceRow({
 }) {
   const statusLabel =
     statusLabelProp ?? (unset ? "غير مسجل" : value ? "حاضر" : "غائب");
-  const statusColor = unset ? colors.muted : value ? colors.primary : colors.placeholder;
+  const statusColor = unset
+    ? STATUS_COLORS.none
+    : value
+    ? STATUS_COLORS.present
+    : STATUS_COLORS.absent;
 
   return (
     <View style={[styles.attendanceRow, shadows.card]}>
@@ -264,7 +259,7 @@ const styles = StyleSheet.create({
   historyMarkingHint: {
     fontFamily: fonts.semiBold,
     fontSize: 12,
-    color: colors.gold,
+    color: colors.green,
     marginBottom: 6,
     ...rtlText,
   },
@@ -281,16 +276,10 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 2,
   },
-  historyStatGreen: {
+  historyStatMuted: {
     fontFamily: fonts.medium,
     fontSize: 13,
-    color: colors.green,
-    ...rtlText,
-  },
-  historyStatRed: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
-    color: colors.red,
+    color: colors.muted,
     ...rtlText,
   },
   historyStatDash: {

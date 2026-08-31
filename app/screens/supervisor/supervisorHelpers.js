@@ -14,6 +14,15 @@ export const STATUS_COLORS = {
   none: colors.placeholder,
 };
 
+/** Libellé arabe « N حصة / حصتين / حصص » selon le nombre. */
+export function arabicSessionCountLabel(count) {
+  const n = Number(count) || 0;
+  if (n === 0) return "0 حصة";
+  if (n === 1) return "حصة واحدة";
+  if (n === 2) return "حصتين";
+  return `${n} حصص`;
+}
+
 export const ARABIC_WEEKDAYS_SHORT = [
   "الأحد",
   "الاثنين",

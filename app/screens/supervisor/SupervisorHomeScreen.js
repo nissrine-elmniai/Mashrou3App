@@ -16,6 +16,7 @@ export default function SupervisorHomeScreen({
   members = [],
   attendancePct = 0,
   avgProgress = 0,
+  isMarkingWindowOpen = false,
   onChangeTab,
 }) {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -54,6 +55,13 @@ export default function SupervisorHomeScreen({
     setBroadcastOpen(true);
   };
 
+  const quickBtnLabelStyle = {
+    fontSize: 16,
+    color: "white",
+    ...rtlText,
+    textAlign: "center",
+  };
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
       {activeGroup ? (
@@ -71,20 +79,22 @@ export default function SupervisorHomeScreen({
 
       <View style={styles.statsRow}>
         <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
-        <MiniStat value={`${attendancePct}%`} label="نسبة الحضور" color={colors.primary} />
+        <MiniStat value={`${attendancePct}%`} label=" نسبة الحضور" color={colors.primary} />
         <MiniStat value={`${avgProgress}%`} label="متوسط التقدم" color={colors.primary} />
       </View>
 
       <QuickButton
-        label="تسجيل الحضور "
+        label={isMarkingWindowOpen ? " تسجيل الحضور" : " سجل الحضور"}
         icon="checkbox-outline"
         color={colors.gold}
+        textStyle={quickBtnLabelStyle}
         onPress={() => onChangeTab("attendance")}
       />
       <QuickButton
         label="إرسال رسالة للجميع"
         icon="chatbubble-ellipses-outline"
         color={colors.primary}
+        textStyle={quickBtnLabelStyle}
         onPress={openBroadcast}
       />
 
