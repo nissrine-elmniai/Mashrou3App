@@ -60,6 +60,7 @@ export default function SupervisorDashboard({ navigation }) {
     attendancePct,
     avgProgress,
     isMarkingWindowOpen,
+    showPresenceReminder,
     loading,
     fetchError,
     dataSource,
@@ -192,6 +193,7 @@ export default function SupervisorDashboard({ navigation }) {
                 attendancePct={attendancePct}
                 avgProgress={avgProgress}
                 isMarkingWindowOpen={isMarkingWindowOpen}
+                showPresenceReminder={showPresenceReminder}
                 onChangeTab={setTab}
               />
             )}

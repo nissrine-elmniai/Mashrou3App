@@ -793,3 +793,42 @@ export async function getLatestSeanceOccurrenceStatus(
     byMemberId,
   };
 }
+
+/**
+ * Rappel présence pour une occurrence (lecture presence_rappels, canal dédié — pas alerts).
+ * @returns {{ ok: boolean, nbRappels?: number, error?: string, degraded?: boolean }}
+ */
+export async function getPresenceReminderForOccurrence(seanceId, sessionDateIso) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", nbRappels: 0 };
+  }
+  if (!seanceId || !sessionDateIso) {
+    return { ok: false, error: "معرّف الحصة أو التاريخ مفقود", nbRappels: 0 };
+  }
+
+  const dbDate = slashDateToDb(sessionDateIso);
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("presence_rappels")
+        .select("nb_rappels_envoyes")
+        .eq("seance_id", seanceId)
+        .eq("date", dbDate)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تذكير الحضور"
+    );
+
+    if (error) {
+      if (isTableMissingError(error)) {
+        return { ok: true, nbRappels: 0, degraded: true };
+      }
+      return { ok: false, error: mapTableError(error, "presence_rappels"), nbRappels: 0 };
+    }
+
+    return { ok: true, nbRappels: data?.nb_rappels_envoyes ?? 0 };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", nbRappels: 0 };
+  }
+}
