@@ -10,7 +10,7 @@
  * date_naissance / âge : getSeanceMembers ne joint pas membres.date_naissance ;
  * phone, school, level, hifz_amount viennent de profiles via route.params.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -31,7 +31,8 @@ import {
 } from "../../lib/progressApi";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { getMemberProfileFields, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
-import { initials, deriveLevel, STATUS_COLORS } from "./supervisorHelpers";
+import { initials, deriveLevel, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
+import { groupMemberPresenceByMonth } from "./supervisorAttendanceHelpers";
 
 const PRESENCE_LABELS = {
   present: "حاضر",
@@ -53,6 +54,22 @@ function ProfileRow({ icon, label, value }) {
   );
 }
 
+function PresenceTotalRow({ icon, label, count, iconColor, styles }) {
+  return (
+    <View style={styles.row}>
+      <View style={styles.rowIcon}>
+        <Ionicons name={icon} size={18} color={iconColor} />
+      </View>
+      <View style={styles.rowTextWrap}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={styles.presenceStatValue}>
+          {arabicSessionCountLabel(count ?? 0)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function PresenceMiniRow({ date, status }) {
   const label = PRESENCE_LABELS[status] || status;
   const statusColor = STATUS_COLORS[status] || colors.muted;
@@ -67,11 +84,6 @@ function PresenceMiniRow({ date, status }) {
 function formatTumunCourant(metrics) {
   if (metrics?.tumunCourant == null) return "—";
   return String(metrics.tumunCourant);
-}
-
-function formatPresenceRate(rate) {
-  if (rate == null) return "—";
-  return `${rate}%`;
 }
 
 function ProgressSectionContent({ progressState, styles }) {
@@ -129,6 +141,16 @@ function ProgressSectionContent({ progressState, styles }) {
 }
 
 function PresenceSectionContent({ presenceState, styles }) {
+  const monthGroups = useMemo(
+    () => groupMemberPresenceByMonth(presenceState.records || []),
+    [presenceState.records]
+  );
+  const [monthIndex, setMonthIndex] = useState(0);
+
+  useEffect(() => {
+    setMonthIndex(0);
+  }, [presenceState.records]);
+
   if (presenceState.loading) {
     return <ActivityIndicator color={colors.primary} style={styles.loader} />;
   }
@@ -139,23 +161,73 @@ function PresenceSectionContent({ presenceState, styles }) {
     return <Text style={styles.emptyText}>لا يوجد سجل حضور بعد</Text>;
   }
 
+  const currentMonth = monthGroups[monthIndex] || null;
+  const canGoOlder = monthIndex < monthGroups.length - 1;
+  const canGoNewer = monthIndex > 0;
+  const showMonthNav = monthGroups.length > 1;
+
   return (
     <>
-      <ProfileRow
-        icon="checkmark-circle-outline"
-        label="نسبة الحضور"
-        value={formatPresenceRate(presenceState.rate)}
+      <PresenceTotalRow
+        icon="checkmark-circle"
+        label="إجمالي الحضور"
+        count={presenceState.presentCount ?? 0}
+        iconColor={STATUS_COLORS.present}
+        styles={styles}
       />
-      {presenceState.records.length > 0 ? (
-        <View style={styles.presenceList}>
-          {presenceState.records.map((rec, idx) => (
-            <PresenceMiniRow
-              key={`${rec.date}_${rec.status}_${idx}`}
-              date={rec.date}
-              status={rec.status}
-            />
-          ))}
-        </View>
+      <PresenceTotalRow
+        icon="close-circle"
+        label="إجمالي الغياب"
+        count={presenceState.absentCount ?? 0}
+        iconColor={STATUS_COLORS.absent}
+        styles={styles}
+      />
+      {currentMonth ? (
+        <>
+          {!showMonthNav ? (
+            <Text style={styles.monthNavLabelStatic}>{currentMonth.label}</Text>
+          ) : null}
+          <View style={styles.presenceList}>
+            {currentMonth.rows.map((rec, idx) => (
+              <PresenceMiniRow
+                key={`${rec.date}_${rec.status}_${idx}`}
+                date={rec.date}
+                status={rec.status}
+              />
+            ))}
+          </View>
+          {showMonthNav ? (
+            <View style={styles.monthNavBar}>
+              <TouchableOpacity
+                style={styles.monthNavBtn}
+                onPress={() => setMonthIndex((i) => i + 1)}
+                disabled={!canGoOlder}
+                activeOpacity={0.7}
+                accessibilityLabel="الشهر السابق"
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={canGoOlder ? colors.primary : colors.placeholder}
+                />
+              </TouchableOpacity>
+              <Text style={styles.monthNavLabel}>{currentMonth.label}</Text>
+              <TouchableOpacity
+                style={styles.monthNavBtn}
+                onPress={() => setMonthIndex((i) => i - 1)}
+                disabled={!canGoNewer}
+                activeOpacity={0.7}
+                accessibilityLabel="الشهر التالي"
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={canGoNewer ? colors.primary : colors.placeholder}
+                />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </>
       ) : null}
     </>
   );
@@ -195,6 +267,8 @@ export default function MemberProfileScreen({ navigation, route }) {
     error: null,
     hasData: false,
     rate: null,
+    presentCount: 0,
+    absentCount: 0,
     records: [],
   });
   const [contactFields, setContactFields] = useState({
@@ -266,6 +340,8 @@ export default function MemberProfileScreen({ navigation, route }) {
         error: null,
         hasData: false,
         rate: null,
+        presentCount: 0,
+        absentCount: 0,
         records: [],
       });
       return;
@@ -311,6 +387,8 @@ export default function MemberProfileScreen({ navigation, route }) {
           error: presRes.error,
           hasData: false,
           rate: null,
+          presentCount: 0,
+          absentCount: 0,
           records: [],
         });
       } else {
@@ -319,6 +397,8 @@ export default function MemberProfileScreen({ navigation, route }) {
           error: null,
           hasData: presRes.hasData,
           rate: presRes.rate,
+          presentCount: presRes.presentCount ?? 0,
+          absentCount: presRes.absentCount ?? 0,
           records: presRes.records || [],
         });
       }
@@ -396,8 +476,18 @@ export default function MemberProfileScreen({ navigation, route }) {
         </View>
 
         <View style={[styles.card, shadows.card, styles.cardSpacing]}>
-          <Text style={styles.cardTitle}>الحضور</Text>
-          <PresenceSectionContent presenceState={presenceState} styles={styles} />
+          <Text style={styles.cardTitle}>
+            {!presenceState.loading &&
+            presenceState.rate != null &&
+            presenceState.rate !== 0
+              ? `نسبة الحضور ${presenceState.rate}%`
+              : "نسبة الحضور"}
+          </Text>
+          <PresenceSectionContent
+            key={`${memberId || ""}_${seanceId || ""}`}
+            presenceState={presenceState}
+            styles={styles}
+          />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -460,6 +550,35 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     ...rtlTextBold,
   },
+  monthNavBar: {
+    flexDirection: "row",
+    direction: "ltr",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  monthNavBtn: {
+    padding: 6,
+    minWidth: 32,
+    alignItems: "center",
+  },
+  monthNavLabel: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+    textAlign: "center",
+    ...rtlText,
+  },
+  monthNavLabelStatic: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+    marginTop: 8,
+    marginBottom: 4,
+    textAlign: "center",
+    ...rtlText,
+  },
   row: {
     flexDirection: row,
     alignItems: "center",
@@ -479,6 +598,13 @@ const styles = StyleSheet.create({
   rowValue: {
     fontSize: 15,
     color: colors.text,
+    fontFamily: fonts.semiBold,
+    marginTop: 2,
+    ...rtlText,
+  },
+  presenceStatValue: {
+    fontSize: 15,
+    color: colors.muted,
     fontFamily: fonts.semiBold,
     marginTop: 2,
     ...rtlText,

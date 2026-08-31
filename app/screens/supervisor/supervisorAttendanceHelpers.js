@@ -36,10 +36,10 @@ export function markingAlertText(sessionDate, isMarked, markingWindowEnd) {
   const deadline = formatDeadlineLabel(markingWindowEnd);
   if (isMarked) {
     return deadline
-      ? `الحضور مسجّل لحصة ${dateLabel} — يمكن التعديل حتى ${deadline}`
-      : `الحضور مسجّل لحصة ${dateLabel} — يمكن التعديل خلال 48 ساعة`;
+      ? `الحضور مسجّل لهذه الحصة  \nيمكنك التعديل حتى ${deadline}`
+      : `الحضور مسجّل لهذه الحصة  \n يمكنك التعديل خلال 48 ساعة`;
   }
-  return `تسجيل الحضور — حصة ${dateLabel}`;
+  return `تسجيل الحضور — هذه الحصة`;
 }
 
 /** Invite à marquer avant la fin de la fenêtre (carte historique non marquée). */
@@ -69,12 +69,12 @@ export function formatMonthGroupLabel(monthKey) {
 }
 
 /** Regroupe les lignes d'historique par mois (ordre conservé : plus récent en premier). */
-export function groupAttendanceRowsByMonth(rows = []) {
+export function groupAttendanceRowsByMonth(rows = [], dateKey = "sessionDate") {
   const groups = [];
   const indexByKey = new Map();
 
   rows.forEach((row) => {
-    const monthKey = sessionDateToMonthKey(row.sessionDate);
+    const monthKey = sessionDateToMonthKey(row[dateKey]);
     if (!monthKey) return;
 
     if (!indexByKey.has(monthKey)) {
@@ -90,6 +90,11 @@ export function groupAttendanceRowsByMonth(rows = []) {
   });
 
   return groups;
+}
+
+/** Regroupe les records membre ({ date, status }) par mois pour MemberProfileScreen. */
+export function groupMemberPresenceByMonth(records = []) {
+  return groupAttendanceRowsByMonth(records, "date");
 }
 
 /** Résumé compact pour l’écran historique : nb séances + % présence saison. */

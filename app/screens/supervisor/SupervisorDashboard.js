@@ -59,6 +59,7 @@ export default function SupervisorDashboard({ navigation }) {
     membersWithStatus,
     attendancePct,
     avgProgress,
+    isMarkingWindowOpen,
     loading,
     fetchError,
     dataSource,
@@ -190,6 +191,7 @@ export default function SupervisorDashboard({ navigation }) {
                 members={members}
                 attendancePct={attendancePct}
                 avgProgress={avgProgress}
+                isMarkingWindowOpen={isMarkingWindowOpen}
                 onChangeTab={setTab}
               />
             )}

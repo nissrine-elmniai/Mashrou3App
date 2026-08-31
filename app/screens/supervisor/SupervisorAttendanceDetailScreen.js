@@ -134,7 +134,7 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
         <Text style={styles.bannerGroup}>{groupName || "الحصة"}</Text>
         <Text style={styles.bannerDate}>حصة {dateLabel}</Text>
         {!readOnly && deadlineLabel ? (
-          <Text style={styles.bannerDeadline}>يمكن التعديل حتى {deadlineLabel}</Text>
+          <Text style={styles.bannerDeadline}>يمكنك التعديل حتى {deadlineLabel}</Text>
         ) : null}
       </View>
 

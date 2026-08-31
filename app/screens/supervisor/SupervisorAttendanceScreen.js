@@ -19,12 +19,15 @@ import {
   computeAttendanceHistorySummary,
 } from "./supervisorAttendanceHelpers";
 import { buildSeanceAttendanceHistory } from "../../lib/presenceApi";
+import { arabicSessionCountLabel } from "./supervisorHelpers";
 
 const DEGRADED_MESSAGE =
   "تسجيل الحضور غير متاح دون اتصال بقاعدة البيانات. يُرجى تسجيل الدخول عبر Supabase.";
 
 function membersForNav(groupMembers) {
   return groupMembers.map((m) => ({
+
+    
     id: m.user?.id,
     firstName: m.user?.firstName,
     lastName: m.user?.lastName,
@@ -180,16 +183,18 @@ export default function SupervisorAttendanceScreen({
             </Text>
             {!historyState.loading && !historyState.error ? (
               <>
-                <Text style={styles.summaryDot}>·</Text>
+                <Text style={styles.summaryDot}> · </Text>
                 <Text style={styles.summaryText}>
-                  {historySummary.sessionCount} حصة
+                  {arabicSessionCountLabel(historySummary.sessionCount)}
                 </Text>
-                <Text style={styles.summaryDot}>·</Text>
-                <Text style={styles.summaryText}>
-                  {historySummary.attendancePct != null
-                    ? `${historySummary.attendancePct}% حضور`
-                    : "— حضور"}
-                </Text>
+                {historySummary.attendancePct != null ? (
+                  <>
+                    <Text style={styles.summaryDot}> · </Text>
+                    <Text style={styles.summaryText}>
+                      نسبة الحضور {historySummary.attendancePct}%
+                    </Text>
+                  </>
+                ) : null}
               </>
             ) : null}
           </View>
@@ -283,7 +288,7 @@ const styles = StyleSheet.create({
   monthHeader: {
     fontFamily: fonts.bold,
     fontSize: 14,
-    color: colors.muted,
+    color: colors.gold,
     marginBottom: 10,
     marginTop: 4,
     ...rtlText,
