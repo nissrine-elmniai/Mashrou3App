@@ -149,7 +149,7 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
 
       <View style={styles.banner}>
         <Text style={styles.bannerGroup}>{groupName || "الحصة"}</Text>
-        <Text style={styles.bannerDate}>حصة {dateLabel}</Text>
+        <Text style={styles.bannerDate}>{dateLabel}</Text>
         {showPresenceSummary ? (
           <Text style={styles.bannerStats}>
             <Text style={styles.bannerPresent}>{presenceStats.presentCount} حاضر</Text>

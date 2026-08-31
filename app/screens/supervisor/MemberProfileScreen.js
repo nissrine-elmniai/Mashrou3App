@@ -480,8 +480,8 @@ export default function MemberProfileScreen({ navigation, route }) {
             {!presenceState.loading &&
             presenceState.rate != null &&
             presenceState.rate !== 0
-              ? `نسبة الحضور ${presenceState.rate}%`
-              : "نسبة الحضور"}
+              ? `الحضور (${presenceState.rate}%)`
+              : "الحضور"}
           </Text>
           <PresenceSectionContent
             key={`${memberId || ""}_${seanceId || ""}`}
