@@ -199,7 +199,7 @@ export function SectionCard({
   );
 }
 
-export function QuickButton({ color = colors.primary, icon, label, onPress, badgeCount }) {
+export function QuickButton({ color = colors.primary, icon, label, onPress, badgeCount, textStyle }) {
   const count = Number(badgeCount) || 0;
   const showBadge = count > 0;
 
@@ -213,7 +213,11 @@ export function QuickButton({ color = colors.primary, icon, label, onPress, badg
       onPress={onPress}
       activeOpacity={0.85}
     >
-      <Text style={styles.quickBtnText}>{label}</Text>
+      <Text
+        style={textStyle ? [styles.quickBtnTextPlain, textStyle] : styles.quickBtnText}
+      >
+        {label}
+      </Text>
       {icon && showBadge ? (
         <View style={styles.quickBtnIconWrap}>
           {iconNode}
@@ -590,6 +594,12 @@ const styles = StyleSheet.create({
     color: "white",
     fontFamily: fonts.bold,
     fontSize: 16,
+    textAlign: "center",
+    writingDirection: "rtl",
+  },
+  /** Sans fontFamily bold — hérite de la typo globale (comme headerGreeting). */
+  quickBtnTextPlain: {
+    color: "white",
     textAlign: "center",
     writingDirection: "rtl",
   },

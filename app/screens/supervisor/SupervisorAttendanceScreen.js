@@ -1,49 +1,162 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from "react-native";
-import { useApp } from "../../context/AppContext";
+import React, { useCallback, useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+} from "react-native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { colors, radii } from "../../constants/theme";
-import { row, fonts } from "../../constants/rtl";
-import { ATTENDANCE_STATUS } from "../../constants/roles";
-import { SoftButton, EmptyState, QuickButton } from "../../components/ui";
-import { AttendanceRow } from "./components/SupervisorWidgets";
-import { todayIso, buildDateChips, initials } from "./supervisorHelpers";
+import { fonts, rtlText } from "../../constants/rtl";
+import { SoftButton, EmptyState } from "../../components/ui";
+import { AttendanceHistoryRow } from "./components/SupervisorWidgets";
+import {
+  isSupabaseEntityId,
+  markingAlertText,
+  unmarkedDeadlinePrompt,
+  groupAttendanceRowsByMonth,
+  computeAttendanceHistorySummary,
+} from "./supervisorAttendanceHelpers";
+import { buildSeanceAttendanceHistory } from "../../lib/presenceApi";
+import { arabicSessionCountLabel } from "./supervisorHelpers";
+
+const DEGRADED_MESSAGE =
+  "تسجيل الحضور غير متاح دون اتصال بقاعدة البيانات. يُرجى تسجيل الدخول عبر Supabase.";
+
+function membersForNav(groupMembers) {
+  return groupMembers.map((m) => ({
+
+    
+    id: m.user?.id,
+    firstName: m.user?.firstName,
+    lastName: m.user?.lastName,
+  }));
+}
 
 export default function SupervisorAttendanceScreen({
   myGroups,
   activeGroup,
   selectedGroupId,
   onSelectGroup,
+  members = [],
+  usingSupabase = false,
 }) {
-  const { getUserById, attendance, saveAttendance } = useApp();
+  const navigation = useNavigation();
 
-  const [selectedDate, setSelectedDate] = useState(todayIso());
-  const [records, setRecords] = useState({});
-  const dateChips = useMemo(buildDateChips, []);
+  const [historyState, setHistoryState] = useState({
+    loading: false,
+    rows: [],
+    error: null,
+  });
+  const [markingContext, setMarkingContext] = useState(null);
 
-  useEffect(() => {
-    if (!activeGroup) return;
-    const init = {};
-    const found = attendance.find(
-      (a) => a.groupId === activeGroup.id && a.date === selectedDate
-    );
-    (activeGroup.memberIds || []).forEach((id) => {
-      init[id] = found?.records?.[id] === ATTENDANCE_STATUS.PRESENT;
-    });
-    setRecords(init);
-  }, [activeGroup, selectedDate, attendance]);
+  const groupMembers = useMemo(() => {
+    if (!activeGroup?.id) return [];
+    return members.filter((m) => m.group?.id === activeGroup.id);
+  }, [members, activeGroup?.id]);
 
-  const handleSaveAttendance = () => {
-    if (!activeGroup) {
-      Alert.alert("تنبيه", "لا توجد مجموعة مسندة إليك");
+  const memberIds = useMemo(
+    () => groupMembers.map((m) => m.user?.id).filter(Boolean),
+    [groupMembers]
+  );
+
+  const monthGroups = useMemo(
+    () => groupAttendanceRowsByMonth(historyState.rows),
+    [historyState.rows]
+  );
+
+  const historySummary = useMemo(
+    () =>
+      computeAttendanceHistorySummary(historyState.rows, memberIds.length),
+    [historyState.rows, memberIds.length]
+  );
+
+  const loadHistory = useCallback(async () => {
+    if (
+      !usingSupabase ||
+      !activeGroup?.id ||
+      !activeGroup?.jour ||
+      memberIds.length === 0 ||
+      !isSupabaseEntityId(activeGroup.id) ||
+      memberIds.some((id) => !isSupabaseEntityId(id))
+    ) {
+      setHistoryState({ loading: false, rows: [], error: null });
+      setMarkingContext(null);
       return;
     }
-    const mapped = {};
-    Object.entries(records).forEach(([mid, present]) => {
-      mapped[mid] = present ? ATTENDANCE_STATUS.PRESENT : ATTENDANCE_STATUS.ABSENT;
-    });
-    saveAttendance(activeGroup.id, selectedDate, mapped);
-    Alert.alert("تم", "تم حفظ الحضور");
-  };
+
+    if (!activeGroup.saisonDateDebut) {
+      setHistoryState({
+        loading: false,
+        rows: [],
+        error: "تاريخ بداية الموسم غير متوفر — تعذر عرض سجل الحضور",
+      });
+      setMarkingContext(null);
+      return;
+    }
+
+    setHistoryState((s) => ({ ...s, loading: true, error: null }));
+
+    const res = await buildSeanceAttendanceHistory(
+      activeGroup.id,
+      activeGroup.jour,
+      activeGroup.heureDebut,
+      activeGroup.saisonDateDebut,
+      memberIds
+    );
+
+    if (!res.ok) {
+      setHistoryState({
+        loading: false,
+        rows: [],
+        error: res.error || "تعذر تحميل بيانات الحضور",
+      });
+      setMarkingContext(null);
+      return;
+    }
+
+    setHistoryState({ loading: false, rows: res.rows || [], error: null });
+    setMarkingContext(res.markingContext || null);
+  }, [
+    usingSupabase,
+    activeGroup?.id,
+    activeGroup?.jour,
+    activeGroup?.heureDebut,
+    activeGroup?.saisonDateDebut,
+    memberIds,
+  ]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadHistory();
+    }, [loadHistory])
+  );
+
+  const openDetail = useCallback(
+    (row, readOnly) => {
+      if (!activeGroup?.id || !row?.sessionDate) return;
+
+      navigation.navigate("SupervisorAttendanceDetail", {
+        readOnly,
+        seanceId: activeGroup.id,
+        sessionDate: row.sessionDate,
+        markingWindowEnd: row.markingWindowEnd,
+        isMarked: row.isMarked,
+        groupName: activeGroup.name,
+        members: membersForNav(groupMembers),
+      });
+    },
+    [navigation, activeGroup, groupMembers]
+  );
+
+  if (!usingSupabase) {
+    return (
+      <View style={styles.degradedWrap}>
+        <EmptyState text={DEGRADED_MESSAGE} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.flexFill}>
@@ -62,96 +175,130 @@ export default function SupervisorAttendanceScreen({
         </View>
       ) : null}
 
-      <View style={styles.dateChipsWrapper}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {dateChips.map((d) => {
-            const active = d.iso === selectedDate;
-            return (
-              <TouchableOpacity
-                key={d.iso}
-                style={[styles.dateChip, active && styles.dateChipActive]}
-                onPress={() => setSelectedDate(d.iso)}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.dateChipDay, active && styles.dateChipTextActive]}>
-                  {d.day}
-                </Text>
-                <Text style={[styles.dateChipNum, active && styles.dateChipTextActive]}>
-                  {d.num}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
-      {activeGroup ? (
-        <View style={styles.sessionBanner}>
-          <Text style={styles.sessionBannerText}>
-            {activeGroup.name}
-            {activeGroup.schedule ? ` - ${activeGroup.schedule}` : ""}
-          </Text>
-        </View>
-      ) : null}
-
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {!activeGroup || (activeGroup.memberIds || []).length === 0 ? (
+        {activeGroup ? (
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryText} numberOfLines={1}>
+              {activeGroup.name}
+            </Text>
+            {!historyState.loading && !historyState.error ? (
+              <>
+                <Text style={styles.summaryDot}> · </Text>
+                <Text style={styles.summaryText}>
+                  {arabicSessionCountLabel(historySummary.sessionCount)}
+                </Text>
+                {historySummary.attendancePct != null ? (
+                  <>
+                    <Text style={styles.summaryDot}> · </Text>
+                    <Text style={styles.summaryText}>
+                      نسبة الحضور {historySummary.attendancePct}%
+                    </Text>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
+        {historyState.loading ? (
+          <ActivityIndicator color={colors.primary} style={styles.loader} />
+        ) : historyState.error ? (
+          <EmptyState text={historyState.error} />
+        ) : !activeGroup || groupMembers.length === 0 ? (
           <EmptyState text="لا يوجد أعضاء في هذه المجموعة" />
+        ) : historyState.rows.length === 0 ? (
+          <EmptyState text="لا توجد حصص سابقة لعرضها" />
         ) : (
-          activeGroup.memberIds.map((mid) => {
-            const user = getUserById(mid);
-            if (!user) return null;
-            const name = `${user.firstName} ${user.lastName}`;
-            return (
-              <AttendanceRow
-                key={mid}
-                name={name}
-                initial={initials(user.firstName)}
-                value={!!records[mid]}
-                onToggle={(v) => setRecords((prev) => ({ ...prev, [mid]: v }))}
-              />
-            );
-          })
+          monthGroups.map((group) => (
+            <View key={group.monthKey} style={styles.monthSection}>
+              <Text style={styles.monthHeader}>{group.label}</Text>
+              {group.rows.map((row) => {
+                const isMarkingRow =
+                  row.windowOpen && markingContext?.sessionDate === row.sessionDate;
+                const needsMarkingHighlight = isMarkingRow && !row.isMarked;
+
+                return (
+                  <AttendanceHistoryRow
+                    key={row.sessionDate}
+                    sessionDate={row.sessionDate}
+                    presentCount={row.presentCount}
+                    absentCount={row.absentCount}
+                    pct={row.pct}
+                    isMarked={row.isMarked}
+                    memberTotal={memberIds.length}
+                    highlightUnmarked={needsMarkingHighlight}
+                    unmarkedPrompt={
+                      needsMarkingHighlight
+                        ? unmarkedDeadlinePrompt(row.markingWindowEnd)
+                        : null
+                    }
+                    markingHint={
+                      isMarkingRow && row.isMarked
+                        ? markingAlertText(
+                            row.sessionDate,
+                            row.isMarked,
+                            row.markingWindowEnd
+                          )
+                        : null
+                    }
+                    onPress={() => openDetail(row, !isMarkingRow)}
+                  />
+                );
+              })}
+            </View>
+          ))
         )}
       </ScrollView>
-
-      <View style={styles.saveBar}>
-        <QuickButton
-          label="حفظ الحضور "
-          icon="checkmark"
-          color={colors.primary}
-          onPress={handleSaveAttendance}
-        />
-      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   flexFill: { flex: 1 },
+  degradedWrap: { flex: 1, justifyContent: "center", padding: 16 },
   scrollContent: { padding: 16, paddingBottom: 24 },
   groupPicker: { paddingHorizontal: 16, paddingTop: 12, backgroundColor: colors.card },
-  dateChipsWrapper: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  dateChip: {
+  summaryRow: {
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    backgroundColor: colors.primary,
+    borderRadius: radii.lg,
+    paddingVertical: 12,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: radii.md,
-    backgroundColor: colors.bg,
-    marginEnd: 8,
-    minWidth: 56,
+    marginBottom: 14,
   },
-  dateChipActive: { backgroundColor: colors.primary },
-  dateChipDay: { fontSize: 11, color: colors.muted, fontFamily: fonts.regular },
-  dateChipNum: { fontSize: 15, color: colors.text, fontFamily: fonts.bold, marginTop: 2 },
-  dateChipTextActive: { color: "white" },
-  sessionBanner: { padding: 10, backgroundColor: colors.primarySoft },
-  sessionBannerText: { color: colors.primary, fontFamily: fonts.semiBold, textAlign: "center" },
-  saveBar: { padding: 16, backgroundColor: colors.card, borderTopWidth: 1, borderTopColor: colors.border },
+  summaryText: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "#FFFFFF",
+    textAlign: "center",
+    writingDirection: "rtl",
+  },
+  summaryDot: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.75)",
+    marginHorizontal: 6,
+  },
+  monthSection: {
+    marginBottom: 8,
+  },
+  monthHeader: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: colors.gold,
+    marginBottom: 10,
+    marginTop: 4,
+    ...rtlText,
+  },
+  sessionBanner: { padding: 10, backgroundColor: colors.card },
+  sessionBannerText: {
+    color: colors.text,
+    fontFamily: fonts.medium,
+    textAlign: "center",
+    ...rtlText,
+  },
+  loader: { marginVertical: 24 },
 });

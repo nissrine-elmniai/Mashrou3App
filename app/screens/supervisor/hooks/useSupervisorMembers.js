@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../../../context/AppContext";
-import { deriveLevel, getCurrentWeekSessionDate } from "../supervisorHelpers";
+import { deriveLevel, getLatestSeanceOccurrence } from "../supervisorHelpers";
+import {
+  computeAttendanceHistorySummary,
+  isSupabaseEntityId,
+} from "../supervisorAttendanceHelpers";
 import { getSupervisorActiveSeance, getSeanceMembers } from "../../../lib/membersApi";
-import { getSeancePresenceForDate } from "../../../lib/presenceApi";
+import {
+  buildSeanceAttendanceHistory,
+  getSeancePresenceForDate,
+  getPresenceReminderForOccurrence,
+} from "../../../lib/presenceApi";
 
 /** Message UI mode dégradé (mock après échec Supabase réel). */
 export const SUPERVISOR_FETCH_DEGRADED_MESSAGE =
@@ -16,9 +24,10 @@ function buildScheduleLabel(seance) {
   return [seance.jour, heures].filter(Boolean).join(" ");
 }
 
-function weeklyPresenceToMemberStatus(presence) {
+function weeklyPresenceToMemberStatus(presence, occurrence = {}) {
   if (presence === "present") return "present";
   if (presence === "absent") return "absent";
+  if (occurrence.withinMarkingWindow) return "absent";
   return "none";
 }
 
@@ -60,6 +69,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
   }, [myGroupsMock, getUserById, getMemberProgress]);
 
   const supervisorAuthId = supabaseSession?.user?.id || null;
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const refetch = () => setRefreshKey((k) => k + 1);
 
   const [fetchState, setFetchState] = useState({
     loading: false,
@@ -70,12 +82,22 @@ export function useSupervisorMembers(selectedGroupId = null) {
     myGroups: [],
     members: [],
     weeklyPresenceByMember: {},
+    occurrenceMeta: null,
+    globalAttendancePct: null,
+    showPresenceReminder: false,
   });
 
   useEffect(() => {
     if (!supervisorAuthId) {
       setFetchState({ loading: false, loaded: false, error: null });
-      setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
+      setSupabaseData({
+        myGroups: [],
+        members: [],
+        weeklyPresenceByMember: {},
+        occurrenceMeta: null,
+        globalAttendancePct: null,
+        showPresenceReminder: false,
+      });
       return;
     }
 
@@ -92,7 +114,14 @@ export function useSupervisorMembers(selectedGroupId = null) {
             "useSupervisorMembers: échec lecture séance Supabase —",
             seanceRes.error
           );
-          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
+          setSupabaseData({
+            myGroups: [],
+            members: [],
+            weeklyPresenceByMember: {},
+            occurrenceMeta: null,
+            globalAttendancePct: null,
+            showPresenceReminder: false,
+          });
           setFetchState({
             loading: false,
             loaded: false,
@@ -103,7 +132,14 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
         const seance = seanceRes.seance;
         if (!seance) {
-          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
+          setSupabaseData({
+            myGroups: [],
+            members: [],
+            weeklyPresenceByMember: {},
+            occurrenceMeta: null,
+            globalAttendancePct: null,
+            showPresenceReminder: false,
+          });
           setFetchState({ loading: false, loaded: true, error: null });
           return;
         }
@@ -116,7 +152,14 @@ export function useSupervisorMembers(selectedGroupId = null) {
             "useSupervisorMembers: échec lecture membres Supabase —",
             membersRes.error
           );
-          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
+          setSupabaseData({
+            myGroups: [],
+            members: [],
+            weeklyPresenceByMember: {},
+            occurrenceMeta: null,
+            globalAttendancePct: null,
+            showPresenceReminder: false,
+          });
           setFetchState({
             loading: false,
             loaded: false,
@@ -130,9 +173,12 @@ export function useSupervisorMembers(selectedGroupId = null) {
           id: seance.id,
           name: seance.nom,
           seasonId: seance.saison_id,
+          saisonDateDebut: seance.saisons?.date_debut || null,
+          createdAt: seance.created_at || null,
           supervisorId: seance.superviseur_id,
           memberIds: seanceMembers.map((m) => m.userId),
           jour: seance.jour,
+          heureDebut: seance.heure_debut || null,
           schedule: buildScheduleLabel(seance),
         };
 
@@ -156,11 +202,17 @@ export function useSupervisorMembers(selectedGroupId = null) {
         }));
 
         let weeklyPresenceByMember = {};
-        const weekSession = getCurrentWeekSessionDate(seance.jour);
-        if (weekSession.hasOccurred && weekSession.sessionDate) {
+        let occurrenceMeta = null;
+        const occurrence = getLatestSeanceOccurrence(
+          seance.jour,
+          new Date(),
+          seance.heure_debut || null
+        );
+        if (occurrence.sessionDate && occurrence.sessionStarted) {
+          occurrenceMeta = occurrence;
           const presRes = await getSeancePresenceForDate(
             seance.id,
-            weekSession.sessionDate,
+            occurrence.sessionDate,
             group.memberIds
           );
           if (cancelled) return;
@@ -174,7 +226,66 @@ export function useSupervisorMembers(selectedGroupId = null) {
           }
         }
 
-        setSupabaseData({ myGroups: [group], members, weeklyPresenceByMember });
+        let showPresenceReminder = false;
+        if (occurrence.withinMarkingWindow && occurrence.sessionDate) {
+          const isMarked = Object.values(weeklyPresenceByMember).some(
+            (s) => s === "present" || s === "absent"
+          );
+          if (!isMarked) {
+            const rappelRes = await getPresenceReminderForOccurrence(
+              seance.id,
+              occurrence.sessionDate
+            );
+            if (cancelled) return;
+            if (rappelRes.ok && (rappelRes.nbRappels ?? 0) > 0) {
+              showPresenceReminder = true;
+            }
+          }
+        }
+
+        let globalAttendancePct = null;
+        const memberIds = group.memberIds;
+        const canLoadGlobalHistory =
+          seance.id &&
+          seance.jour &&
+          memberIds.length > 0 &&
+          group.saisonDateDebut &&
+          isSupabaseEntityId(seance.id) &&
+          memberIds.every((id) => isSupabaseEntityId(id));
+
+        if (canLoadGlobalHistory) {
+          const historyRes = await buildSeanceAttendanceHistory(
+            seance.id,
+            seance.jour,
+            seance.heure_debut || null,
+            group.saisonDateDebut,
+            memberIds
+          );
+          if (cancelled) return;
+          if (historyRes.ok) {
+            const summary = computeAttendanceHistorySummary(
+              historyRes.rows,
+              memberIds.length
+            );
+            if (summary.attendancePct != null) {
+              globalAttendancePct = summary.attendancePct;
+            }
+          } else {
+            console.warn(
+              "useSupervisorMembers: échec historique global —",
+              historyRes.error
+            );
+          }
+        }
+
+        setSupabaseData({
+          myGroups: [group],
+          members,
+          weeklyPresenceByMember,
+          occurrenceMeta,
+          globalAttendancePct,
+          showPresenceReminder,
+        });
         setFetchState({ loading: false, loaded: true, error: null });
       } catch (e) {
         console.warn(
@@ -182,7 +293,14 @@ export function useSupervisorMembers(selectedGroupId = null) {
           e?.message || e
         );
         if (!cancelled) {
-          setSupabaseData({ myGroups: [], members: [], weeklyPresenceByMember: {} });
+          setSupabaseData({
+            myGroups: [],
+            members: [],
+            weeklyPresenceByMember: {},
+            occurrenceMeta: null,
+            globalAttendancePct: null,
+            showPresenceReminder: false,
+          });
           setFetchState({
             loading: false,
             loaded: false,
@@ -195,7 +313,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     return () => {
       cancelled = true;
     };
-  }, [supervisorAuthId]);
+  }, [supervisorAuthId, refreshKey]);
 
   const loading = !!supervisorAuthId && fetchState.loading;
   const fetchError =
@@ -221,6 +339,13 @@ export function useSupervisorMembers(selectedGroupId = null) {
     myGroups.find((g) => g.id === selectedGroupId) || myGroups[0] || null;
 
   const weeklyPresenceByMember = usingSupabase ? supabaseData.weeklyPresenceByMember : {};
+  const occurrenceMeta = usingSupabase ? supabaseData.occurrenceMeta : null;
+
+  const isMarkingWindowOpen =
+    usingSupabase && occurrenceMeta?.withinMarkingWindow === true;
+
+  const showPresenceReminder =
+    usingSupabase && supabaseData.showPresenceReminder === true;
 
   const membersWithStatus = useMemo(
     () =>
@@ -230,20 +355,31 @@ export function useSupervisorMembers(selectedGroupId = null) {
           Math.round(((m.prog?.hifzPages || 0) / (m.prog?.targetPages || 1)) * 100)
         );
         const status = usingSupabase
-          ? weeklyPresenceToMemberStatus(weeklyPresenceByMember[m.user.id])
+          ? weeklyPresenceToMemberStatus(
+              weeklyPresenceByMember[m.user.id],
+              occurrenceMeta || {}
+            )
           : "none";
         return { ...m, pct, level: deriveLevel(pct), status };
       }),
-    [members, usingSupabase, weeklyPresenceByMember]
+    [members, usingSupabase, weeklyPresenceByMember, occurrenceMeta]
   );
 
   const presentCount = membersWithStatus.filter((m) => m.status === "present").length;
 
-  const attendancePct = usingSupabase
-    ? 0
-    : members.length === 0
-    ? 0
-    : Math.round((presentCount / members.length) * 100);
+  const weeklyFallbackPct =
+    usingSupabase && occurrenceMeta?.sessionStarted && members.length > 0
+      ? Math.round((presentCount / members.length) * 100)
+      : usingSupabase
+      ? 0
+      : members.length === 0
+      ? 0
+      : Math.round((presentCount / members.length) * 100);
+
+  const attendancePct =
+    usingSupabase && supabaseData.globalAttendancePct != null
+      ? supabaseData.globalAttendancePct
+      : weeklyFallbackPct;
   const avgProgress = usingSupabase
     ? 0
     : membersWithStatus.length === 0
@@ -260,8 +396,11 @@ export function useSupervisorMembers(selectedGroupId = null) {
     attendancePct,
     avgProgress,
     presentCount,
+    isMarkingWindowOpen,
+    showPresenceReminder,
     loading,
     fetchError,
     dataSource: usingSupabase ? "supabase" : "mock",
+    refetch,
   };
 }

@@ -47,6 +47,29 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+async function attachSaisonDatesToSeances(seances) {
+  const list = Array.isArray(seances) ? seances : seances ? [seances] : [];
+  const missing = list.filter((s) => s && !s.saisons?.date_debut && s.saison_id);
+  if (missing.length === 0) return list;
+
+  const saisonIds = [...new Set(missing.map((s) => s.saison_id).filter(Boolean))];
+  const saisonRes = await withTimeout(
+    supabase.from("saisons").select("id, date_debut").in("id", saisonIds),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة تواريخ المواسم"
+  );
+  if (saisonRes.error || !saisonRes.data?.length) return list;
+
+  const dateById = Object.fromEntries(
+    saisonRes.data.map((row) => [row.id, row.date_debut])
+  );
+  return list.map((s) => {
+    if (!s?.saison_id || s.saisons?.date_debut) return s;
+    const date_debut = dateById[s.saison_id];
+    return date_debut ? { ...s, saisons: { date_debut } } : s;
+  });
+}
+
 /**
  * Séances actives du superviseur connecté (auth user id = profiles.id).
  * Un superviseur peut avoir plusieurs séances (ex. hommes / femmes).
@@ -60,20 +83,42 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
   }
 
   try {
-    const { data, error } = await withTimeout(
+    let data;
+    let error;
+
+    const withSaison = await withTimeout(
       supabase
         .from("seances")
-        .select("*")
+        .select("*, saisons(date_debut)")
         .eq("superviseur_id", supervisorAuthId)
         .eq("statut", "active"),
       SUPABASE_TIMEOUT_MS,
       "قراءة الحصص النشطة"
     );
+    data = withSaison.data;
+    error = withSaison.error;
+
+    if (error && /relationship|PGRST200|Could not find a relationship/i.test(error?.message || "")) {
+      const fallback = await withTimeout(
+        supabase
+          .from("seances")
+          .select("*")
+          .eq("superviseur_id", supervisorAuthId)
+          .eq("statut", "active"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الحصص النشطة"
+      );
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) {
       logSupabaseError("getSupervisorActiveSeances", error);
       return { ok: false, error: mapTableError(error, "seances"), seances: [] };
     }
-    return { ok: true, seances: sortSeancesByJour(data || []) };
+
+    const seances = await attachSaisonDatesToSeances(data || []);
+    return { ok: true, seances: sortSeancesByJour(seances) };
   } catch (e) {
     return {
       ok: false,

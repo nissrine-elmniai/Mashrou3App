@@ -275,8 +275,31 @@ export async function createSeance({
   }
 }
 
+function normalizeTimeValue(value) {
+  if (value == null || value === "") return null;
+  return String(value).slice(0, 5);
+}
+
+function planningFieldChanged(current, patch, field) {
+  if (patch[field] === undefined) return false;
+  if (field === "heure_debut" || field === "heure_fin") {
+    return normalizeTimeValue(current?.[field]) !== normalizeTimeValue(patch[field]);
+  }
+  return (current?.[field] ?? null) !== (patch[field] ?? null);
+}
+
+function hasPlanningChange(current, patch) {
+  return (
+    planningFieldChanged(current, patch, "jour") ||
+    planningFieldChanged(current, patch, "heure_debut") ||
+    planningFieldChanged(current, patch, "heure_fin")
+  );
+}
+
 /**
  * (Admin) Mise à jour d'une séance.
+ * Si jour/heure_debut/heure_fin changent : archive l'ancienne période dans
+ * seance_planning_history avant d'écraser, puis planning_valide_depuis = now().
  * @param {object} payload { seanceId, patch: { nom?, saison_id?, jour?, heure_debut?, heure_fin?, superviseur_id?, statut? } }
  * @returns { ok, seance? }
  */
@@ -315,10 +338,53 @@ export async function updateSeance({ seanceId, patch }) {
   }
 
   try {
+    const { data: current, error: fetchError } = await withTimeout(
+      supabase
+        .from("seances")
+        .select("jour, heure_debut, heure_fin, planning_valide_depuis, created_at")
+        .eq("id", seanceId)
+        .single(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الحصة"
+    );
+
+    if (fetchError) {
+      return { ok: false, error: mapTableError(fetchError, "seances") };
+    }
+    if (!current) {
+      return { ok: false, error: "الحصة غير موجودة" };
+    }
+
+    const now = new Date().toISOString();
+    const updatePayload = { ...clean, updated_at: now };
+
+    if (hasPlanningChange(current, clean)) {
+      const archiveRow = {
+        seance_id: seanceId,
+        jour: current.jour ?? null,
+        heure_debut: current.heure_debut ?? null,
+        heure_fin: current.heure_fin ?? null,
+        valide_depuis: current.planning_valide_depuis || current.created_at || now,
+        valide_jusqu_a: now,
+      };
+
+      const { error: archiveError } = await withTimeout(
+        supabase.from("seance_planning_history").insert(archiveRow),
+        SUPABASE_TIMEOUT_MS,
+        "أرشفة جدول الحصة"
+      );
+
+      if (archiveError) {
+        return { ok: false, error: mapTableError(archiveError, "seance_planning_history") };
+      }
+
+      updatePayload.planning_valide_depuis = now;
+    }
+
     const { data, error } = await withTimeout(
       supabase
         .from("seances")
-        .update({ ...clean, updated_at: new Date().toISOString() })
+        .update(updatePayload)
         .eq("id", seanceId)
         .select("*")
         .single(),

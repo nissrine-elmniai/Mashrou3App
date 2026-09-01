@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -6,13 +6,21 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Switch,
+  Alert,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
 import { fetchProfile, fetchAppUserRow } from "../../lib/auth";
+import {
+  getPushNotificationsToggleState,
+  registerForPushNotifications,
+  unregisterPushNotifications,
+} from "../../lib/pushNotifications";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
 import { initials } from "./supervisorHelpers";
@@ -63,8 +71,66 @@ export default function SupervisorProfileScreen({ navigation }) {
   const [profileRow, setProfileRow] = useState(null);
   const [usersRow, setUsersRow] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [togglingNotifications, setTogglingNotifications] = useState(false);
 
   const authId = currentUser?.authId || supabaseSession?.user?.id || null;
+
+  const loadNotificationsState = useCallback(async () => {
+    if (!authId) {
+      setNotificationsEnabled(false);
+      return;
+    }
+    setLoadingNotifications(true);
+    const res = await getPushNotificationsToggleState(authId);
+    if (res.ok) {
+      setNotificationsEnabled(res.enabled === true);
+    }
+    setLoadingNotifications(false);
+  }, [authId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadNotificationsState();
+    }, [loadNotificationsState])
+  );
+
+  const handleNotificationsToggle = async (nextValue) => {
+    if (!authId || togglingNotifications) return;
+
+    if (nextValue) {
+      setTogglingNotifications(true);
+      const res = await registerForPushNotifications(authId);
+      setTogglingNotifications(false);
+
+      if (!res.ok) {
+        setNotificationsEnabled(false);
+        if (res.permissionDenied) {
+          Alert.alert(
+            "تنبيه",
+            "لم يتم منح إذن الإشعارات. يمكنك تفعيلها من إعدادات الجهاز."
+          );
+        } else {
+          Alert.alert("تنبيه", res.error || "تعذر تفعيل الإشعارات");
+        }
+        return;
+      }
+      setNotificationsEnabled(true);
+      return;
+    }
+
+    setTogglingNotifications(true);
+    const res = await unregisterPushNotifications(authId);
+    setTogglingNotifications(false);
+
+    if (!res.ok) {
+      Alert.alert("تنبيه", res.error || "تعذر إيقاف الإشعارات");
+      await loadNotificationsState();
+      return;
+    }
+    setNotificationsEnabled(false);
+  };
 
   useEffect(() => {
     if (!authId) return;
@@ -136,7 +202,6 @@ export default function SupervisorProfileScreen({ navigation }) {
             value={currentUser?.birthDate}
           />
           <ProfileRow icon="male-female-outline" label="الجنس" value={currentUser?.gender} />
-          <ProfileRow icon="call-outline" label="الهاتف" value={usersRow?.telephone} />
           <ProfileRow
             icon="time-outline"
             label="تاريخ إنشاء الحساب"
@@ -147,6 +212,23 @@ export default function SupervisorProfileScreen({ navigation }) {
             label="آخر تحديث"
             value={formatDateTime(profileRow?.updated_at)}
           />
+        </SectionCard>
+
+        <SectionCard title="الإشعارات" subtitle="استلام التنبيهات والتحديثات">
+          <View style={styles.switchRow}>
+            <Text style={styles.switchLabel}>تفعيل الإشعارات</Text>
+            {loadingNotifications || togglingNotifications ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={handleNotificationsToggle}
+                trackColor={{ true: colors.primary, false: colors.border }}
+                thumbColor="white"
+                disabled={!authId}
+              />
+            )}
+          </View>
         </SectionCard>
       </ScrollView>
     </SafeAreaView>
@@ -230,6 +312,21 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.semiBold,
     marginTop: 2,
+    ...rtlText,
+  },
+  switchRow: {
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F9F9F9",
+    marginTop: 8,
+    padding: 12,
+    borderRadius: radii.md,
+  },
+  switchLabel: {
+    fontSize: 15,
+    fontFamily: fonts.semiBold,
+    color: colors.text,
     ...rtlText,
   },
 });

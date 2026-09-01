@@ -16,6 +16,8 @@ export default function SupervisorHomeScreen({
   members = [],
   attendancePct = 0,
   avgProgress = 0,
+  isMarkingWindowOpen = false,
+  showPresenceReminder = false,
   onChangeTab,
 }) {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -54,6 +56,13 @@ export default function SupervisorHomeScreen({
     setBroadcastOpen(true);
   };
 
+  const quickBtnLabelStyle = {
+    fontSize: 16,
+    color: "white",
+    ...rtlText,
+    textAlign: "center",
+  };
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
       {activeGroup ? (
@@ -69,22 +78,30 @@ export default function SupervisorHomeScreen({
         <EmptyState text="لا توجد مجموعة مسندة إليك بعد — انتظر تعيين الإدارة" />
       )}
 
+      {showPresenceReminder ? (
+        <View style={styles.reminderBanner}>
+          <Text style={styles.reminderText}> لم يتم تسجيل الحضور بعد !</Text>
+        </View>
+      ) : null}
+
       <View style={styles.statsRow}>
         <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
-        <MiniStat value={`${attendancePct}%`} label="نسبة الحضور" color={colors.primary} />
+        <MiniStat value={`${attendancePct}%`} label=" نسبة الحضور" color={colors.primary} />
         <MiniStat value={`${avgProgress}%`} label="متوسط التقدم" color={colors.primary} />
       </View>
 
       <QuickButton
-        label="تسجيل الحضور "
+        label={isMarkingWindowOpen ? " تسجيل الحضور" : " سجل الحضور"}
         icon="checkbox-outline"
         color={colors.gold}
+        textStyle={quickBtnLabelStyle}
         onPress={() => onChangeTab("attendance")}
       />
       <QuickButton
         label="إرسال رسالة للجميع"
         icon="chatbubble-ellipses-outline"
         color={colors.primary}
+        textStyle={quickBtnLabelStyle}
         onPress={openBroadcast}
       />
 
@@ -121,6 +138,21 @@ const styles = StyleSheet.create({
   },
   sessionTitle: { fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
   sessionSchedule: { color: colors.muted, fontSize: 13, marginTop: 4, ...rtlText },
+  reminderBanner: {
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: colors.gold,
+    borderRadius: radii.lg,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+  },
+  reminderText: {
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    color: colors.text,
+    ...rtlText,
+  },
   statsRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
   alertsCard: {
     backgroundColor: colors.card,

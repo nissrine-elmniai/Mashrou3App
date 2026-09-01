@@ -113,6 +113,20 @@ function applySupabaseSessionRole(appUser, profile, local, preferredRole) {
   };
 }
 
+function maybeRefreshSupervisorPushRegistration(userId, role) {
+  if (role !== ROLES.SUPERVISOR || !userId) return;
+  import("../lib/pushNotifications")
+    .then(({ refreshPushRegistrationIfEnabled }) =>
+      refreshPushRegistrationIfEnabled(userId)
+    )
+    .catch((e) => {
+      console.warn(
+        "[push] maybeRefreshSupervisorPushRegistration:",
+        e?.message || e
+      );
+    });
+}
+
 export function AppProvider({ children }) {
   const [hydrated, setHydrated] = useState(false);
   const [users, setUsers] = useState(emptyState.users);
@@ -190,6 +204,10 @@ export function AppProvider({ children }) {
               null
             );
             setSupabaseSession(sessionResult.session);
+            maybeRefreshSupervisorPushRegistration(
+              profileResult.profile.id,
+              restored.role
+            );
           }
         }
       } else if (saved?.currentUserId) {
@@ -313,6 +331,7 @@ export function AppProvider({ children }) {
         preferredRole
       );
       setCurrentUser(sessionUser);
+      maybeRefreshSupervisorPushRegistration(profile.id, sessionUser.role);
       return {
         ok: true,
         user: sessionUser,

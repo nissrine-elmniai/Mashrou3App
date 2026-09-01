@@ -1,6 +1,5 @@
 /**
- * Fiche membre superviseur — données Supabase réelles.
- * Champs éditables par le superviseur : phone, school, level, hifz_amount (profiles).
+ * Fiche membre superviseur — données Supabase réelles (lecture seule sur les infos contact).
  *
  * Décisions techniques actées (ne pas migrer vers le schéma CdC pour ces points) :
  * 1. Identité : profiles (legacy) via inscriptions → profiles FK, pas users+membres/superviseurs.
@@ -11,7 +10,7 @@
  * date_naissance / âge : getSeanceMembers ne joint pas membres.date_naissance ;
  * phone, school, level, hifz_amount viennent de profiles via route.params.
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -19,21 +18,21 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  TextInput,
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
+import { rtlText, rtlTextBold, fonts, arrowBack, row } from "../../constants/rtl";
 import {
   getMemberProgressionSummary,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { getMemberProfileFields, updateMemberInfo, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
-import { initials, deriveLevel, STATUS_COLORS } from "./supervisorHelpers";
+import { getMemberProfileFields, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
+import { initials, deriveLevel, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
+import { groupMemberPresenceByMonth } from "./supervisorAttendanceHelpers";
 
 const PRESENCE_LABELS = {
   present: "حاضر",
@@ -55,22 +54,17 @@ function ProfileRow({ icon, label, value }) {
   );
 }
 
-function ProfileEditRow({ icon, label, value, onChangeText, placeholder }) {
+function PresenceTotalRow({ icon, label, count, iconColor, styles }) {
   return (
     <View style={styles.row}>
       <View style={styles.rowIcon}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
+        <Ionicons name={icon} size={18} color={iconColor} />
       </View>
       <View style={styles.rowTextWrap}>
         <Text style={styles.rowLabel}>{label}</Text>
-        <TextInput
-          style={styles.rowInput}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder || label}
-          placeholderTextColor={colors.placeholder}
-          textAlign={textAlignStart}
-        />
+        <Text style={styles.presenceStatValue}>
+          {arabicSessionCountLabel(count ?? 0)}
+        </Text>
       </View>
     </View>
   );
@@ -90,11 +84,6 @@ function PresenceMiniRow({ date, status }) {
 function formatTumunCourant(metrics) {
   if (metrics?.tumunCourant == null) return "—";
   return String(metrics.tumunCourant);
-}
-
-function formatPresenceRate(rate) {
-  if (rate == null) return "—";
-  return `${rate}%`;
 }
 
 function ProgressSectionContent({ progressState, styles }) {
@@ -152,6 +141,16 @@ function ProgressSectionContent({ progressState, styles }) {
 }
 
 function PresenceSectionContent({ presenceState, styles }) {
+  const monthGroups = useMemo(
+    () => groupMemberPresenceByMonth(presenceState.records || []),
+    [presenceState.records]
+  );
+  const [monthIndex, setMonthIndex] = useState(0);
+
+  useEffect(() => {
+    setMonthIndex(0);
+  }, [presenceState.records]);
+
   if (presenceState.loading) {
     return <ActivityIndicator color={colors.primary} style={styles.loader} />;
   }
@@ -162,23 +161,73 @@ function PresenceSectionContent({ presenceState, styles }) {
     return <Text style={styles.emptyText}>لا يوجد سجل حضور بعد</Text>;
   }
 
+  const currentMonth = monthGroups[monthIndex] || null;
+  const canGoOlder = monthIndex < monthGroups.length - 1;
+  const canGoNewer = monthIndex > 0;
+  const showMonthNav = monthGroups.length > 1;
+
   return (
     <>
-      <ProfileRow
-        icon="checkmark-circle-outline"
-        label="نسبة الحضور"
-        value={formatPresenceRate(presenceState.rate)}
+      <PresenceTotalRow
+        icon="checkmark-circle"
+        label="إجمالي الحضور"
+        count={presenceState.presentCount ?? 0}
+        iconColor={STATUS_COLORS.present}
+        styles={styles}
       />
-      {presenceState.records.length > 0 ? (
-        <View style={styles.presenceList}>
-          {presenceState.records.map((rec, idx) => (
-            <PresenceMiniRow
-              key={`${rec.date}_${rec.status}_${idx}`}
-              date={rec.date}
-              status={rec.status}
-            />
-          ))}
-        </View>
+      <PresenceTotalRow
+        icon="close-circle"
+        label="إجمالي الغياب"
+        count={presenceState.absentCount ?? 0}
+        iconColor={STATUS_COLORS.absent}
+        styles={styles}
+      />
+      {currentMonth ? (
+        <>
+          {!showMonthNav ? (
+            <Text style={styles.monthNavLabelStatic}>{currentMonth.label}</Text>
+          ) : null}
+          <View style={styles.presenceList}>
+            {currentMonth.rows.map((rec, idx) => (
+              <PresenceMiniRow
+                key={`${rec.date}_${rec.status}_${idx}`}
+                date={rec.date}
+                status={rec.status}
+              />
+            ))}
+          </View>
+          {showMonthNav ? (
+            <View style={styles.monthNavBar}>
+              <TouchableOpacity
+                style={styles.monthNavBtn}
+                onPress={() => setMonthIndex((i) => i + 1)}
+                disabled={!canGoOlder}
+                activeOpacity={0.7}
+                accessibilityLabel="الشهر السابق"
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={canGoOlder ? colors.primary : colors.placeholder}
+                />
+              </TouchableOpacity>
+              <Text style={styles.monthNavLabel}>{currentMonth.label}</Text>
+              <TouchableOpacity
+                style={styles.monthNavBtn}
+                onPress={() => setMonthIndex((i) => i - 1)}
+                disabled={!canGoNewer}
+                activeOpacity={0.7}
+                accessibilityLabel="الشهر التالي"
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={canGoNewer ? colors.primary : colors.placeholder}
+                />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </>
       ) : null}
     </>
   );
@@ -218,6 +267,8 @@ export default function MemberProfileScreen({ navigation, route }) {
     error: null,
     hasData: false,
     rate: null,
+    presentCount: 0,
+    absentCount: 0,
     records: [],
   });
   const [contactFields, setContactFields] = useState({
@@ -227,14 +278,6 @@ export default function MemberProfileScreen({ navigation, route }) {
     hifzAmount: hifzAmount || null,
     gender: formatGenderLabel(gender) || null,
   });
-  const [isEditingInfo, setIsEditingInfo] = useState(false);
-  const [editDraft, setEditDraft] = useState({
-    phone: "",
-    school: "",
-    level: "",
-    hifzAmount: "",
-  });
-  const [savingInfo, setSavingInfo] = useState(false);
   const [removingFromSeance, setRemovingFromSeance] = useState(false);
 
   const confirmRemoveFromSeance = () => {
@@ -261,44 +304,6 @@ export default function MemberProfileScreen({ navigation, route }) {
     Alert.alert("تم", "تم إزالة العضو من الحصة بنجاح", [
       { text: "حسناً", onPress: () => navigation.goBack() },
     ]);
-  };
-
-  const startEditingInfo = () => {
-    setEditDraft({
-      phone: contactFields.phone || "",
-      school: contactFields.school || "",
-      level: contactFields.level || "",
-      hifzAmount: contactFields.hifzAmount || "",
-    });
-    setIsEditingInfo(true);
-  };
-
-  const cancelEditingInfo = () => {
-    setIsEditingInfo(false);
-    setEditDraft({ phone: "", school: "", level: "", hifzAmount: "" });
-  };
-
-  const handleSaveInfo = async () => {
-    if (!memberId || savingInfo) return;
-    setSavingInfo(true);
-    const res = await updateMemberInfo(memberId, {
-      phone: editDraft.phone,
-      school: editDraft.school,
-      level: editDraft.level,
-      hifzAmount: editDraft.hifzAmount,
-    });
-    setSavingInfo(false);
-    if (!res.ok) {
-      Alert.alert("تنبيه", res.error || "تعذر حفظ البيانات");
-      return;
-    }
-    setContactFields({
-      phone: res.telephone,
-      school: res.ecole,
-      level: res.niveau,
-      hifzAmount: res.quantiteHifz,
-    });
-    setIsEditingInfo(false);
   };
 
   useEffect(() => {
@@ -335,6 +340,8 @@ export default function MemberProfileScreen({ navigation, route }) {
         error: null,
         hasData: false,
         rate: null,
+        presentCount: 0,
+        absentCount: 0,
         records: [],
       });
       return;
@@ -380,6 +387,8 @@ export default function MemberProfileScreen({ navigation, route }) {
           error: presRes.error,
           hasData: false,
           rate: null,
+          presentCount: 0,
+          absentCount: 0,
           records: [],
         });
       } else {
@@ -388,6 +397,8 @@ export default function MemberProfileScreen({ navigation, route }) {
           error: null,
           hasData: presRes.hasData,
           rate: presRes.rate,
+          presentCount: presRes.presentCount ?? 0,
+          absentCount: presRes.absentCount ?? 0,
           records: presRes.records || [],
         });
       }
@@ -414,7 +425,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           <TouchableOpacity
             style={styles.headerRemoveBtn}
             onPress={confirmRemoveFromSeance}
-            disabled={removingFromSeance || isEditingInfo}
+            disabled={removingFromSeance}
             activeOpacity={0.7}
             accessibilityLabel="إزالة من الحصة"
           >
@@ -437,87 +448,20 @@ export default function MemberProfileScreen({ navigation, route }) {
         </View>
 
         <View style={[styles.card, shadows.card]}>
-          <View style={styles.cardHeader}>
-            {!isEditingInfo ? (
-              <TouchableOpacity
-                style={styles.editBtn}
-                onPress={startEditingInfo}
-                activeOpacity={0.7}
-                accessibilityLabel="تعديل المعلومات"
-              >
-                <Ionicons name="create-outline" size={20} color={colors.primary} />
-              </TouchableOpacity>
-            ) : null}
-          </View>
           <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
-          {!isEditingInfo ? (
-            <ProfileRow
-              icon="male-female-outline"
-              label="الجنس"
-              value={contactFields.gender || "—"}
-            />
-          ) : null}
-          {isEditingInfo ? (
-            <>
-              <ProfileEditRow
-                icon="call-outline"
-                label="رقم الهاتف"
-                value={editDraft.phone}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, phone: v }))}
-              />
-              <ProfileEditRow
-                icon="school-outline"
-                label="المدرسة"
-                value={editDraft.school}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, school: v }))}
-              />
-              <ProfileEditRow
-                icon="bar-chart-outline"
-                label="المستوى التعليمي"
-                value={editDraft.level}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, level: v }))}
-              />
-              <ProfileEditRow
-                icon="book-outline"
-                label="مقدار الحفظ"
-                value={editDraft.hifzAmount}
-                onChangeText={(v) => setEditDraft((d) => ({ ...d, hifzAmount: v }))}
-              />
-              <View style={styles.editActions}>
-                <TouchableOpacity
-                  style={styles.cancelBtn}
-                  onPress={cancelEditingInfo}
-                  disabled={savingInfo}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.cancelBtnText}>إلغاء</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.saveBtn, savingInfo && styles.saveBtnDisabled]}
-                  onPress={handleSaveInfo}
-                  disabled={savingInfo}
-                  activeOpacity={0.7}
-                >
-                  {savingInfo ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    <Text style={styles.saveBtnText}>حفظ</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <>
-              <ProfileRow icon="call-outline" label="رقم الهاتف" value={contactFields.phone} />
-              <ProfileRow icon="school-outline" label="المدرسة" value={contactFields.school} />
-              <ProfileRow
-                icon="bar-chart-outline"
-                label="المستوى التعليمي"
-                value={contactFields.level}
-              />
-              <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
-            </>
-          )}
+          <ProfileRow
+            icon="male-female-outline"
+            label="الجنس"
+            value={contactFields.gender || "—"}
+          />
+          <ProfileRow icon="call-outline" label="رقم الهاتف" value={contactFields.phone} />
+          <ProfileRow icon="school-outline" label="المدرسة" value={contactFields.school} />
+          <ProfileRow
+            icon="bar-chart-outline"
+            label="المستوى التعليمي"
+            value={contactFields.level}
+          />
+          <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
         </View>
 
         <View style={[styles.card, shadows.card, styles.cardSpacing]}>
@@ -532,8 +476,18 @@ export default function MemberProfileScreen({ navigation, route }) {
         </View>
 
         <View style={[styles.card, shadows.card, styles.cardSpacing]}>
-          <Text style={styles.cardTitle}>الحضور</Text>
-          <PresenceSectionContent presenceState={presenceState} styles={styles} />
+          <Text style={styles.cardTitle}>
+            {!presenceState.loading &&
+            presenceState.rate != null &&
+            presenceState.rate !== 0
+              ? `الحضور (${presenceState.rate}%)`
+              : "الحضور"}
+          </Text>
+          <PresenceSectionContent
+            key={`${memberId || ""}_${seanceId || ""}`}
+            presenceState={presenceState}
+            styles={styles}
+          />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -589,20 +543,41 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   cardSpacing: { marginTop: 14 },
-  cardHeader: {
-    flexDirection: row,
-    justifyContent: "flex-end",
-    marginBottom: 4,
-  },
-  editBtn: {
-    padding: 4,
-  },
   cardTitle: {
     fontFamily: fonts.bold,
     fontSize: 16,
     color: colors.text,
     marginBottom: 8,
     ...rtlTextBold,
+  },
+  monthNavBar: {
+    flexDirection: "row",
+    direction: "ltr",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  monthNavBtn: {
+    padding: 6,
+    minWidth: 32,
+    alignItems: "center",
+  },
+  monthNavLabel: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+    textAlign: "center",
+    ...rtlText,
+  },
+  monthNavLabelStatic: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+    marginTop: 8,
+    marginBottom: 4,
+    textAlign: "center",
+    ...rtlText,
   },
   row: {
     flexDirection: row,
@@ -627,54 +602,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     ...rtlText,
   },
-  rowInput: {
+  presenceStatValue: {
     fontSize: 15,
-    color: colors.text,
-    fontFamily: fonts.regular,
-    marginTop: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.bg,
-    ...rtlText,
-  },
-  editActions: {
-    flexDirection: row,
-    justifyContent: "flex-end",
-    gap: 10,
-    marginTop: 12,
-  },
-  cancelBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: radii.md,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  cancelBtnText: {
     color: colors.muted,
     fontFamily: fonts.semiBold,
-    fontSize: 14,
+    marginTop: 2,
     ...rtlText,
-  },
-  saveBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: radii.md,
-    backgroundColor: colors.primary,
-    minWidth: 72,
-    alignItems: "center",
-  },
-  saveBtnDisabled: {
-    opacity: 0.7,
-  },
-  saveBtnText: {
-    color: "white",
-    fontFamily: fonts.bold,
-    fontSize: 14,
-    ...rtlTextBold,
   },
   loader: { marginVertical: 16 },
   emptyText: {
