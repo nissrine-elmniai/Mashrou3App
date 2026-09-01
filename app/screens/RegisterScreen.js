@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -18,9 +18,15 @@ import { Picker } from "@react-native-picker/picker";
 import { useApp } from "../context/AppContext";
 import {
   LEVEL_OPTIONS,
+  GENDER_OPTIONS,
   REGISTRATION_STATUS,
   REGISTRATION_STATUS_LABELS,
 } from "../constants/roles";
+import {
+  getActiveSeancesByGenre,
+  formatSeanceScheduleLabel,
+} from "../lib/seancesApi";
+import { getActiveRegularSeason } from "../lib/seasonScope";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
@@ -48,11 +54,6 @@ const FIELDS = [
     label: "المدرسة أو الكلية",
     placeholder: "كلية العلوم",
   },
-  {
-    key: "hifzAmount",
-    label: "مقدار الحفظ",
-    placeholder: "مثال: 5 أحزاب أو 10 صفحات",
-  },
 ];
 
 export default function RegisterScreen({ navigation }) {
@@ -69,8 +70,12 @@ export default function RegisterScreen({ navigation }) {
     level: "",
     phone: "",
     email: "",
-    hifzAmount: "",
+    gender: "",
+    seanceId: "",
   });
+  const [availableSeances, setAvailableSeances] = useState([]);
+  const [seancesLoading, setSeancesLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [submittedId, setSubmittedId] = useState(null);
 
   const submitted = useMemo(
@@ -79,16 +84,56 @@ export default function RegisterScreen({ navigation }) {
   );
 
   const setField = (key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "gender" && value !== prev.gender) {
+        next.seanceId = "";
+      }
+      return next;
+    });
   };
 
-  const handleSubmit = () => {
-    const seasonId =
-      seasons.find((s) => s.active)?.id || seasons[0]?.id || null;
-    const result = submitMemberApplication({
+  useEffect(() => {
+    if (!form.gender) {
+      setAvailableSeances([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const activeSeason = getActiveRegularSeason(seasons);
+    const load = async () => {
+      setSeancesLoading(true);
+      const res = await getActiveSeancesByGenre(
+        form.gender,
+        activeSeason?.id || null
+      );
+      if (!cancelled) {
+        if (res.ok) setAvailableSeances(res.seances || []);
+        else setAvailableSeances([]);
+        setSeancesLoading(false);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.gender, seasons]);
+
+  const selectedSeance = useMemo(
+    () => availableSeances.find((s) => s.id === form.seanceId) || null,
+    [availableSeances, form.seanceId]
+  );
+
+  const handleSubmit = async () => {
+    const seasonId = getActiveRegularSeason(seasons)?.id || null;
+    setSubmitting(true);
+    const result = await submitMemberApplication({
       ...form,
       seasonId,
+      seanceName: selectedSeance
+        ? formatSeanceScheduleLabel(selectedSeance)
+        : "",
     });
+    setSubmitting(false);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
@@ -122,7 +167,7 @@ export default function RegisterScreen({ navigation }) {
             <Text style={styles.cardTitle}>متابعة الطلب</Text>
             <Text style={styles.cardSubtitle}>
               سيظهر طلبك للمشرف العام للمراجعة. عند القبول ستصلك دعوة على البريد
-              الإلكتروني لإنشاء الحساب.
+              الإلكتروني لإنشاء الحساب — هذه الخطوة للأعضاء الجدد فقط.
             </Text>
 
             <View style={styles.statusPill}>
@@ -156,11 +201,18 @@ export default function RegisterScreen({ navigation }) {
                   value={submitted.level}
                 />
               ) : null}
-              {submitted.hifzAmount ? (
+              {submitted.gender ? (
                 <InfoRow
-                  icon="book-outline"
-                  label="مقدار الحفظ"
-                  value={submitted.hifzAmount}
+                  icon="male-female-outline"
+                  label="الجنس"
+                  value={submitted.gender}
+                />
+              ) : null}
+              {submitted.seanceName ? (
+                <InfoRow
+                  icon="calendar-outline"
+                  label="الحصة"
+                  value={submitted.seanceName}
                 />
               ) : null}
             </View>
@@ -261,12 +313,77 @@ export default function RegisterScreen({ navigation }) {
               );
             })}
 
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>الجنس</Text>
+              <View style={styles.chipRow}>
+                {GENDER_OPTIONS.map((opt) => {
+                  const active = form.gender === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.chip, active && styles.chipActive]}
+                      onPress={() => setField("gender", opt.value)}
+                      activeOpacity={0.75}
+                    >
+                      <Text
+                        style={[styles.chipText, active && styles.chipTextActive]}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {form.gender ? (
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>الحصة</Text>
+                {seancesLoading ? (
+                  <Text style={styles.hintText}>جاري تحميل الحصص المتاحة...</Text>
+                ) : availableSeances.length === 0 ? (
+                  <Text style={styles.hintText}>
+                    لا توجد حصص متاحة حالياً لهذا الجنس
+                  </Text>
+                ) : (
+                  <View style={styles.chipColumn}>
+                    {availableSeances.map((seance) => {
+                      const active = form.seanceId === seance.id;
+                      return (
+                        <TouchableOpacity
+                          key={seance.id}
+                          style={[styles.seanceChip, active && styles.chipActive]}
+                          onPress={() => setField("seanceId", seance.id)}
+                          activeOpacity={0.75}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              active && styles.chipTextActive,
+                            ]}
+                          >
+                            {formatSeanceScheduleLabel(seance)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            ) : (
+              <Text style={styles.hintText}>
+                اختر الجنس أولاً لعرض الحصص المتاحة
+              </Text>
+            )}
+
             <TouchableOpacity
-              style={styles.loginButton}
-              onPress={handleSubmit}
+              style={[styles.loginButton, submitting && { opacity: 0.6 }]}
+              onPress={submitting ? undefined : handleSubmit}
               activeOpacity={0.85}
             >
-              <Text style={styles.loginButtonText}>إرسال الطلب</Text>
+              <Text style={styles.loginButtonText}>
+                {submitting ? "جاري الإرسال..." : "إرسال الطلب"}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -408,6 +525,52 @@ const styles = StyleSheet.create({
   picker: {
     width: "100%",
     color: colors.text,
+  },
+  chipRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  chipColumn: {
+    gap: 8,
+  },
+  chip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+  },
+  seanceChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.bg,
+  },
+  chipActive: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+  },
+  chipText: {
+    ...rtlText,
+    color: colors.muted,
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  chipTextActive: {
+    color: colors.primary,
+    fontWeight: "bold",
+  },
+  hintText: {
+    ...rtlText,
+    color: colors.muted,
+    fontSize: 14,
+    marginBottom: 16,
+    lineHeight: 20,
   },
   loginButton: {
     backgroundColor: colors.primary,

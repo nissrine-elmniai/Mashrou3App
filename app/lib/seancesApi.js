@@ -13,6 +13,15 @@ export const JOUR_SEMAINE_VALUES = [
   "الجمعة",
 ];
 
+/** Libellé affiché pour une séance (jour — heure). */
+export function formatSeanceScheduleLabel(seance) {
+  if (!seance) return "";
+  const jour = seance.jour || "";
+  const heure = seance.heure_debut ? String(seance.heure_debut).slice(0, 5) : "";
+  if (jour && heure) return `${jour} — ${heure}`;
+  return jour || seance.nom || "";
+}
+
 const JOUR_SEMAINE_INDEX = Object.fromEntries(
   JOUR_SEMAINE_VALUES.map((jour, index) => [jour, index])
 );
@@ -33,9 +42,66 @@ export function sortSeancesByJour(seances = []) {
   });
 }
 
+function isValidGenre(genre) {
+  return genre === "ذكر" || genre === "أنثى";
+}
+
 function isValidJourSemaine(jour) {
   return JOUR_SEMAINE_VALUES.includes(jour);
 }
+
+/** Normalise une heure saisie (HH:MM) vers le format Postgres time. */
+export function normalizePgTime(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const h = Math.min(23, Math.max(0, parseInt(match[1], 10)));
+  const m = Math.min(59, Math.max(0, parseInt(match[2], 10)));
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+}
+
+/** Affiche une heure Postgres (HH:MM:SS) en HH:MM. */
+export function formatPgTimeLabel(value) {
+  if (!value) return "";
+  return String(value).slice(0, 5);
+}
+
+/**
+ * (Public) Séances actives filtrées par sexe — formulaire d'intégration.
+ * RLS : seances_select_active_public.
+ * @param {string} genre 'ذكر' | 'أنثى'
+ * @returns {{ ok, seances }}
+ */
+export async function getActiveSeancesByGenre(genre, saisonId = null) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!isValidGenre(genre)) {
+    return { ok: true, seances: [] };
+  }
+  try {
+    let query = supabase
+      .from("seances")
+      .select("id, nom, jour, heure_debut, heure_fin, genre, statut, saison_id")
+      .eq("statut", "active")
+      .eq("genre", genre);
+    if (saisonId) {
+      query = query.or(`saison_id.eq.${saisonId},saison_id.is.null`);
+    }
+    const { data, error } = await withTimeout(
+      query,
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الحصص المتاحة"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "seances") };
+    }
+    return { ok: true, seances: sortSeancesByJour(data || []) };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
 
 /** UUID v4 de profile — toute autre valeur (ex. "admin") est refusée. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -79,18 +145,21 @@ async function currentAuthId() {
  * RLS : seances_admin_all / inscriptions_admin_all / profiles_select_admin.
  * @returns { ok, seances }
  */
-export async function getAllSeances() {
+export async function getAllSeances({ saisonId = null } = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
+    let query = supabase
+      .from("seances")
+      .select(
+        "*, superviseur:profiles!seances_superviseur_id_fkey(first_name, last_name, email), inscriptions:inscriptions!inscriptions_seance_id_fkey(id, statut)"
+      );
+    if (saisonId) {
+      query = query.or(`saison_id.eq.${saisonId},saison_id.is.null`);
+    }
     const { data, error } = await withTimeout(
-      supabase
-        .from("seances")
-        .select(
-          "*, superviseur:profiles!seances_superviseur_id_fkey(first_name, last_name, email), inscriptions:inscriptions!inscriptions_seance_id_fkey(id, statut)"
-        )
-        .order("created_at", { ascending: false }),
+      query,
       SUPABASE_TIMEOUT_MS,
       "قراءة الحصص"
     );
@@ -107,7 +176,7 @@ export async function getAllSeances() {
  * (Admin) Recherche une séance active par nom (comparaison insensible à la casse).
  * @returns {{ ok, seance? }}
  */
-export async function findActiveSeanceByName(nom) {
+export async function findActiveSeanceByName(nom, saisonId = null) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -116,8 +185,15 @@ export async function findActiveSeanceByName(nom) {
     return { ok: true, seance: null };
   }
   try {
+    let query = supabase
+      .from("seances")
+      .select("id, nom, statut, superviseur_id, saison_id")
+      .eq("statut", "active");
+    if (saisonId) {
+      query = query.eq("saison_id", saisonId);
+    }
     const { data, error } = await withTimeout(
-      supabase.from("seances").select("id, nom, statut, superviseur_id").eq("statut", "active"),
+      query,
       SUPABASE_TIMEOUT_MS,
       "البحث عن الحصة"
     );
@@ -147,6 +223,7 @@ export async function createSeance({
   heureDebut = null,
   heureFin = null,
   superviseurId = null,
+  genre = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -168,14 +245,18 @@ export async function createSeance({
   if (jour && !isValidJourSemaine(jour)) {
     return { ok: false, error: "يوم الحصة غير صالح" };
   }
+  if (!genre || !isValidGenre(genre)) {
+    return { ok: false, error: "اختر جنس الحصة (ذكر أو أنثى)" };
+  }
 
   const row = {
     nom: cleanNom,
     saison_id: saisonId || null,
     jour: jour || null,
-    heure_debut: heureDebut || null,
-    heure_fin: heureFin || null,
+    heure_debut: heureDebut ? normalizePgTime(heureDebut) : null,
+    heure_fin: heureFin ? normalizePgTime(heureFin) : null,
     superviseur_id: superviseurId || null,
+    genre,
     statut: "active",
   };
 
@@ -221,6 +302,17 @@ export async function updateSeance({ seanceId, patch }) {
   if (clean.jour !== undefined && clean.jour !== null && !isValidJourSemaine(clean.jour)) {
     return { ok: false, error: "يوم الحصة غير صالح" };
   }
+  if (clean.genre !== undefined && clean.genre !== null && !isValidGenre(clean.genre)) {
+    return { ok: false, error: "جنس الحصة غير صالح" };
+  }
+  if (clean.heure_debut !== undefined && clean.heure_debut !== null && clean.heure_debut !== "") {
+    const normalized = normalizePgTime(clean.heure_debut);
+    clean.heure_debut = normalized;
+  }
+  if (clean.heure_fin !== undefined && clean.heure_fin !== null && clean.heure_fin !== "") {
+    const normalized = normalizePgTime(clean.heure_fin);
+    clean.heure_fin = normalized;
+  }
 
   try {
     const { data, error } = await withTimeout(
@@ -250,6 +342,34 @@ export async function updateSeance({ seanceId, patch }) {
  */
 export async function archiveSeance(seanceId) {
   return updateSeance({ seanceId, patch: { statut: "archivee" } });
+}
+
+/** (Admin) Archive toutes les séances actives des musims donnés (fin de musim). */
+export async function archiveSeancesForSaisonIds(saisonIds = []) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true };
+  }
+  const ids = [...new Set((saisonIds || []).filter(Boolean))];
+  if (ids.length === 0) {
+    return { ok: true };
+  }
+  try {
+    const { error } = await withTimeout(
+      supabase
+        .from("seances")
+        .update({ statut: "archivee", updated_at: new Date().toISOString() })
+        .in("saison_id", ids)
+        .eq("statut", "active"),
+      SUPABASE_TIMEOUT_MS,
+      "أرشفة حصص الموسم السابق"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "seances") };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
 }
 
 /**
@@ -344,7 +464,7 @@ export async function getMemberProfiles() {
  * (affectation membre <-> séance pour l'écran Membres).
  * @returns { ok, inscriptions }
  */
-export async function getAllAcceptedInscriptions() {
+export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -352,7 +472,9 @@ export async function getAllAcceptedInscriptions() {
     const { data, error } = await withTimeout(
       supabase
         .from("inscriptions")
-        .select("id, membre_id, seance_id, seance:seances!inscriptions_seance_id_fkey(id, nom)")
+        .select(
+          "id, membre_id, seance_id, saison_id, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id)"
+        )
         .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,
       "قراءة التسجيلات"
@@ -360,7 +482,14 @@ export async function getAllAcceptedInscriptions() {
     if (error) {
       return { ok: false, error: mapTableError(error, "inscriptions") };
     }
-    return { ok: true, inscriptions: data || [] };
+    let rows = data || [];
+    if (saisonId) {
+      rows = rows.filter(
+        (row) =>
+          row.saison_id === saisonId || row.seance?.saison_id === saisonId
+      );
+    }
+    return { ok: true, inscriptions: rows };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }

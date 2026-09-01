@@ -20,6 +20,8 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
 import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
+import { getActiveRegularSeason, supervisorIdsForSeason } from "../../lib/seasonScope";
+import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { canonicalEmail } from "../../lib/authEmail";
 import {
   createSupervisorInvitation,
@@ -67,7 +69,8 @@ function supervisorSessionLabel(supervisor, seances, invitations) {
 
 export default function AdminSupervisorsScreen({ navigation }) {
   const { openSidebar, sidebar } = useAdminSidebar(navigation, "supervisors");
-  const { currentUser, stats } = useApp();
+  const { currentUser, stats, seasons } = useApp();
+  const activeSeason = getActiveRegularSeason(seasons);
   const insets = useSafeAreaInsets();
   const fabBottom = Math.max(insets.bottom, 16) + 16;
 
@@ -94,14 +97,15 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
   const loadAll = useCallback(async () => {
     setLoading(true);
+    const saisonId = activeSeason?.id || null;
     const [supRes, invRes, seaRes] = await Promise.all([
       getSupervisorProfiles(),
-      listSupervisorInvitations(),
-      getAllSeances(),
+      listSupervisorInvitations({ saisonId }),
+      getAllSeances({ saisonId }),
     ]);
     if (supRes.ok) {
       await syncSupervisorSeanceLinks(supRes.supervisors);
-      const refreshedSeances = await getAllSeances();
+      const refreshedSeances = await getAllSeances({ saisonId });
       setSupervisors(supRes.supervisors);
       if (refreshedSeances.ok) setSeances(refreshedSeances.seances);
       else if (seaRes.ok) setSeances(seaRes.seances);
@@ -110,7 +114,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
     }
     if (invRes.ok) setInvitations(invRes.invitations);
     setLoading(false);
-  }, []);
+  }, [activeSeason?.id]);
 
   useEffect(() => {
     loadAll();
@@ -139,20 +143,35 @@ export default function AdminSupervisorsScreen({ navigation }) {
     [seances]
   );
 
+  const seasonSupervisorIds = useMemo(
+    () => supervisorIdsForSeason(seances, activeSeason?.id),
+    [seances, activeSeason?.id]
+  );
+
+  const seasonSupervisors = useMemo(
+    () => supervisors.filter((s) => seasonSupervisorIds.has(s.id)),
+    [supervisors, seasonSupervisorIds]
+  );
+
   const pendingInvitations = useMemo(
-    () => invitations.filter((i) => i.status === "pending"),
-    [invitations]
+    () =>
+      invitations.filter(
+        (i) =>
+          i.status === "pending" &&
+          (!i.saison_id || i.saison_id === activeSeason?.id)
+      ),
+    [invitations, activeSeason?.id]
   );
 
   const q = search.trim().toLowerCase();
   const filteredSupervisors = useMemo(() => {
-    return supervisors.filter((s) => {
+    return seasonSupervisors.filter((s) => {
       if (!q) return true;
       const fullName = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
       const mail = (s.email || "").toLowerCase();
       return fullName.includes(q) || mail.includes(q);
     });
-  }, [supervisors, q]);
+  }, [seasonSupervisors, q]);
 
   const filteredInvitations = useMemo(() => {
     if (filter !== "pending") return [];
@@ -184,6 +203,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
       lastName,
       groupName,
       seanceId: selectedSeanceId,
+      saisonId: activeSeason?.id || null,
     });
     if (!result.ok) {
       setSending(false);
@@ -320,6 +340,11 @@ export default function AdminSupervisorsScreen({ navigation }) {
           />
         </View>
 
+        <ActiveSeasonBanner
+          season={activeSeason}
+          hint="يُعرض هنا فقط المشرفون المعيّنون لحصص الموسم الحالي"
+        />
+
         <View style={styles.filterRow}>
           <TouchableOpacity
             style={[styles.filterChip, filter === "all" && styles.filterChipActive]}
@@ -395,7 +420,11 @@ export default function AdminSupervisorsScreen({ navigation }) {
             })
           )
         ) : filteredSupervisors.length === 0 ? (
-          <Text style={styles.emptyText}>لا يوجد مشرفون بعد</Text>
+          <Text style={styles.emptyText}>
+            {!activeSeason
+              ? "أنشئ موسماً جديداً أولاً"
+              : "لا يوجد مشرفون معيّنون لحصص هذا الموسم بعد"}
+          </Text>
         ) : (
           filteredSupervisors.map((supervisor) => {
             const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();

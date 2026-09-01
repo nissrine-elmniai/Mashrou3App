@@ -140,7 +140,7 @@ export async function syncSupervisorSeanceLinks(supervisors = []) {
  * L'index unique partiel (lower(email) where status <> 'revoked') rejette
  * toute seconde invitation « en cours » pour le même email : l'erreur
  * 23505 est traduite en message explicite.
- * @param {object} payload { email, firstName?, lastName?, groupName?, seanceId? }
+ * @param {object} payload { email, firstName?, lastName?, groupName?, seanceId?, saisonId? }
  * @returns { ok, invitation? }
  */
 export async function createSupervisorInvitation({
@@ -149,6 +149,7 @@ export async function createSupervisorInvitation({
   lastName,
   groupName,
   seanceId = null,
+  saisonId = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -168,7 +169,7 @@ export async function createSupervisorInvitation({
   const cleanGroupName = String(groupName || "").trim();
   let resolvedSeanceId = seanceId || null;
   if (!resolvedSeanceId && cleanGroupName) {
-    const lookup = await findActiveSeanceByName(cleanGroupName);
+    const lookup = await findActiveSeanceByName(cleanGroupName, saisonId);
     if (!lookup.ok) {
       return { ok: false, error: lookup.error };
     }
@@ -182,6 +183,7 @@ export async function createSupervisorInvitation({
     last_name: String(lastName).trim(),
     group_name: cleanGroupName || null,
     seance_id: resolvedSeanceId,
+    saison_id: saisonId || null,
     status: "pending",
     created_by: userId,
   };
@@ -209,18 +211,23 @@ export async function createSupervisorInvitation({
 
 /**
  * (Admin) Liste des invitations superviseurs, plus récentes d'abord.
+ * @param {{ saisonId?: string }} options
  * @returns { ok, invitations }
  */
-export async function listSupervisorInvitations() {
+export async function listSupervisorInvitations({ saisonId = null } = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
+    let query = supabase
+      .from("supervisor_invitations")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (saisonId) {
+      query = query.or(`saison_id.is.null,saison_id.eq.${saisonId}`);
+    }
     const { data, error } = await withTimeout(
-      supabase
-        .from("supervisor_invitations")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      query,
       SUPABASE_TIMEOUT_MS,
       "قراءة دعوات المشرفين"
     );

@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { sortSeancesByJour } from "./seancesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -47,17 +48,15 @@ function mapTableError(error, tableLabel) {
 }
 
 /**
- * Séance active du superviseur connecté (auth user id = profiles.id).
- * RLS : seances_select_own (superviseur_id = auth.uid()).
- * @param {string} supervisorAuthId UUID du profil superviseur
- * @returns {{ ok: boolean, seance?: object|null, error?: string }}
+ * Séances actives du superviseur connecté (auth user id = profiles.id).
+ * Un superviseur peut avoir plusieurs séances (ex. hommes / femmes).
  */
-export async function getSupervisorActiveSeance(supervisorAuthId) {
+export async function getSupervisorActiveSeances(supervisorAuthId) {
   if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل", seance: null };
+    return { ok: false, error: "Supabase غير مفعّل", seances: [] };
   }
   if (!supervisorAuthId) {
-    return { ok: false, error: "معرّف المشرف مفقود", seance: null };
+    return { ok: false, error: "معرّف المشرف مفقود", seances: [] };
   }
 
   try {
@@ -66,23 +65,34 @@ export async function getSupervisorActiveSeance(supervisorAuthId) {
         .from("seances")
         .select("*")
         .eq("superviseur_id", supervisorAuthId)
-        .eq("statut", "active")
-        .maybeSingle(),
+        .eq("statut", "active"),
       SUPABASE_TIMEOUT_MS,
-      "قراءة الحصة النشطة"
+      "قراءة الحصص النشطة"
     );
     if (error) {
-      logSupabaseError("getSupervisorActiveSeance", error);
-      return { ok: false, error: mapTableError(error, "seances"), seance: null };
+      logSupabaseError("getSupervisorActiveSeances", error);
+      return { ok: false, error: mapTableError(error, "seances"), seances: [] };
     }
-    return { ok: true, seance: data || null };
+    return { ok: true, seances: sortSeancesByJour(data || []) };
   } catch (e) {
     return {
       ok: false,
       error: e?.message || "تعذر الاتصال بـ Supabase",
-      seance: null,
+      seances: [],
     };
   }
+}
+
+/**
+ * Séance active principale du superviseur (première après tri par jour).
+ * Rétrocompatibilité : les écrans qui n'attendent qu'une seule séance.
+ */
+export async function getSupervisorActiveSeance(supervisorAuthId) {
+  const res = await getSupervisorActiveSeances(supervisorAuthId);
+  if (!res.ok) {
+    return { ok: false, error: res.error, seance: null };
+  }
+  return { ok: true, seance: res.seances[0] || null, seances: res.seances };
 }
 
 /**
