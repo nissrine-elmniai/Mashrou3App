@@ -12,7 +12,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../lib/supabase";
 import { colors, radii } from "../constants/theme";
-import { rtlText, textAlignStart, fonts } from "../constants/rtl";
+import { rtlText, textAlignStart, fonts, row } from "../constants/rtl";
 
 export default function ChangePasswordModal({ visible, onClose, bottomInset = 16 }) {
   const [newPassword, setNewPassword] = useState("");

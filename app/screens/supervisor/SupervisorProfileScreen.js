@@ -22,7 +22,7 @@ import {
   unregisterPushNotifications,
 } from "../../lib/pushNotifications";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
+import { rtlText, rtlTextBold, row as rtlRow, fonts, arrowBack } from "../../constants/rtl";
 import { initials } from "./supervisorHelpers";
 
 function displayValue(value) {
@@ -43,7 +43,7 @@ function formatDateTime(value) {
 
 function ProfileRow({ icon, label, value }) {
   return (
-    <View style={styles.row}>
+    <View style={styles.itemRow}>
       <View style={styles.rowIcon}>
         <Ionicons name={icon} size={18} color={colors.primary} />
       </View>
@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
 
   header: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
     gap: 10,
     paddingHorizontal: 16,
@@ -291,8 +291,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     ...rtlText,
   },
-  row: {
-    flexDirection: row,
+  itemRow: {
+    flexDirection: rtlRow,
     alignItems: "center",
     gap: 12,
     paddingVertical: 10,
@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   switchRow: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: "#F9F9F9",
