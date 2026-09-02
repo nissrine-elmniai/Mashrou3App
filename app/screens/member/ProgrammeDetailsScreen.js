@@ -6,7 +6,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Dimensions,
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -15,10 +14,9 @@ import { useApp } from "../../context/AppContext";
 import { addProgressEntry } from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
-import { row, rtlText, arrowBack } from "../../constants/rtl";
+import { row as rtlRow, rtlText, arrowBack } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
 
-const { width } = Dimensions.get("window");
 const HISTORY_DEBOUNCE_MS = 800;
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
@@ -415,7 +413,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 const StatCard = ({ title, value, icon, color }) => (
   <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
     <View style={styles.rowBetween}>
-      <View style={styles.row}>
+      <View style={styles.itemRow}>
         <Text style={[styles.statTitle, { ...rtlText }]}>{title}</Text>
         <MaterialCommunityIcons
           name={icon}
@@ -444,7 +442,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   backButton: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
   },
   backText: {
@@ -469,18 +467,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderGreen,
   },
-  row: {
-    flexDirection: row,
+  itemRow: {
+    flexDirection: rtlRow,
     alignItems: "center",
   },
   rowBetween: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     justifyContent: "space-between",
     alignItems: "center",
   },
   titleContainer: {
     flex: 1,
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "flex-end",
   },
@@ -555,7 +553,7 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   datesRow: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     justifyContent: "space-between",
     marginVertical: 20,
   },
@@ -575,7 +573,7 @@ const styles = StyleSheet.create({
     marginEnd: 5,
   },
   dateValueRow: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
   },
   dateIcon: {
@@ -587,7 +585,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
   progressHeader: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     justifyContent: "space-between",
     marginBottom: 10,
   },
@@ -689,7 +687,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingVertical: 18,
     borderRadius: radii.lg,
-    flexDirection: row,
+    flexDirection: rtlRow,
     justifyContent: "center",
     alignItems: "center",
     shadowColor: colors.red,

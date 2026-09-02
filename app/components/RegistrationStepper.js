@@ -5,7 +5,7 @@ import {
   REGISTRATION_STATUS,
 } from "../constants/roles";
 import { colors, radii } from "../constants/theme";
-import { rtlText, row } from "../constants/rtl";
+import { rtlText, row as rtlRow } from "../constants/rtl";
 
 /**
  * Stepper 5 étapes : التسجيل → المراجعة → مقبول → الدعوة → إنشاء حساب
@@ -17,7 +17,7 @@ export default function RegistrationStepper({
 }) {
   return (
     <View style={styles.wrap}>
-      <View style={styles.row}>
+      <View style={styles.itemRow}>
         {REGISTRATION_STEPS.map((step, index) => {
           const n = index + 1;
           const done = n < activeStep && !rejected;
@@ -113,8 +113,8 @@ export function statusToStepper(status) {
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: 20, width: "100%" },
-  row: {
-    flexDirection: row,
+  itemRow: {
+    flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 4,
@@ -130,7 +130,7 @@ const styles = StyleSheet.create({
   circleText: { fontSize: 14, fontWeight: "700" },
   line: { flex: 1, height: 2, marginHorizontal: 4 },
   labelsRow: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     justifyContent: "space-between",
     marginTop: 10,
     gap: 4,
