@@ -628,7 +628,7 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   stepperRow: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 16,
