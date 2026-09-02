@@ -69,13 +69,12 @@ export default function MemberProgramsPanel({ navigation }) {
     getMemberPrograms,
     saveMemberProgram,
     deleteMemberProgram,
-    updateMemberProgramProgress,
+    adjustMemberProgramTumuns,
   } = useApp();
 
   const programs = getMemberPrograms();
   const [modalVisible, setModalVisible] = useState(false);
   const [progressModal, setProgressModal] = useState(null);
-  const [progressDraft, setProgressDraft] = useState("0");
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
 
@@ -112,7 +111,7 @@ export default function MemberProgramsPanel({ navigation }) {
       nbHizb: form.nbHizb,
       durationDays: form.durationDays,
       startDate: form.startDate,
-      progression: existing?.progression ?? 0,
+      completedTumuns: existing?.completedTumuns ?? 0,
     });
     if (!result.ok) {
       Alert.alert("تنبيه", result.error);
@@ -140,18 +139,12 @@ export default function MemberProgramsPanel({ navigation }) {
   };
 
   const quickUpdateProgress = (program) => {
-    setProgressDraft(String(program.progression ?? 0));
     setProgressModal(program);
   };
 
-  const saveProgress = () => {
+  const handleAdjustInModal = (delta) => {
     if (!progressModal) return;
-    const result = updateMemberProgramProgress(progressModal.id, progressDraft);
-    if (!result.ok) {
-      Alert.alert("تنبيه", result.error);
-      return;
-    }
-    setProgressModal(null);
+    adjustMemberProgramTumuns(progressModal.id, delta);
   };
 
   const openDetails = (program) => {
@@ -161,12 +154,18 @@ export default function MemberProgramsPanel({ navigation }) {
         nom: program.title,
         nbHizb: program.nbHizb,
         duree: program.durationDays,
+        completedTumuns: program.completedTumuns,
+        totalTumuns: program.totalTumuns,
         progression: program.progression,
         dateDebut: program.startDate,
         statut: programStatus(program) === "البرنامج منتهي" ? "terminé" : "en cours",
       },
     });
   };
+
+  const progressProgram = progressModal
+    ? programs.find((p) => p.id === progressModal.id) || progressModal
+    : null;
 
   return (
     <View>
@@ -202,7 +201,7 @@ export default function MemberProgramsPanel({ navigation }) {
       />
 
       <Modal
-        visible={!!progressModal}
+        visible={!!progressProgram}
         transparent
         animationType="fade"
         onRequestClose={() => setProgressModal(null)}
@@ -215,17 +214,58 @@ export default function MemberProgramsPanel({ navigation }) {
           <View style={styles.progressModalCard}>
             <Text style={styles.modalTitle}>تحديث التقدم</Text>
             <Text style={styles.progressModalHint}>
-              {progressModal?.title} — أدخل النسبة من 0 إلى 100
+              {progressProgram?.title}
             </Text>
-            <TextInput
-              style={styles.input}
-              value={progressDraft}
-              onChangeText={setProgressDraft}
-              keyboardType="number-pad"
-              textAlign={textAlignStart}
-            />
-            <TouchableOpacity style={styles.saveBtn} onPress={saveProgress}>
-              <Text style={styles.saveBtnText}>حفظ</Text>
+
+            {progressProgram ? (
+              <>
+                <Text style={styles.tumunModalCount}>
+                  {progressProgram.completedTumuns} / {progressProgram.totalTumuns}{" "}
+                  أثمان
+                </Text>
+                <Text style={styles.tumunModalPct}>
+                  {progressProgram.progression}%
+                </Text>
+
+                <View style={styles.stepperRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.stepperBtn,
+                      progressProgram.completedTumuns <= 0 &&
+                        styles.stepperBtnDisabled,
+                    ]}
+                    onPress={() => handleAdjustInModal(-1)}
+                    disabled={progressProgram.completedTumuns <= 0}
+                  >
+                    <Text style={styles.stepperBtnText}>−</Text>
+                  </TouchableOpacity>
+
+                  <Text style={styles.stepperValue}>
+                    {progressProgram.completedTumuns}
+                  </Text>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.stepperBtn,
+                      progressProgram.completedTumuns >=
+                        progressProgram.totalTumuns && styles.stepperBtnDisabled,
+                    ]}
+                    onPress={() => handleAdjustInModal(1)}
+                    disabled={
+                      progressProgram.completedTumuns >= progressProgram.totalTumuns
+                    }
+                  >
+                    <Text style={styles.stepperBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            <TouchableOpacity
+              style={styles.saveBtn}
+              onPress={() => setProgressModal(null)}
+            >
+              <Text style={styles.saveBtnText}>إغلاق</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -285,7 +325,9 @@ function MemberProgramCard({
 
         <TouchableOpacity onPress={onProgressPress} activeOpacity={0.85}>
           <View style={styles.progressHead}>
-            <Text style={styles.pct}>{pct}%</Text>
+            <Text style={styles.pct}>
+              {program.completedTumuns}/{program.totalTumuns} أثمان · {pct}%
+            </Text>
             <Text style={styles.progressLabel}>التقدم</Text>
           </View>
           <View style={styles.progressTrack}>
@@ -729,5 +771,52 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 10,
     ...rtlText,
+  },
+  tumunModalCount: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: colors.primary,
+    textAlign: "center",
+    marginBottom: 4,
+    ...rtlText,
+  },
+  tumunModalPct: {
+    fontSize: 16,
+    color: colors.muted,
+    textAlign: "center",
+    marginBottom: 16,
+    ...rtlText,
+  },
+  stepperRow: {
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    gap: 16,
+  },
+  stepperBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepperBtnDisabled: {
+    opacity: 0.4,
+  },
+  stepperBtnText: {
+    fontSize: 26,
+    fontWeight: "bold",
+    color: colors.primary,
+  },
+  stepperValue: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: colors.primary,
+    flex: 1,
+    textAlign: "center",
   },
 });

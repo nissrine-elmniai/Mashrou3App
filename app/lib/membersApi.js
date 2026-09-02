@@ -47,6 +47,19 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+async function querySupervisorActiveSeances(supervisorAuthId, selectClause) {
+  return withTimeout(
+    supabase
+      .from("seances")
+      .select(selectClause)
+      .eq("superviseur_id", supervisorAuthId)
+      .eq("statut", "active")
+      .order("created_at", { ascending: true }),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة الحصص النشطة"
+  );
+}
+
 async function attachSaisonDatesToSeances(seances) {
   const list = Array.isArray(seances) ? seances : seances ? [seances] : [];
   const missing = list.filter((s) => s && !s.saisons?.date_debut && s.saison_id);
@@ -73,6 +86,7 @@ async function attachSaisonDatesToSeances(seances) {
 /**
  * Séances actives du superviseur connecté (auth user id = profiles.id).
  * Un superviseur peut avoir plusieurs séances (ex. hommes / femmes).
+ * @returns {{ ok: boolean, seances?: object[], error?: string }}
  */
 export async function getSupervisorActiveSeances(supervisorAuthId) {
   if (!isSupabaseConfigured()) {
@@ -83,32 +97,16 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
   }
 
   try {
-    let data;
-    let error;
-
-    const withSaison = await withTimeout(
-      supabase
-        .from("seances")
-        .select("*, saisons(date_debut)")
-        .eq("superviseur_id", supervisorAuthId)
-        .eq("statut", "active"),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة الحصص النشطة"
+    const withSaison = await querySupervisorActiveSeances(
+      supervisorAuthId,
+      "*, saisons(date_debut)"
     );
-    data = withSaison.data;
-    error = withSaison.error;
+    let rows = withSaison.data || [];
+    let error = withSaison.error;
 
     if (error && /relationship|PGRST200|Could not find a relationship/i.test(error?.message || "")) {
-      const fallback = await withTimeout(
-        supabase
-          .from("seances")
-          .select("*")
-          .eq("superviseur_id", supervisorAuthId)
-          .eq("statut", "active"),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة الحصص النشطة"
-      );
-      data = fallback.data;
+      const fallback = await querySupervisorActiveSeances(supervisorAuthId, "*");
+      rows = fallback.data || [];
       error = fallback.error;
     }
 
@@ -117,7 +115,7 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
       return { ok: false, error: mapTableError(error, "seances"), seances: [] };
     }
 
-    const seances = await attachSaisonDatesToSeances(data || []);
+    const seances = await attachSaisonDatesToSeances(rows || []);
     return { ok: true, seances: sortSeancesByJour(seances) };
   } catch (e) {
     return {
@@ -130,14 +128,25 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
 
 /**
  * Séance active principale du superviseur (première après tri par jour).
- * Rétrocompatibilité : les écrans qui n'attendent qu'une seule séance.
+ * Si seanceId précisé : retourne cette séance. Inclut aussi `seances` (liste complète).
+ * RLS : seances_select_own (superviseur_id = auth.uid()).
+ * @param {string} supervisorAuthId UUID du profil superviseur
+ * @param {string|null} [seanceId] UUID optionnel de la séance ciblée
+ * @returns {{ ok: boolean, seance?: object|null, seances?: object[], error?: string }}
  */
-export async function getSupervisorActiveSeance(supervisorAuthId) {
+export async function getSupervisorActiveSeance(supervisorAuthId, seanceId = null) {
   const res = await getSupervisorActiveSeances(supervisorAuthId);
   if (!res.ok) {
-    return { ok: false, error: res.error, seance: null };
+    return { ok: false, error: res.error, seance: null, seances: [] };
   }
-  return { ok: true, seance: res.seances[0] || null, seances: res.seances };
+
+  const seances = res.seances || [];
+  if (seanceId) {
+    const match = seances.find((s) => s.id === seanceId) || null;
+    return { ok: true, seance: match, seances };
+  }
+
+  return { ok: true, seance: seances[0] || null, seances };
 }
 
 /**

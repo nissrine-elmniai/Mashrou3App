@@ -1,5 +1,6 @@
 import { Platform, NativeModules } from "react-native";
 import Constants from "expo-constants";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 
 let notificationsModule = null;
@@ -17,6 +18,24 @@ function canUsePushNativeModules() {
   return hasNotifications && hasDevice;
 }
 
+function isNativePushRuntimeAvailable() {
+  return (
+    requireOptionalNativeModule("ExpoDevice") != null &&
+    requireOptionalNativeModule("ExpoPushTokenManager") != null
+  );
+}
+
+function resolveModuleNamespace(mod) {
+  if (!mod) return null;
+  if (typeof mod.setNotificationHandler === "function" || typeof mod.isDevice === "boolean") {
+    return mod;
+  }
+  if (mod.default) {
+    return mod.default;
+  }
+  return mod;
+}
+
 async function loadPushModules() {
   if (pushModulesUnavailable) {
     return null;
@@ -29,13 +48,27 @@ async function loadPushModules() {
     return null;
   }
 
+  if (!isNativePushRuntimeAvailable()) {
+    pushModulesUnavailable = true;
+    return null;
+  }
+
   try {
-    const [notifications, device] = await Promise.all([
+    const [notificationsImport, deviceImport] = await Promise.all([
       import("expo-notifications"),
       import("expo-device"),
     ]);
 
-    if (typeof notifications.setNotificationHandler !== "function") {
+    const notifications = resolveModuleNamespace(notificationsImport);
+    const device = resolveModuleNamespace(deviceImport);
+
+    if (
+      !notifications ||
+      typeof notifications.setNotificationHandler !== "function" ||
+      typeof notifications.getExpoPushTokenAsync !== "function" ||
+      !device ||
+      typeof device.isDevice !== "boolean"
+    ) {
       pushModulesUnavailable = true;
       return null;
     }

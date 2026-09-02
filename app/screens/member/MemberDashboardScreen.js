@@ -249,11 +249,9 @@ export default function MemberDashboardScreen({ navigation }) {
 
     progressEntries.forEach((entry, idx) => {
       const metrics = computeProgressMetrics(entry);
-      const juze = entry.juze;
-      const tumun = entry.tumun;
-      let body = `الجزء ${juze}`;
-      if (tumun != null && tumun !== "") {
-        body += ` — الثمن ${tumun}`;
+      let body = metrics?.notes || `${metrics?.nbHizbCompletes ?? 0} حزب مكتمل`;
+      if (metrics?.tumunCourant != null) {
+        body += ` — الثمن ${metrics.tumunCourant}`;
       }
       if (metrics?.globalPct != null) {
         body += ` • ${metrics.globalPct}% من القرآن`;

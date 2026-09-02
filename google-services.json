@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "479149043968",
+    "project_id": "mashrou3app",
+    "storage_bucket": "mashrou3app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:479149043968:android:2b0e9c9c2b598d59d583e5",
+        "android_client_info": {
+          "package_name": "com.clubaltruisme.mashrou3app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDc3oYWp1q43LciyT6cSS-oZoyf7W3UCZE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

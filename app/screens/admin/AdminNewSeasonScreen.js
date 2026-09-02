@@ -36,7 +36,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
 
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
 
   const displayName = currentUser
@@ -51,7 +51,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
     const result = await startNewSeason({
       name,
       startDate,
-      endDate,
+      version,
       openRegistration: true,
     });
     setSaving(false);
@@ -61,7 +61,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
     }
     setName("");
     setStartDate("");
-    setEndDate("");
+    setVersion("");
     Alert.alert(
       "انطلاق موسم جديد",
       `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nابدأ بإعداد حصص ومشرفي هذا الموسم.`,
@@ -146,14 +146,14 @@ export default function AdminNewSeasonScreen({ navigation }) {
               textAlign={textAlignStart}
             />
 
-            <Text style={styles.fieldLabel}>تاريخ النهاية</Text>
+            <Text style={styles.fieldLabel}>رقم النسخة</Text>
             <TextInput
               style={styles.fieldInput}
-              placeholder="2027/06/30"
+              placeholder="1"
               placeholderTextColor={palette.placeholder}
-              value={endDate}
-              onChangeText={setEndDate}
-              keyboardType="numbers-and-punctuation"
+              value={version}
+              onChangeText={setVersion}
+              keyboardType="number-pad"
               textAlign={textAlignStart}
             />
 

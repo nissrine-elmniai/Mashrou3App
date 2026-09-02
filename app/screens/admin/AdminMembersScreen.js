@@ -18,7 +18,7 @@ import {
   getMemberProfiles,
   getAllAcceptedInscriptions,
 } from "../../lib/seancesApi";
-import { getAllProgressionAdmin } from "../../lib/progressApi";
+import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
 import {
   LEVEL_COLORS,
   deriveLevel,
@@ -82,12 +82,11 @@ export default function AdminMembersScreen({ navigation }) {
         const entries = progressions
           .filter((e) => e.membre_id === p.id)
           .sort((a, b) => {
-            const d = (x) => `${x.date_saisie}T${x.created_at || ""}`;
+            const d = (x) => `${x.date_saisie}T${x.date || ""}`;
             return d(b) < d(a) ? -1 : 1;
           });
         const latest = entries[0];
-        const juze = latest?.juze || 0;
-        const pct = Math.min(100, Math.round((juze / 30) * 100));
+        const pct = computeProgressMetrics(latest)?.globalPct ?? 0;
         const level = deriveLevel(pct);
         const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
         return {
