@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.nissrineelmniai.Mashrou3App",
+      "bundleIdentifier": "com.clubaltruisme.mashrou3app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "CFBundleDevelopmentRegion": "ar"
@@ -27,7 +27,8 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.nissrineelmniai.Mashrou3App",
+      "package": "com.clubaltruisme.mashrou3app",
+      "googleServicesFile": "./google-services.json",
       "supportsRtl": true,
       "intentFilters": [
         {

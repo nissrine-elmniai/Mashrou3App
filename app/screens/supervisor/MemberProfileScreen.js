@@ -24,7 +24,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, fonts, arrowBack, row } from "../../constants/rtl";
+import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
 import {
   getMemberProgressionSummary,
   getMemberSeasonObjectif,
@@ -42,7 +42,7 @@ const PRESENCE_LABELS = {
 function ProfileRow({ icon, label, value }) {
   if (!value) return null;
   return (
-    <View style={styles.row}>
+    <View style={styles.itemRow}>
       <View style={styles.rowIcon}>
         <Ionicons name={icon} size={18} color={colors.primary} />
       </View>
@@ -56,7 +56,7 @@ function ProfileRow({ icon, label, value }) {
 
 function PresenceTotalRow({ icon, label, count, iconColor, styles }) {
   return (
-    <View style={styles.row}>
+    <View style={styles.itemRow}>
       <View style={styles.rowIcon}>
         <Ionicons name={icon} size={18} color={iconColor} />
       </View>
@@ -499,7 +499,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
 
   header: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
     gap: 10,
     paddingHorizontal: 16,
@@ -579,8 +579,8 @@ const styles = StyleSheet.create({
     textAlign: "center",
     ...rtlText,
   },
-  row: {
-    flexDirection: row,
+  itemRow: {
+    flexDirection: rtlRow,
     alignItems: "center",
     gap: 12,
     paddingVertical: 10,
@@ -626,7 +626,7 @@ const styles = StyleSheet.create({
   },
   presenceList: { marginTop: 8, gap: 8 },
   presenceMiniRow: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: colors.card,

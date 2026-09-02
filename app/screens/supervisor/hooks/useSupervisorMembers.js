@@ -5,7 +5,7 @@ import {
   computeAttendanceHistorySummary,
   isSupabaseEntityId,
 } from "../supervisorAttendanceHelpers";
-import { getSupervisorActiveSeance, getSeanceMembers } from "../../../lib/membersApi";
+import { getSupervisorActiveSeances, getSeanceMembers } from "../../../lib/membersApi";
 import {
   buildSeanceAttendanceHistory,
   getSeancePresenceForDate,
@@ -29,6 +29,42 @@ function weeklyPresenceToMemberStatus(presence, occurrence = {}) {
   if (presence === "absent") return "absent";
   if (occurrence.withinMarkingWindow) return "absent";
   return "none";
+}
+
+function buildGroupFromSeance(seance, seanceMembers = []) {
+  return {
+    id: seance.id,
+    name: seance.nom,
+    seasonId: seance.saison_id,
+    saisonDateDebut: seance.saisons?.date_debut || null,
+    createdAt: seance.created_at || null,
+    supervisorId: seance.superviseur_id,
+    memberIds: seanceMembers.map((m) => m.userId),
+    jour: seance.jour,
+    heureDebut: seance.heure_debut || null,
+    schedule: buildScheduleLabel(seance),
+  };
+}
+
+function mapSeanceMembersToRows(seanceMembers, group) {
+  return seanceMembers.map((m) => ({
+    user: {
+      id: m.userId,
+      firstName: m.prenom,
+      lastName: m.nom,
+      email: m.email,
+      phone: m.telephone,
+      school: m.ecole,
+      level: m.niveau,
+      hifzAmount: m.quantiteHifz,
+      birthDate: m.dateNaissance,
+      gender: m.genre,
+    },
+    group,
+    prog: null,
+    registrationStatus: m.statutInscription,
+    registrationDate: m.dateInscription,
+  }));
 }
 
 /**
@@ -106,13 +142,13 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
     (async () => {
       try {
-        const seanceRes = await getSupervisorActiveSeance(supervisorAuthId);
+        const seancesRes = await getSupervisorActiveSeances(supervisorAuthId);
         if (cancelled) return;
 
-        if (!seanceRes.ok) {
+        if (!seancesRes.ok) {
           console.warn(
             "useSupervisorMembers: échec lecture séance Supabase —",
-            seanceRes.error
+            seancesRes.error
           );
           setSupabaseData({
             myGroups: [],
@@ -125,13 +161,13 @@ export function useSupervisorMembers(selectedGroupId = null) {
           setFetchState({
             loading: false,
             loaded: false,
-            error: seanceRes.error || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
+            error: seancesRes.error || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
           });
           return;
         }
 
-        const seance = seanceRes.seance;
-        if (!seance) {
+        const seances = seancesRes.seances || [];
+        if (seances.length === 0) {
           setSupabaseData({
             myGroups: [],
             members: [],
@@ -143,6 +179,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
           setFetchState({ loading: false, loaded: true, error: null });
           return;
         }
+
+        const seance =
+          seances.find((s) => s.id === selectedGroupId) || seances[0];
 
         const membersRes = await getSeanceMembers(seance.id);
         if (cancelled) return;
@@ -169,37 +208,11 @@ export function useSupervisorMembers(selectedGroupId = null) {
         }
 
         const seanceMembers = membersRes.members;
-        const group = {
-          id: seance.id,
-          name: seance.nom,
-          seasonId: seance.saison_id,
-          saisonDateDebut: seance.saisons?.date_debut || null,
-          createdAt: seance.created_at || null,
-          supervisorId: seance.superviseur_id,
-          memberIds: seanceMembers.map((m) => m.userId),
-          jour: seance.jour,
-          heureDebut: seance.heure_debut || null,
-          schedule: buildScheduleLabel(seance),
-        };
-
-        const members = seanceMembers.map((m) => ({
-          user: {
-            id: m.userId,
-            firstName: m.prenom,
-            lastName: m.nom,
-            email: m.email,
-            phone: m.telephone,
-            school: m.ecole,
-            level: m.niveau,
-            hifzAmount: m.quantiteHifz,
-            birthDate: m.dateNaissance,
-            gender: m.genre,
-          },
-          group,
-          prog: null,
-          registrationStatus: m.statutInscription,
-          registrationDate: m.dateInscription,
-        }));
+        const group = buildGroupFromSeance(seance, seanceMembers);
+        const myGroups = seances.map((s) =>
+          buildGroupFromSeance(s, s.id === seance.id ? seanceMembers : [])
+        );
+        const members = mapSeanceMembersToRows(seanceMembers, group);
 
         let weeklyPresenceByMember = {};
         let occurrenceMeta = null;
@@ -279,7 +292,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
         }
 
         setSupabaseData({
-          myGroups: [group],
+          myGroups,
           members,
           weeklyPresenceByMember,
           occurrenceMeta,
@@ -313,7 +326,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     return () => {
       cancelled = true;
     };
-  }, [supervisorAuthId, refreshKey]);
+  }, [supervisorAuthId, selectedGroupId, refreshKey]);
 
   const loading = !!supervisorAuthId && fetchState.loading;
   const fetchError =

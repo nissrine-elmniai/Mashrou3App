@@ -41,7 +41,8 @@ export const textAlignStart = I18nManager.isRTL ? "start" : "right";
  * Avec RTL natif, "row" est déjà inversé.
  * Sans RTL natif, on utilise row-reverse.
  */
-export const row = I18nManager.isRTL ? "row" : "row-reverse";
+const flexRowDirection = I18nManager.isRTL ? "row" : "row-reverse";
+export const row = flexRowDirection;
 
 export function getRtlText(weight = "regular") {
   const family = fonts[weight] || fonts.regular;
@@ -78,12 +79,12 @@ export const rtlTextCenter = {
 export const rtlStyles = StyleSheet.create({
   text: rtlText,
   textCenter: rtlTextCenter,
-  row: {
-    flexDirection: row,
+  itemRow: {
+    flexDirection: flexRowDirection,
     alignItems: "center",
   },
   rowBetween: {
-    flexDirection: row,
+    flexDirection: flexRowDirection,
     justifyContent: "space-between",
     alignItems: "center",
   },
