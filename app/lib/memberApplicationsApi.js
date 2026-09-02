@@ -23,7 +23,62 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-/** Upsert d’une demande après validation / rejet admin */
+/** Soumission publique d'une demande en attente (sans compte) */
+export async function insertPendingMemberApplication(reg) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true };
+  }
+  if (!reg?.id || !reg?.email) {
+    return { ok: false, error: "بيانات الطلب غير مكتملة" };
+  }
+
+  const now = new Date().toISOString();
+  const row = {
+    id: String(reg.id),
+    email: String(reg.email).trim().toLowerCase(),
+    full_name: reg.fullName || null,
+    first_name: reg.firstName || null,
+    last_name: reg.lastName || null,
+    phone: reg.phone || null,
+    school: reg.school || null,
+    level: reg.level || null,
+    hifz_amount: reg.hifzAmount || null,
+    season_id: reg.seasonId || null,
+    seance_id: reg.seanceId || null,
+    requested_seance_name: reg.seanceName || reg.requestedSeanceName || null,
+    genre: reg.gender || reg.genre || null,
+    status: "pending",
+    created_at: now,
+    updated_at: now,
+  };
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from("member_applications").insert(row).select("*").single(),
+      SUPABASE_TIMEOUT_MS,
+      "إرسال طلب الانضمام"
+    );
+    if (error) {
+      const msg = error.message || "";
+      if (/duplicate key|23505/i.test(msg)) {
+        return { ok: false, error: "لديك طلب تسجيل مسبقاً بهذا البريد" };
+      }
+      if (/relation.*does not exist|Could not find the table/i.test(msg)) {
+        return {
+          ok: false,
+          error:
+            "جدول member_applications غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor",
+        };
+      }
+      return { ok: false, error: mapSupabaseAuthError(error) };
+    }
+    return { ok: true, application: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/** Upsert d'une demande après validation / rejet admin */
 export async function upsertMemberApplication(reg, status) {
   if (!isSupabaseConfigured()) {
     return { ok: true, skipped: true };
@@ -45,6 +100,9 @@ export async function upsertMemberApplication(reg, status) {
     level: reg.level || null,
     hifz_amount: reg.hifzAmount || null,
     season_id: reg.seasonId || null,
+    seance_id: reg.seanceId || null,
+    requested_seance_name: reg.seanceName || reg.requestedSeanceName || null,
+    genre: reg.gender || reg.genre || null,
     status: mapped,
     updated_at: now,
   };

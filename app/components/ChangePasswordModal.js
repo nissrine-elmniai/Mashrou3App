@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Modal,
   View,
@@ -8,7 +8,11 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
+  ScrollView,
+  Keyboard,
+  Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../lib/supabase";
 import { colors, radii } from "../constants/theme";
@@ -18,6 +22,25 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0);
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [visible]);
 
   const handleClose = () => {
     setNewPassword("");
@@ -64,48 +87,68 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View style={[styles.overlay, { paddingBottom: bottomInset }]}>
+      <View
+        style={[
+          styles.overlay,
+          {
+            paddingBottom:
+              keyboardHeight > 0
+                ? keyboardHeight + 8
+                : Math.max(insets.bottom, bottomInset),
+          },
+        ]}
+      >
         <View style={styles.card}>
-          <View style={styles.header}>
-            <Text style={styles.title}>تغيير كلمة المرور</Text>
-            <TouchableOpacity onPress={handleClose} hitSlop={10}>
-              <Ionicons name="close" size={22} color={colors.muted} />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.label}>كلمة المرور الجديدة</Text>
-          <TextInput
-            style={styles.input}
-            value={newPassword}
-            onChangeText={setNewPassword}
-            placeholder="••••••••"
-            placeholderTextColor={colors.placeholder}
-            secureTextEntry
-            textAlign={textAlignStart}
-          />
-
-          <Text style={styles.label}>تأكيد كلمة المرور</Text>
-          <TextInput
-            style={styles.input}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder="••••••••"
-            placeholderTextColor={colors.placeholder}
-            secureTextEntry
-            textAlign={textAlignStart}
-          />
-
-          <TouchableOpacity
-            style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-            onPress={saving ? undefined : savePassword}
-            activeOpacity={0.85}
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            contentContainerStyle={styles.cardContent}
           >
-            {saving ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.saveBtnText}>حفظ</Text>
-            )}
-          </TouchableOpacity>
+            <View style={styles.header}>
+              <Text style={styles.title}>تغيير كلمة المرور</Text>
+              <TouchableOpacity onPress={handleClose} hitSlop={10}>
+                <Ionicons name="close" size={22} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.label}>كلمة المرور الجديدة</Text>
+            <TextInput
+              style={styles.input}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              placeholder="••••••••"
+              placeholderTextColor={colors.placeholder}
+              secureTextEntry
+              textAlign={textAlignStart}
+              returnKeyType="next"
+            />
+
+            <Text style={styles.label}>تأكيد كلمة المرور</Text>
+            <TextInput
+              style={styles.input}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="••••••••"
+              placeholderTextColor={colors.placeholder}
+              secureTextEntry
+              textAlign={textAlignStart}
+              returnKeyType="done"
+              onSubmitEditing={saving ? undefined : savePassword}
+            />
+
+            <TouchableOpacity
+              style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+              onPress={saving ? undefined : savePassword}
+              activeOpacity={0.85}
+            >
+              {saving ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.saveBtnText}>حفظ</Text>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -122,8 +165,10 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
     borderRadius: radii.lg,
+    maxHeight: "85%",
+  },
+  cardContent: {
     padding: 20,
-    marginBottom: 8,
   },
   header: {
     flexDirection: row,

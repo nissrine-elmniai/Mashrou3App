@@ -78,6 +78,28 @@ export const bootstrapGroups = [
   },
 ];
 
+/** Programmes de mémorisation personnels du membre de test */
+export const bootstrapMemberPrograms = [
+  {
+    id: "mp_bootstrap_1",
+    userId: "u_member",
+    title: "برنامج جزء عم",
+    nbHizb: 3,
+    durationDays: 30,
+    startDate: "2025/01/01",
+    progression: 65,
+  },
+  {
+    id: "mp_bootstrap_2",
+    userId: "u_member",
+    title: "برنامج متقدم",
+    nbHizb: 10,
+    durationDays: 90,
+    startDate: "2025/01/15",
+    progression: 25,
+  },
+];
+
 /** Progression de départ du membre de test — quelques أحزاب déjà mémorisés */
 export const bootstrapProgress = [
   {
@@ -102,6 +124,7 @@ export const emptyState = {
   attendance: [],
   exams: [],
   notifications: [],
+  memberPrograms: bootstrapMemberPrograms,
   currentUserId: null,
 };
 

@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { sortSeancesByJour } from "./seancesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -46,37 +47,44 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
-async function enrichSeanceWithSaisonDate(seance) {
-  if (!seance) return null;
-  if (seance.saisons?.date_debut || !seance.saison_id) {
-    return seance;
-  }
-  const saisonRes = await withTimeout(
-    supabase.from("saisons").select("date_debut").eq("id", seance.saison_id).maybeSingle(),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة تاريخ الموسم"
-  );
-  if (!saisonRes.error && saisonRes.data?.date_debut) {
-    return { ...seance, saisons: { date_debut: saisonRes.data.date_debut } };
-  }
-  return seance;
-}
-
 async function querySupervisorActiveSeances(supervisorAuthId, selectClause) {
   return withTimeout(
     supabase
       .from("seances")
       .select(selectClause)
       .eq("superviseur_id", supervisorAuthId)
-      .eq("statut", "active")
-      .order("created_at", { ascending: true }),
+      .eq("statut", "active"),
     SUPABASE_TIMEOUT_MS,
     "قراءة الحصص النشطة"
   );
 }
 
+async function attachSaisonDatesToSeances(seances) {
+  const list = Array.isArray(seances) ? seances : seances ? [seances] : [];
+  const missing = list.filter((s) => s && !s.saisons?.date_debut && s.saison_id);
+  if (missing.length === 0) return list;
+
+  const saisonIds = [...new Set(missing.map((s) => s.saison_id).filter(Boolean))];
+  const saisonRes = await withTimeout(
+    supabase.from("saisons").select("id, date_debut").in("id", saisonIds),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة تواريخ المواسم"
+  );
+  if (saisonRes.error || !saisonRes.data?.length) return list;
+
+  const dateById = Object.fromEntries(
+    saisonRes.data.map((row) => [row.id, row.date_debut])
+  );
+  return list.map((s) => {
+    if (!s?.saison_id || s.saisons?.date_debut) return s;
+    const date_debut = dateById[s.saison_id];
+    return date_debut ? { ...s, saisons: { date_debut } } : s;
+  });
+}
+
 /**
- * Séances actives du superviseur (0..n lignes).
+ * Séances actives du superviseur connecté (auth user id = profiles.id).
+ * Un superviseur peut avoir plusieurs séances (ex. hommes / femmes).
  * @returns {{ ok: boolean, seances?: object[], error?: string }}
  */
 export async function getSupervisorActiveSeances(supervisorAuthId) {
@@ -88,15 +96,12 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
   }
 
   try {
-    let rows = [];
-    let error;
-
     const withSaison = await querySupervisorActiveSeances(
       supervisorAuthId,
       "*, saisons(date_debut)"
     );
-    rows = withSaison.data || [];
-    error = withSaison.error;
+    let rows = withSaison.data || [];
+    let error = withSaison.error;
 
     if (error && /relationship|PGRST200|Could not find a relationship/i.test(error?.message || "")) {
       const fallback = await querySupervisorActiveSeances(supervisorAuthId, "*");
@@ -109,8 +114,8 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
       return { ok: false, error: mapTableError(error, "seances"), seances: [] };
     }
 
-    const seances = await Promise.all((rows || []).map((row) => enrichSeanceWithSaisonDate(row)));
-    return { ok: true, seances };
+    const seances = await attachSaisonDatesToSeances(rows || []);
+    return { ok: true, seances: sortSeancesByJour(seances) };
   } catch (e) {
     return {
       ok: false,
@@ -121,30 +126,25 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
 }
 
 /**
- * Séance active du superviseur connecté (auth user id = profiles.id).
- * Si plusieurs séances actives : retourne la première (created_at asc), sauf si seanceId précisé.
- * RLS : seances_select_own (superviseur_id = auth.uid()).
+ * Séance active principale du superviseur (première après tri par jour).
+ * Si seanceId précisé : retourne cette séance. Inclut aussi `seances` (liste complète).
  * @param {string} supervisorAuthId UUID du profil superviseur
  * @param {string|null} [seanceId] UUID optionnel de la séance ciblée
- * @returns {{ ok: boolean, seance?: object|null, error?: string }}
+ * @returns {{ ok: boolean, seance?: object|null, seances?: object[], error?: string }}
  */
 export async function getSupervisorActiveSeance(supervisorAuthId, seanceId = null) {
   const res = await getSupervisorActiveSeances(supervisorAuthId);
   if (!res.ok) {
-    return { ok: false, error: res.error, seance: null };
+    return { ok: false, error: res.error, seance: null, seances: [] };
   }
 
   const seances = res.seances || [];
-  if (seances.length === 0) {
-    return { ok: true, seance: null };
-  }
-
   if (seanceId) {
     const match = seances.find((s) => s.id === seanceId) || null;
-    return { ok: true, seance: match };
+    return { ok: true, seance: match, seances };
   }
 
-  return { ok: true, seance: seances[0] };
+  return { ok: true, seance: seances[0] || null, seances };
 }
 
 /**
@@ -355,6 +355,72 @@ export async function getMemberProfileFields(membreId) {
       niveau: merged.niveau,
       quantiteHifz: merged.quantiteHifz,
       genre,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+function buildEditableProfilePayload(fields = {}) {
+  const payload = {};
+  if (fields.phone !== undefined) {
+    payload.phone = pickProfileText(fields.phone);
+  }
+  if (fields.school !== undefined) {
+    payload.school = pickProfileText(fields.school);
+  }
+  if (fields.level !== undefined) {
+    payload.level = pickProfileText(fields.level);
+  }
+  if (fields.hifzAmount !== undefined) {
+    payload.hifz_amount = pickProfileText(fields.hifzAmount);
+  }
+  return payload;
+}
+
+/**
+ * Met à jour les champs contact/inscription d'un membre (profiles uniquement).
+ * Colonnes autorisées : phone, school, level, hifz_amount — jamais identité.
+ * Sécurité serveur : policy profiles_update_superviseur (migration 0026).
+ */
+export async function updateMemberInfo(memberId, fields = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!memberId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+
+  const payload = buildEditableProfilePayload(fields);
+  if (Object.keys(payload).length === 0) {
+    return { ok: false, error: "لا توجد بيانات للتحديث" };
+  }
+
+  payload.updated_at = new Date().toISOString();
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("profiles")
+        .update(payload)
+        .eq("id", memberId)
+        .select("phone, school, level, hifz_amount")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "تحديث ملف العضو"
+    );
+
+    if (error) {
+      logSupabaseError("updateMemberInfo", error);
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+
+    return {
+      ok: true,
+      telephone: pickProfileText(data?.phone),
+      ecole: pickProfileText(data?.school),
+      niveau: pickProfileText(data?.level),
+      quantiteHifz: pickProfileText(data?.hifz_amount),
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

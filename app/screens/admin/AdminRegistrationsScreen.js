@@ -14,9 +14,14 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import {
   REGISTRATION_STATUS,
   REGISTRATION_STATUS_LABELS,
+  REGISTRATION_KIND,
+  REGISTRATION_KIND_LABELS,
+  getRegistrationKind,
   SEASON_TYPES,
   SEASON_TYPE_LABELS,
 } from "../../constants/roles";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { rtlText, row } from "../../constants/rtl";
 import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
 
@@ -49,7 +54,14 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
   const [filter, setFilter] = useState("pending");
+  const [kindFilter, setKindFilter] = useState("all");
   const [sendingId, setSendingId] = useState(null);
+  const activeSeason = getActiveRegularSeason(seasons);
+
+  const matchesKind = (reg) => {
+    if (kindFilter === "all") return true;
+    return getRegistrationKind(reg) === kindFilter;
+  };
 
   const list = useMemo(() => {
     return registrations
@@ -57,6 +69,15 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         const season = seasons.find((s) => s.id === r.seasonId);
         if (r.seasonId && season && season.type !== seasonType) return false;
         if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
+        if (
+          seasonType === SEASON_TYPES.REGULAR &&
+          activeSeason &&
+          r.seasonId &&
+          r.seasonId !== activeSeason.id
+        ) {
+          return false;
+        }
+        if (!matchesKind(r)) return false;
         if (filter === "all") return true;
         if (filter === "pending") {
           return r.status === REGISTRATION_STATUS.PENDING;
@@ -74,7 +95,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         return r.status === filter;
       })
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }, [registrations, filter, seasons, seasonType]);
+  }, [registrations, filter, seasons, seasonType, kindFilter, activeSeason?.id]);
 
   const pendingCount = useMemo(
     () =>
@@ -82,9 +103,17 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         const season = seasons.find((s) => s.id === r.seasonId);
         if (r.seasonId && season && season.type !== seasonType) return false;
         if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
+        if (
+          seasonType === SEASON_TYPES.REGULAR &&
+          activeSeason &&
+          r.seasonId &&
+          r.seasonId !== activeSeason.id
+        ) {
+          return false;
+        }
         return r.status === REGISTRATION_STATUS.PENDING;
       }).length,
-    [registrations, seasons, seasonType]
+    [registrations, seasons, seasonType, activeSeason?.id]
   );
 
   const displayName = currentUser
@@ -94,6 +123,26 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   const bellCount = stats?.pendingRegs ?? pendingCount;
 
   const acceptAndInvite = async (reg) => {
+    if (getRegistrationKind(reg) === REGISTRATION_KIND.SEASON_RENEWAL) {
+      setSendingId(reg.id);
+      try {
+        const result = await reviewRegistration(
+          reg.id,
+          REGISTRATION_STATUS.ACCEPTED
+        );
+        if (!result?.ok) {
+          Alert.alert("خطأ", result?.error || "تعذر قبول إعادة التسجيل");
+          return;
+        }
+        Alert.alert("تم القبول", "قُبلت إعادة تسجيل العضو للموسم.");
+      } catch (e) {
+        Alert.alert("خطأ", e?.message || "حدث خطأ أثناء قبول الطلب");
+      } finally {
+        setSendingId(null);
+      }
+      return;
+    }
+
     if (!reg.email) {
       Alert.alert(
         "تنبيه",
@@ -174,6 +223,12 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     }
   };
 
+  const kindFilters = [
+    ["all", "الكل"],
+    [REGISTRATION_KIND.JOIN, "طلبات الانضمام"],
+    [REGISTRATION_KIND.SEASON_RENEWAL, "إعادة تسجيل"],
+  ];
+
   const filters = [
     ["pending", `قيد الانتظار${pendingCount ? ` (${pendingCount})` : ""}`],
     ["accepted", "المقبولة"],
@@ -193,7 +248,13 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>
-          {isSummer ? "طلبات التسجيل الصيفي" : "طلبات التسجيل"}
+          {isSummer
+            ? "طلبات التسجيل الصيفي"
+            : kindFilter === REGISTRATION_KIND.JOIN
+              ? "طلبات الانضمام"
+              : kindFilter === REGISTRATION_KIND.SEASON_RENEWAL
+                ? "إعادة تسجيل الموسم"
+                : "طلبات التسجيل"}
         </Text>
         <TouchableOpacity
           style={styles.topBarAvatar}
@@ -225,12 +286,43 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {!isSummer ? (
+          <ActiveSeasonBanner
+            season={activeSeason}
+            hint="طلبات هذا الموسم فقط — الموسم السابق لا يظهر هنا"
+          />
+        ) : null}
+
         {pendingCount > 0 ? (
           <View style={styles.hintBanner}>
             <Text style={styles.hintBannerText}>
-              {pendingCount} طلب بانتظار قرارك — القبول يحفظ البيانات ويرسل دعوة
-              بالبريد
+              {pendingCount} طلب بانتظار قرارك — طلبات الانضمام ترسل دعوة
+              بالبريد، وإعادة التسجيل تقبل العضو الحالي دون إنشاء حساب جديد
             </Text>
+          </View>
+        ) : null}
+
+        {!isSummer ? (
+          <View style={styles.filterRow}>
+            {kindFilters.map(([key, label]) => (
+              <TouchableOpacity
+                key={key}
+                style={[
+                  styles.kindChip,
+                  kindFilter === key && styles.kindChipActive,
+                ]}
+                onPress={() => setKindFilter(key)}
+              >
+                <Text
+                  style={[
+                    styles.kindChipText,
+                    kindFilter === key && styles.kindChipTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         ) : null}
 
@@ -262,6 +354,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           list.map((reg) => {
             const user = reg.userId ? getUserById(reg.userId) : null;
             const season = seasons.find((s) => s.id === reg.seasonId);
+            const kind = getRegistrationKind(reg);
             const title =
               reg.fullName ||
               (user ? `${user.firstName} ${user.lastName}` : "مترشح");
@@ -293,6 +386,11 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                         {REGISTRATION_STATUS_LABELS[reg.status]}
                       </Text>
                     </View>
+                    <View style={styles.kindPill}>
+                      <Text style={styles.kindPillText}>
+                        {REGISTRATION_KIND_LABELS[kind]}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
@@ -301,8 +399,10 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                     <Text style={styles.meta}>
                       {season.name} • {SEASON_TYPE_LABELS[season.type] || ""}
                     </Text>
+                  ) : kind === REGISTRATION_KIND.JOIN ? (
+                    <Text style={styles.meta}>طلب انضمام — عضو جديد</Text>
                   ) : (
-                    <Text style={styles.meta}>طلب انضمام عام</Text>
+                    <Text style={styles.meta}>إعادة تسجيل موسم</Text>
                   )}
                   {reg.email ? (
                     <Text style={styles.meta}>البريد: {reg.email}</Text>
@@ -315,6 +415,12 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                   ) : null}
                   {reg.level ? (
                     <Text style={styles.meta}>مستوى الحفظ: {reg.level}</Text>
+                  ) : null}
+                  {reg.gender ? (
+                    <Text style={styles.meta}>الجنس: {reg.gender}</Text>
+                  ) : null}
+                  {reg.seanceName ? (
+                    <Text style={styles.meta}>الحصة: {reg.seanceName}</Text>
                   ) : null}
                   {reg.hifzAmount ? (
                     <Text style={styles.meta}>مقدار الحفظ: {reg.hifzAmount}</Text>
@@ -331,7 +437,11 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                     >
                       <Check size={18} color="#fff" pointerEvents="none" />
                       <Text style={styles.actionBtnText}>
-                        {sending ? "جاري..." : "قبول"}
+                        {sending
+                          ? "جاري..."
+                          : kind === REGISTRATION_KIND.SEASON_RENEWAL
+                            ? "قبول التسجيل"
+                            : "قبول وإرسال دعوة"}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -346,7 +456,9 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                   </View>
                 ) : null}
 
-                {reg.status === REGISTRATION_STATUS.INVITED && reg.email ? (
+                {reg.status === REGISTRATION_STATUS.INVITED &&
+                reg.email &&
+                kind === REGISTRATION_KIND.JOIN ? (
                   <TouchableOpacity
                     style={[styles.actionBtn, styles.resendBtn]}
                     onPress={sending ? undefined : () => resendInvite(reg)}
@@ -466,6 +578,27 @@ const styles = StyleSheet.create({
     color: palette.primary,
     fontWeight: "700",
   },
+  kindChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#E3F2FD",
+    borderWidth: 1,
+    borderColor: "#BBDEFB",
+  },
+  kindChipActive: {
+    backgroundColor: "#1976D2",
+    borderColor: "#1976D2",
+  },
+  kindChipText: {
+    fontSize: 12,
+    color: "#1565C0",
+    fontWeight: "600",
+    ...rtlText,
+  },
+  kindChipTextActive: {
+    color: "#fff",
+  },
   emptyText: {
     textAlign: "center",
     color: palette.textSecondary,
@@ -519,6 +652,19 @@ const styles = StyleSheet.create({
   statusPillText: {
     fontSize: 11,
     fontWeight: "700",
+    ...rtlText,
+  },
+  kindPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "#E3F2FD",
+  },
+  kindPillText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#1565C0",
     ...rtlText,
   },
   metaBlock: {

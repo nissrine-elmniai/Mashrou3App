@@ -43,8 +43,8 @@ export function profileToAppUser(profile, fallback = {}) {
     seasonId: fallback.seasonId || null,
     school: fallback.school,
     level: fallback.level,
-    phone: fallback.phone,
-    hifzAmount: fallback.hifzAmount,
+    phone: fallback.phone || profile.phone,
+    hifzAmount: profile.hifz_amount || fallback.hifzAmount || "",
   };
 }
 
