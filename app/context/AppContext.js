@@ -49,6 +49,16 @@ import {
   upsertSaison,
 } from "../lib/saisonsApi";
 import { getActiveRegularSeason } from "../lib/seasonScope";
+import {
+  clampTumuns,
+  enrichMemberProgram,
+  percentToTumuns,
+} from "../lib/tumun";
+import {
+  deleteMemberProgramRemote,
+  syncMemberProgramsWithSupabase,
+  upsertMemberProgram,
+} from "../lib/memberProgramsApi";
 
 const AppContext = createContext(null);
 
@@ -57,6 +67,19 @@ const uid = (prefix) =>
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+}
+
+/** Migre les programmes locaux hérités (progression %) vers completedTumuns. */
+function migrateMemberPrograms(programs = []) {
+  return programs.map((p) => {
+    const nbHizb = Number(p.nbHizb) || 0;
+    const completedTumuns =
+      p.completedTumuns != null
+        ? clampTumuns(p.completedTumuns, nbHizb)
+        : percentToTumuns(p.progression, nbHizb);
+    const { progression: _legacy, ...rest } = p;
+    return { ...rest, completedTumuns };
+  });
 }
 
 function inviteToken() {
@@ -146,6 +169,7 @@ export function AppProvider({ children }) {
    *  jamais le login mock existant. */
   const [supabaseSession, setSupabaseSession] = useState(null);
   const skipNextSave = useRef(true);
+  const programsSyncedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -169,10 +193,15 @@ export function AppProvider({ children }) {
         setAttendance(saved.attendance || []);
         setExams(saved.exams || []);
         setNotifications(saved.notifications || []);
-        setMemberPrograms(saved.memberPrograms || emptyState.memberPrograms || []);
+        setMemberPrograms(
+          migrateMemberPrograms(
+            saved.memberPrograms || emptyState.memberPrograms || []
+          )
+        );
       } else {
         setUsers(loadedUsers);
         setSeasons(loadedSeasons);
+        setMemberPrograms(migrateMemberPrograms(emptyState.memberPrograms || []));
       }
 
       if (isSupabaseConfigured()) {
@@ -260,6 +289,39 @@ export function AppProvider({ children }) {
     const fresh = users.find((u) => u.id === currentUser.id);
     if (fresh && fresh !== currentUser) setCurrentUser(fresh);
   }, [users, currentUser, supabaseSession]);
+
+  useEffect(() => {
+    if (!supabaseSession?.user?.id) {
+      programsSyncedRef.current = false;
+    }
+  }, [supabaseSession?.user?.id]);
+
+  useEffect(() => {
+    if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
+    if (programsSyncedRef.current) return;
+    const authId = supabaseSession.user.id;
+    const localUserId = currentUser?.id;
+    if (!localUserId) return;
+
+    let cancelled = false;
+    programsSyncedRef.current = true;
+    (async () => {
+      const localMine = memberPrograms.filter((p) => p.userId === localUserId);
+      const res = await syncMemberProgramsWithSupabase(localMine, authId);
+      if (cancelled || !res.ok) return;
+      setMemberPrograms((prev) => {
+        const others = prev.filter((p) => p.userId !== localUserId);
+        const synced = migrateMemberPrograms(
+          (res.programs || []).map((p) => ({ ...p, userId: localUserId }))
+        );
+        return [...others, ...synced];
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, supabaseSession?.user?.id, currentUser?.id]);
 
   const login = async (email, password, options = {}) => {
     const mail = String(email || "").trim().toLowerCase();
@@ -386,7 +448,7 @@ export function AppProvider({ children }) {
     setAttendance(emptyState.attendance);
     setExams(emptyState.exams);
     setNotifications(emptyState.notifications);
-    setMemberPrograms(emptyState.memberPrograms || []);
+    setMemberPrograms(migrateMemberPrograms(emptyState.memberPrograms || []));
     setSupabaseSession(null);
     setCurrentUser(null);
   };
@@ -569,13 +631,13 @@ export function AppProvider({ children }) {
   const startNewSeason = async ({
     name,
     startDate,
-    endDate,
+    version,
     openRegistration = true,
   }) => {
     const seasonName = String(name || "").trim();
     const start = String(startDate || "").trim();
-    const end = String(endDate || "").trim();
-    if (!seasonName || !start || !end) {
+    const versionNum = Number.parseInt(String(version || "").trim(), 10);
+    if (!seasonName || !start || !Number.isFinite(versionNum) || versionNum < 1) {
       return { ok: false, error: "املأ جميع الحقول" };
     }
 
@@ -588,7 +650,7 @@ export function AppProvider({ children }) {
       name: seasonName,
       type: SEASON_TYPES.REGULAR,
       startDate: start,
-      endDate: end,
+      version: versionNum,
       registrationOpen: !!openRegistration,
       active: true,
       remote: false,
@@ -1580,17 +1642,20 @@ export function AppProvider({ children }) {
   };
 
   const getMemberPrograms = (memberId = currentUser?.id) =>
-    memberPrograms.filter((p) => p.userId === memberId);
+    memberPrograms
+      .filter((p) => p.userId === memberId)
+      .map(enrichMemberProgram);
+
+  const persistMemberProgramRemote = (row) => {
+    if (!isSupabaseConfigured() || !supabaseSession?.user?.id) return;
+    upsertMemberProgram(row).catch(() => {});
+  };
 
   const saveMemberProgram = (program, memberId = currentUser?.id) => {
     if (!memberId) return { ok: false, error: "يجب تسجيل الدخول" };
     const title = String(program.title || "").trim();
     const nbHizb = Number(program.nbHizb);
     const durationDays = Number(program.durationDays);
-    const progression = Math.min(
-      100,
-      Math.max(0, Number(program.progression) || 0)
-    );
     if (!title) return { ok: false, error: "أدخل اسم البرنامج" };
     if (!Number.isFinite(nbHizb) || nbHizb <= 0) {
       return { ok: false, error: "أدخل عدد أحزاب صحيحاً" };
@@ -1599,6 +1664,14 @@ export function AppProvider({ children }) {
       return { ok: false, error: "أدخل مدة صحيحة بالأيام" };
     }
 
+    const existing = memberPrograms.find(
+      (p) => p.id === program.id && p.userId === memberId
+    );
+    const completedTumuns = clampTumuns(
+      program.completedTumuns ?? existing?.completedTumuns ?? 0,
+      nbHizb
+    );
+
     const row = {
       id: program.id || uid("mp"),
       userId: memberId,
@@ -1606,7 +1679,7 @@ export function AppProvider({ children }) {
       nbHizb,
       durationDays,
       startDate: String(program.startDate || todayStr()).trim() || todayStr(),
-      progression,
+      completedTumuns,
     };
 
     setMemberPrograms((prev) => {
@@ -1616,7 +1689,8 @@ export function AppProvider({ children }) {
       }
       return [...prev, row];
     });
-    return { ok: true, program: row };
+    persistMemberProgramRemote(row);
+    return { ok: true, program: enrichMemberProgram(row) };
   };
 
   const deleteMemberProgram = (programId, memberId = currentUser?.id) => {
@@ -1626,20 +1700,38 @@ export function AppProvider({ children }) {
     setMemberPrograms((prev) =>
       prev.filter((p) => !(p.id === programId && p.userId === memberId))
     );
+    deleteMemberProgramRemote(programId).catch(() => {});
     return { ok: true };
   };
 
-  const updateMemberProgramProgress = (
+  const setMemberProgramTumuns = (
     programId,
-    progression,
+    completedTumuns,
     memberId = currentUser?.id
   ) => {
-    const pct = Math.min(100, Math.max(0, Number(progression) || 0));
     const target = memberPrograms.find(
       (p) => p.id === programId && p.userId === memberId
     );
     if (!target) return { ok: false, error: "البرنامج غير موجود" };
-    return saveMemberProgram({ ...target, progression: pct }, memberId);
+    const clamped = clampTumuns(completedTumuns, target.nbHizb);
+    return saveMemberProgram({ ...target, completedTumuns: clamped }, memberId);
+  };
+
+  const adjustMemberProgramTumuns = (
+    programId,
+    delta,
+    memberId = currentUser?.id
+  ) => {
+    const target = memberPrograms.find(
+      (p) => p.id === programId && p.userId === memberId
+    );
+    if (!target) return { ok: false, error: "البرنامج غير موجود" };
+    const current = clampTumuns(target.completedTumuns ?? 0, target.nbHizb);
+    const next = clampTumuns(current + Number(delta), target.nbHizb);
+    if (next === current) {
+      return { ok: true, program: enrichMemberProgram({ ...target, completedTumuns: current }), unchanged: true };
+    }
+    return saveMemberProgram({ ...target, completedTumuns: next }, memberId);
   };
 
   const addProgressNote = (progressId, note) => {
@@ -1925,7 +2017,8 @@ export function AppProvider({ children }) {
     getMemberPrograms,
     saveMemberProgram,
     deleteMemberProgram,
-    updateMemberProgramProgress,
+    setMemberProgramTumuns,
+    adjustMemberProgramTumuns,
     addProgressNote,
     addExamResult,
     createExam,

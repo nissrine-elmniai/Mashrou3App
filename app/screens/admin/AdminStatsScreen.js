@@ -9,7 +9,7 @@ import {
   getAllSeances,
 } from "../../lib/seancesApi";
 import { getAllTestsAdmin } from "../../lib/testsApi";
-import { getAllProgressionAdmin } from "../../lib/progressApi";
+import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
 import { countPendingApplications } from "../../lib/memberApplicationsApi";
 
 export default function AdminStatsScreen({ navigation }) {
@@ -48,24 +48,24 @@ export default function AdminStatsScreen({ navigation }) {
     };
   }, []);
 
-  /** Progression moyenne + top 5 : dernier juz mémorisé de chaque membre. */
+  /** Progression moyenne + top 5 : dernière saisie de chaque membre (entrées triées desc). */
   const { avgPct, top } = useMemo(() => {
     const byMember = {};
     progressions.forEach((e) => {
       const key = e.membre_id;
-      const pct = Math.min(100, Math.round((e.juze / 30) * 100));
-      if (!byMember[key]) {
-        byMember[key] = {
-          id: e.id,
-          membreId: e.membre_id,
-          name:
-            `${e.membre?.first_name || ""} ${e.membre?.last_name || ""}`.trim() ||
-            e.membre?.email ||
-            "عضو",
-          juze: e.juze,
-          pct,
-        };
-      }
+      if (byMember[key]) return;
+      const metrics = computeProgressMetrics(e);
+      byMember[key] = {
+        id: e.id,
+        membreId: e.membre_id,
+        name:
+          `${e.membre?.first_name || ""} ${e.membre?.last_name || ""}`.trim() ||
+          e.membre?.email ||
+          "عضو",
+        juze: metrics?.juzeCourant ?? 0,
+        nbHizb: metrics?.nbHizbCompletes ?? 0,
+        pct: metrics?.globalPct ?? 0,
+      };
     });
     const list = Object.values(byMember);
     const avg =
@@ -160,7 +160,7 @@ export default function AdminStatsScreen({ navigation }) {
                     <Text style={styles.pct}>{p.pct}%</Text>
                   </View>
                   <Text style={styles.meta}>
-                    آخر حفظ: جزء {p.juze} من 30
+                    آخر حفظ: {p.nbHizb} حزب (≈ الجزء {p.juze} من 30)
                   </Text>
                 </View>
               ))

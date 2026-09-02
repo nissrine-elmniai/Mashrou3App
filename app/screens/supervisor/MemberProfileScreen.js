@@ -3,7 +3,9 @@
  *
  * Décisions techniques actées (ne pas migrer vers le schéma CdC pour ces points) :
  * 1. Identité : profiles (legacy) via inscriptions → profiles FK, pas users+membres/superviseurs.
- * 2. Progression : colonnes migration progression (juze, tumun, note, date_saisie), pas nb_hizb_completes/tumun_courant/saison_id.
+ * 2. Progression : colonnes réelles de la table (nb_hizb_completes, tumun_courant, notes,
+ *    saison_id, date_saisie) — cf. migration 0041. juze n'est pas stocké, il est dérivé
+ *    par computeProgressMetrics (ceil(nb_hizb_completes / 2)).
  *
  * Présence : table presences via presenceApi (pas AppContext.attendance mock).
  *
@@ -376,7 +378,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           error: null,
           hasData: progRes.hasData,
           metrics: progRes.metrics,
-          note: progRes.entry?.note || null,
+          note: progRes.metrics?.notes || null,
           objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
         });
       }

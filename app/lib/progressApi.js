@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { TUMUNS_PER_HIZB, TOTAL_HIZB, clampTumuns } from "./tumun";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -87,42 +88,60 @@ export async function getMyProgress() {
 }
 
 /**
- * Saisie d'une progression personnelle (juz/tumun mémorisé).
- * @param {object} payload { juze (1..30), tumun (1..8, optionnel), note (optionnel), dateSaisie (optionnel) }
+ * Construit la ligne `progression` à partir du nombre de ثمن complétés.
+ * Le juz n'est jamais stocké : il est dérivé à la lecture (computeProgressMetrics).
+ * @returns {{ ok: true, row } | { ok: false, error }}
+ */
+export function buildProgressRow({ membreId, completedTumuns, nbHizb, saisonId = null, notes = null }) {
+  const numNbHizb = Number(nbHizb);
+  if (!Number.isInteger(numNbHizb) || numNbHizb <= 0) {
+    return { ok: false, error: "عدد الأحزاب غير صالح" };
+  }
+  const clamped = clampTumuns(completedTumuns, numNbHizb);
+  const nbHizbCompletes = Math.floor(clamped / TUMUNS_PER_HIZB);
+  if (nbHizbCompletes > TOTAL_HIZB) {
+    return { ok: false, error: "عدد الأحزاب المكتملة يتجاوز 60" };
+  }
+  return {
+    ok: true,
+    row: {
+      membre_id: membreId,
+      saison_id: saisonId ?? null,
+      nb_hizb_completes: nbHizbCompletes,
+      tumun_courant: clamped % TUMUNS_PER_HIZB,
+      notes: notes || null,
+    },
+  };
+}
+
+/**
+ * Saisie d'une progression personnelle (fil d'activité) à partir des ثمن complétés.
+ * @param {object} payload { completedTumuns, nbHizb, saisonId (optionnel), notes (optionnel) }
  * @returns { ok, entry? }
  */
-export async function addProgressEntry({ juze, tumun = null, note = null, dateSaisie = null }) {
+export async function addProgressEntry({ completedTumuns, nbHizb, saisonId = null, notes = null }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  const numJuze = Number(juze);
-  if (!Number.isInteger(numJuze) || numJuze < 1 || numJuze > 30) {
-    return { ok: false, error: "أدخل جزءاً صحيحاً بين 1 و 30" };
-  }
-  if (tumun !== null && tumun !== undefined && tumun !== "") {
-    const numTumun = Number(tumun);
-    if (!Number.isInteger(numTumun) || numTumun < 1 || numTumun > 8) {
-      return { ok: false, error: "أدخل ثمناً صحيحاً بين 1 و 8" };
-    }
   }
   const userId = await currentAuthId();
   if (!userId) {
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
-  const row = {
-    membre_id: userId,
-    juze: numJuze,
-    tumun: tumun === null || tumun === undefined || tumun === "" ? null : Number(tumun),
-    note: note || null,
-  };
-  if (dateSaisie) {
-    row.date_saisie = dateSaisie;
+  const built = buildProgressRow({
+    membreId: userId,
+    completedTumuns,
+    nbHizb,
+    saisonId,
+    notes,
+  });
+  if (!built.ok) {
+    return built;
   }
 
   try {
     const { data, error } = await withTimeout(
-      supabase.from("progression").insert(row).select("*").single(),
+      supabase.from("progression").insert(built.row).select("*").single(),
       SUPABASE_TIMEOUT_MS,
       "حفظ التقدم"
     );
@@ -184,31 +203,36 @@ export async function getSeanceMemberProgress(seanceId) {
 }
 
 /** Total des ثمن (8 × 60 حزب) pour le % global du Coran. */
-export const PROGRESS_TOTAL_TUMUN = 480;
+export const PROGRESS_TOTAL_TUMUN = TOTAL_HIZB * TUMUNS_PER_HIZB;
 
 /**
- * Calcule le % global et les indicateurs depuis une ligne progression (juze/tumun).
+ * Calcule le % global et les indicateurs depuis une ligne progression
+ * (nb_hizb_completes / tumun_courant — colonnes réelles de la table).
  * Formule : (nb_hizb_completes × 8 + tumun_courant) / 480
- * — nb_hizb_completes = juze − 1 (جزء كامل محفوظ قبل الجزء الحالي)
+ * — juzeCourant est dérivé : ceil(nb_hizb_completes / 2) (1 juz = 2 hizb), jamais stocké.
  */
 export function computeProgressMetrics(row) {
-  if (!row?.juze) {
+  if (!row || row.nb_hizb_completes == null) {
     return null;
   }
-  const juze = Number(row.juze);
-  const tumunCourant = row.tumun != null && row.tumun !== "" ? Number(row.tumun) : 0;
-  const nbHizbCompletes = Math.max(0, juze - 1);
-  const tumunTotal = nbHizbCompletes * 8 + tumunCourant;
+  const nbHizbCompletes = Math.max(0, Number(row.nb_hizb_completes) || 0);
+  const tumunCourant =
+    row.tumun_courant != null && row.tumun_courant !== ""
+      ? Math.max(0, Number(row.tumun_courant) || 0)
+      : 0;
+  const tumunTotal = nbHizbCompletes * TUMUNS_PER_HIZB + tumunCourant;
   const globalPct = Math.min(
     100,
     Math.round((tumunTotal / PROGRESS_TOTAL_TUMUN) * 100)
   );
   return {
-    juzeCourant: juze,
-    tumunCourant: row.tumun != null && row.tumun !== "" ? Number(row.tumun) : null,
+    juzeCourant: Math.ceil(nbHizbCompletes / 2),
+    tumunCourant: tumunCourant > 0 ? tumunCourant : null,
     nbHizbCompletes,
+    tumunTotal,
     globalPct,
-    dateSaisie: row.date_saisie || null,
+    notes: row.notes || null,
+    dateSaisie: row.date_saisie || row.date || null,
   };
 }
 

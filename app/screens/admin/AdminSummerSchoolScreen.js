@@ -29,11 +29,12 @@ export default function AdminSummerSchoolScreen({ navigation }) {
 
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [version, setVersion] = useState("");
   const [announceNow, setAnnounceNow] = useState(true);
 
   const handleCreateAndAnnounce = () => {
-    if (!name || !startDate || !endDate) {
+    const versionNum = Number.parseInt(String(version).trim(), 10);
+    if (!name || !startDate || !Number.isFinite(versionNum) || versionNum < 1) {
       Alert.alert("تنبيه", "املأ جميع الحقول");
       return;
     }
@@ -41,14 +42,14 @@ export default function AdminSummerSchoolScreen({ navigation }) {
       name,
       type: SEASON_TYPES.SUMMER,
       startDate,
-      endDate,
+      version: versionNum,
       remote: true,
       openRegistration: announceNow,
       activate: announceNow,
     });
     setName("");
     setStartDate("");
-    setEndDate("");
+    setVersion("");
     Alert.alert(
       announceNow ? "تم إعلان الاستمارة الصيفية" : "تم إنشاء المدرسة الصيفية",
       announceNow
@@ -106,11 +107,12 @@ export default function AdminSummerSchoolScreen({ navigation }) {
           onChangeText={setStartDate}
           placeholder="2027/07/01"
         />
-        <Text style={styles.label}>تاريخ النهاية</Text>
+        <Text style={styles.label}>رقم النسخة</Text>
         <FormInput
-          value={endDate}
-          onChangeText={setEndDate}
-          placeholder="2027/08/31"
+          value={version}
+          onChangeText={setVersion}
+          placeholder="1"
+          keyboardType="number-pad"
         />
         <SoftButton
           label={
@@ -147,7 +149,8 @@ export default function AdminSummerSchoolScreen({ navigation }) {
                 : " • الاستمارة مغلقة"}
             </Text>
             <Text style={styles.meta}>
-              {season.startDate} → {season.endDate}
+              {season.startDate}
+              {season.version != null ? ` • النسخة ${season.version}` : ""}
             </Text>
 
             {!season.registrationOpen ? (

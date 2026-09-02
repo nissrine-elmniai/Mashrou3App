@@ -58,7 +58,7 @@ export const bootstrapSeasons = [
     name: "الموسم الدراسي 2026",
     type: SEASON_TYPES.REGULAR,
     startDate: "2026/09/01",
-    endDate: "2027/06/30",
+    version: 1,
     remote: false,
     registrationOpen: false,
     active: true,
@@ -87,7 +87,7 @@ export const bootstrapMemberPrograms = [
     nbHizb: 3,
     durationDays: 30,
     startDate: "2025/01/01",
-    progression: 65,
+    completedTumuns: 16,
   },
   {
     id: "mp_bootstrap_2",
@@ -96,7 +96,7 @@ export const bootstrapMemberPrograms = [
     nbHizb: 10,
     durationDays: 90,
     startDate: "2025/01/15",
-    progression: 25,
+    completedTumuns: 20,
   },
 ];
 

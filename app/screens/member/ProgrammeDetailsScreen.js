@@ -1,5 +1,5 @@
 // app/screens/member/ProgrammeDetailScreen.js
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -7,73 +7,105 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
-  TextInput,
   Alert,
-  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useApp } from "../../context/AppContext";
+import { addProgressEntry } from "../../lib/progressApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
 import { row, rtlText, arrowBack } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
-import { addProgressEntry } from "../../lib/progressApi";
 
 const { width } = Dimensions.get("window");
+const HISTORY_DEBOUNCE_MS = 800;
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
-  // 📥 RÉCUPÉRATION DES DONNÉES DEPUIS LE DASHBOARD
-  const { programme } = route.params || {};
+  const routeProgram = route.params?.programme;
+  const {
+    getMemberPrograms,
+    adjustMemberProgramTumuns,
+    deleteMemberProgram,
+    seasons,
+  } = useApp();
 
-  // Données par défaut si rien n'est passé (au cas où)
-  const defaultData = {
-    id: "1",
-    nom: "برنامج جزء عم",
-    duree: 30,
-    nbHizb: 3,
-    progression: 65,
-    dateDebut: "2025/01/01",
-    statut: "en_cours",
-  };
+  const activeSeasonIdRef = useRef(null);
+  activeSeasonIdRef.current = getActiveRegularSeason(seasons)?.id ?? null;
 
-  // Utilisation des données du programme passé depuis le Dashboard
-  const [programData, setProgramData] = useState(programme || defaultData);
+  const programFromContext = useMemo(() => {
+    if (!routeProgram?.id) return null;
+    return getMemberPrograms().find((p) => p.id === routeProgram.id) || null;
+  }, [getMemberPrograms, routeProgram?.id]);
 
-  // État pour la modification du progrès
-  const [isEditing, setIsEditing] = useState(false);
-  const [tempProgress, setTempProgress] = useState(
-    programData.progression.toString(),
+  const programData = useMemo(() => {
+    if (programFromContext) {
+      return {
+        id: programFromContext.id,
+        nom: programFromContext.title,
+        duree: programFromContext.durationDays,
+        nbHizb: programFromContext.nbHizb,
+        completedTumuns: programFromContext.completedTumuns,
+        totalTumuns: programFromContext.totalTumuns,
+        progression: programFromContext.progression,
+        dateDebut: programFromContext.startDate,
+        statut: programFromContext.progression >= 100 ? "terminé" : "en_cours",
+      };
+    }
+    if (routeProgram) {
+      const nbHizb = routeProgram.nbHizb || 0;
+      const totalTumuns = nbHizb * TUMUNS_PER_HIZB;
+      const completedTumuns = Math.round(
+        ((routeProgram.progression || 0) / 100) * totalTumuns
+      );
+      return {
+        ...routeProgram,
+        completedTumuns,
+        totalTumuns,
+      };
+    }
+    return {
+      id: "1",
+      nom: "برنامج جزء عم",
+      duree: 30,
+      nbHizb: 3,
+      completedTumuns: 0,
+      totalTumuns: 24,
+      progression: 0,
+      dateDebut: "2025/01/01",
+      statut: "en_cours",
+    };
+  }, [programFromContext, routeProgram]);
+
+  const historyTimerRef = useRef(null);
+  const pendingHistoryRef = useRef(null);
+
+  const { completed: hizbCompletes, remaining: hizbRestants } = hizbBreakdown(
+    programData.completedTumuns,
+    programData.nbHizb
   );
-  const [showProgressModal, setShowProgressModal] = useState(false);
 
-  // 📊 CALCULS DYNAMIQUES BASÉS SUR LES DONNÉES DU PROGRAMME
-  const hizbCompletes = Math.floor(
-    (programData.progression / 100) * programData.nbHizb,
-  );
-  const hizbRestants = programData.nbHizb - hizbCompletes;
-
-  // Garde-fou : date de début absente/invalide ("—", undefined…)
   const rawDate = programData.dateDebut;
   const dateIsValid =
     !!rawDate &&
     rawDate !== "—" &&
-    !isNaN(new Date(String(rawDate).replace(/\//g, "-")).getTime());
+    !Number.isNaN(new Date(String(rawDate).replace(/\//g, "-")).getTime());
   const dateDebut = dateIsValid
     ? new Date(String(rawDate).replace(/\//g, "-"))
     : null;
 
-  // Calcul des jours (dates portées par le programme affiché — pas d'entité backend)
   const aujourdhui = new Date();
   const joursEcoules = dateDebut
     ? Math.min(
         programData.duree,
         Math.max(
           0,
-          Math.floor((aujourdhui - dateDebut) / (1000 * 60 * 60 * 24)),
-        ),
+          Math.floor((aujourdhui - dateDebut) / (1000 * 60 * 60 * 24))
+        )
       )
     : 0;
   const joursRestants = Math.max(0, programData.duree - joursEcoules);
 
-  // Formatage des dates
   const formatDate = (dateString) => {
     const date = new Date(dateString.replace(/\//g, "-"));
     const mois = [
@@ -103,71 +135,92 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     ? `${dateFinObj.getDate()} ${dateFinObj.toLocaleDateString("fr-FR", { month: "long" })} ${dateFinObj.getFullYear()}`
     : "Date non définie";
 
-  // Gestion de la sauvegarde du progrès
-  const handleSaveProgress = async () => {
-    const newProgress = parseInt(tempProgress);
-    if (isNaN(newProgress) || newProgress < 0 || newProgress > 100) {
-      Alert.alert("خطأ", "الرجاء إدخال قيمة بين 0 و 100");
-      return;
-    }
+  const atMin = programData.completedTumuns <= 0;
+  const atMax = programData.completedTumuns >= programData.totalTumuns;
 
-    setProgramData({
-      ...programData,
-      progression: newProgress,
-    });
+  const flushProgressHistory = useCallback(async () => {
+    const pending = pendingHistoryRef.current;
+    pendingHistoryRef.current = null;
+    if (!pending || pending.completedTumuns <= 0) return;
 
-    setShowProgressModal(false);
-    setIsEditing(false);
-
-    // Persistance Supabase (table progression). Le programme affiché est
-    // « جزء عم » → juze 30 ; le pourcentage du modal est traduit en tumun
-    // (1..8) de ce juz. Mapping provisoire — à affiner quand le CDC
-    // définira la saisie détaillée.
     const result = await addProgressEntry({
-      juze: 30,
-      tumun: Math.max(1, Math.min(8, Math.ceil((newProgress / 100) * 8))),
-      note: null,
+      completedTumuns: pending.completedTumuns,
+      nbHizb: pending.nbHizb,
+      saisonId: activeSeasonIdRef.current,
+      notes: `${pending.title} — ${pending.completedTumuns}/${pending.totalTumuns} أثمان`,
     });
 
     if (!result.ok) {
-      Alert.alert("خطأ", result.error || "تعذر حفظ التقدم");
+      Alert.alert("تنبيه", result.error || "تعذر تسجيل النشاط");
+    }
+  }, []);
+
+  const scheduleProgressHistory = useCallback(
+    (program) => {
+      pendingHistoryRef.current = {
+        title: program.nom,
+        completedTumuns: program.completedTumuns,
+        totalTumuns: program.totalTumuns,
+        nbHizb: program.nbHizb,
+      };
+      if (historyTimerRef.current) {
+        clearTimeout(historyTimerRef.current);
+      }
+      historyTimerRef.current = setTimeout(flushProgressHistory, HISTORY_DEBOUNCE_MS);
+    },
+    [flushProgressHistory]
+  );
+
+  useEffect(
+    () => () => {
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+    },
+    []
+  );
+
+  const handleAdjustTumuns = (delta) => {
+    if (!programData.id) return;
+    const result = adjustMemberProgramTumuns(programData.id, delta);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
       return;
     }
-    Alert.alert("تم", "تم تحديث التقدم بنجاح");
+    if (delta > 0 && result.program && !result.unchanged) {
+      scheduleProgressHistory({
+        nom: result.program.title,
+        completedTumuns: result.program.completedTumuns,
+        totalTumuns: result.program.totalTumuns,
+        nbHizb: result.program.nbHizb,
+      });
+    }
   };
 
-  // 🆕 FONCTION POUR SUPPRIMER LE PROGRAMME
   const handleDeleteProgramme = () => {
     Alert.alert(
       "حذف البرنامج",
       `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيتم حذف جميع بيانات التقدم المرتبطة به بشكل نهائي.`,
       [
-        {
-          text: "إلغاء",
-          style: "cancel",
-        },
+        { text: "إلغاء", style: "cancel" },
         {
           text: "حذف",
           style: "destructive",
           onPress: confirmDelete,
         },
-      ],
+      ]
     );
   };
 
   const confirmDelete = async () => {
     try {
-      // Pas d'entité « programme » côté backend (le Mushaf reste un asset
-      // statique embarqué) — suppression locale uniquement.
-
-      console.log("Programme supprimé:", programData.id);
-
-      // Message de succès
+      if (programData.id) {
+        const result = deleteMemberProgram(programData.id);
+        if (!result.ok) {
+          Alert.alert("خطأ", result.error);
+          return;
+        }
+      }
       Alert.alert("✅ تم الحذف", "تم حذف البرنامج بنجاح", [
-        {
-          text: "رجوع",
-          onPress: () => navigation.goBack(),
-        },
+        { text: "رجوع", onPress: () => navigation.goBack() },
       ]);
     } catch (error) {
       console.error("Erreur suppression:", error);
@@ -175,121 +228,9 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     }
   };
 
-  // Composant Modal pour ajuster la progression
-  const ProgressModal = () => (
-    <Modal
-      transparent={true}
-      visible={showProgressModal}
-      onRequestClose={() => setShowProgressModal(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>إدارة التقدم</Text>
-            <TouchableOpacity onPress={() => setShowProgressModal(false)}>
-              <Ionicons name="close" size={24} color={colors.muted} />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.modalSubtitle}>
-            تحديث نسبة الإنجاز في البرنامج
-          </Text>
-
-          {/* Progression actuelle */}
-          <View style={styles.currentProgressContainer}>
-            <Text style={styles.currentProgressLabel}>التقدم الحالي</Text>
-            <Text style={styles.currentProgressValue}>
-              {programData.progression}%
-            </Text>
-          </View>
-
-          <View style={styles.progressBarFull}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${programData.progression}%` },
-              ]}
-            />
-          </View>
-
-          {/* Ajustement du progrès */}
-          <View style={styles.adjustSection}>
-            <Text style={styles.adjustLabel}>اضبط نسبة التقدم</Text>
-
-            <View style={styles.sliderContainer}>
-              <TouchableOpacity
-                style={styles.sliderButton}
-                onPress={() => {
-                  const newVal = Math.max(0, parseInt(tempProgress) - 5);
-                  setTempProgress(newVal.toString());
-                }}
-              >
-                <Text style={styles.sliderButtonText}>-</Text>
-              </TouchableOpacity>
-
-              <View style={styles.progressInputContainer}>
-                <TextInput
-                  style={styles.progressInput}
-                  value={tempProgress}
-                  onChangeText={setTempProgress}
-                  keyboardType="numeric"
-                  maxLength={3}
-                  textAlign="center"
-                />
-                <Text style={styles.percentSymbol}>%</Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.sliderButton}
-                onPress={() => {
-                  const newVal = Math.min(100, parseInt(tempProgress) + 5);
-                  setTempProgress(newVal.toString());
-                }}
-              >
-                <Text style={styles.sliderButtonText}>+</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Boutons d'action */}
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={styles.saveButton}
-                onPress={handleSaveProgress}
-              >
-                <Text style={styles.saveButtonText}>حفظ التغيرات</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setShowProgressModal(false);
-                  setTempProgress(programData.progression.toString());
-                }}
-              >
-                <Text style={styles.cancelButtonText}>إلغاء</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Note d'avertissement */}
-          {programData.progression < 100 && (
-            <View style={styles.warningNote}>
-              <Text style={styles.warningIcon}>⚠️</Text>
-              <Text style={styles.warningText}>
-                التقدم الفعلي ({programData.progression}%) أقل من المتوقع (100%)
-                بناء على الأيام المنقضية.
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </Modal>
-  );
-
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* --- Header avec bouton retour --- */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -301,7 +242,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
         </View>
 
         <View style={styles.content}>
-          {/* --- Carte Header Programme (DONNÉES DYNAMIQUES) --- */}
           <View style={[styles.card, styles.mainCard]}>
             <View style={styles.rowBetween}>
               <View style={styles.headerIcons}>
@@ -329,7 +269,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             </View>
           </View>
 
-          {/* --- Statistiques (CALCULÉES DYNAMIQUEMENT) --- */}
           <StatCard
             title="الأحزاب المكتملة"
             value={hizbCompletes.toString()}
@@ -349,7 +288,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             color={colors.primary}
           />
 
-          {/* --- Détails du Programme (DATES DYNAMIQUES) --- */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>تفاصيل البرنامج</Text>
 
@@ -391,37 +329,54 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
                 <View
                   style={[
                     styles.progressBarFill,
-                    { width: `${(joursEcoules / programData.duree) * 100}%` },
+                    {
+                      width: `${programData.duree ? (joursEcoules / programData.duree) * 100 : 0}%`,
+                    },
                   ]}
                 />
               </View>
             </View>
           </View>
 
-          {/* --- Gestion de la progression --- */}
           <View style={styles.sectionCard}>
-            <View style={styles.rowBetween}>
-              <TouchableOpacity
-                style={styles.editButton}
-                onPress={() => {
-                  setTempProgress(programData.progression.toString());
-                  setShowProgressModal(true);
-                }}
-              >
-                <Text style={styles.editButtonText}>تعديل التقدم</Text>
-              </TouchableOpacity>
-              <View style={styles.titleRight}>
-                <Text style={styles.sectionTitle}>إدارة التقدم</Text>
-                <Text style={styles.subTitle}>
-                  تحديث نسبة الإنجاز في البرنامج
-                </Text>
-              </View>
+            <View style={styles.titleRight}>
+              <Text style={styles.sectionTitle}>إدارة التقدم</Text>
+              <Text style={styles.subTitle}>تحديث التقدم بالأثمان (ثمن)</Text>
             </View>
 
             <Text style={styles.currentProgressLabel}>التقدم الحالي</Text>
-            <Text style={styles.percentageText}>
-              {programData.progression}%
+            <Text style={styles.tumunCountText}>
+              {programData.completedTumuns} / {programData.totalTumuns} أثمان
             </Text>
+            <Text style={styles.percentageText}>{programData.progression}%</Text>
+
+            <View style={styles.stepperRow}>
+              <TouchableOpacity
+                style={[styles.stepperBtn, atMin && styles.stepperBtnDisabled]}
+                onPress={() => handleAdjustTumuns(-1)}
+                disabled={atMin}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.stepperBtnText}>−</Text>
+              </TouchableOpacity>
+
+              <View style={styles.stepperValueWrap}>
+                <Text style={styles.stepperValue}>
+                  {programData.completedTumuns}
+                </Text>
+                <Text style={styles.stepperHint}>ثمن مكتمل</Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.stepperBtn, atMax && styles.stepperBtnDisabled]}
+                onPress={() => handleAdjustTumuns(1)}
+                disabled={atMax}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.stepperBtnText}>+</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.progressBarFull}>
               <View
                 style={[
@@ -431,7 +386,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               />
             </View>
 
-            {/* Note d'avertissement conditionnelle */}
             {programData.progression < 100 && (
               <View style={styles.noteBox}>
                 <Text style={styles.noteText}>
@@ -442,7 +396,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             )}
           </View>
 
-          {/* 🆕 BOUTON SUPPRIMER AJOUTÉ ICI - À LA FIN DE L'ÉCRAN */}
           <TouchableOpacity
             style={styles.deleteButton}
             onPress={handleDeleteProgramme}
@@ -452,18 +405,13 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             <Text style={styles.deleteButtonText}>حذف البرنامج</Text>
           </TouchableOpacity>
 
-          {/* Espace en bas pour le scroll */}
           <View style={styles.bottomPadding} />
         </View>
       </ScrollView>
-
-      {/* Modal de modification du progrès */}
-      <ProgressModal />
     </SafeAreaView>
   );
 }
 
-// Composant pour les petites cartes de stats
 const StatCard = ({ title, value, icon, color }) => (
   <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
     <View style={styles.rowBetween}>
@@ -599,6 +547,7 @@ const styles = StyleSheet.create({
   },
   titleRight: {
     alignItems: "flex-end",
+    marginBottom: 8,
   },
   subTitle: {
     fontSize: 12,
@@ -659,29 +608,65 @@ const styles = StyleSheet.create({
     height: "100%",
     backgroundColor: colors.primary,
   },
-  editButton: {
-    backgroundColor: colors.primary,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: radii.sm,
-  },
-  editButtonText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
   currentProgressLabel: {
     fontSize: 14,
     color: colors.muted,
     ...rtlText,
-    marginTop: 16,
+    marginTop: 8,
     marginBottom: 4,
   },
+  tumunCountText: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: colors.primary,
+    marginVertical: 4,
+    ...rtlText,
+  },
   percentageText: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: colors.textSecondary,
+    marginBottom: 16,
+    ...rtlText,
+  },
+  stepperRow: {
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    gap: 12,
+  },
+  stepperBtn: {
+    backgroundColor: colors.inputBg,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  stepperBtnDisabled: {
+    opacity: 0.4,
+  },
+  stepperBtnText: {
+    fontSize: 28,
+    fontWeight: "bold",
+    color: colors.primary,
+  },
+  stepperValueWrap: {
+    flex: 1,
+    alignItems: "center",
+  },
+  stepperValue: {
     fontSize: 32,
     fontWeight: "bold",
     color: colors.primary,
-    marginVertical: 8,
+  },
+  stepperHint: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 4,
     ...rtlText,
   },
   noteBox: {
@@ -698,7 +683,6 @@ const styles = StyleSheet.create({
     ...rtlText,
     lineHeight: 20,
   },
-  // 🆕 STYLES POUR LE BOUTON SUPPRIMER
   deleteButton: {
     backgroundColor: colors.red,
     marginTop: 8,
@@ -727,153 +711,5 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 20,
-  },
-  // Styles du Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContent: {
-    backgroundColor: "white",
-    borderRadius: radii.xl,
-    padding: 24,
-    width: width * 0.9,
-    maxWidth: 400,
-    ...shadows.card,
-  },
-  modalHeader: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: colors.primary,
-    ...rtlText,
-  },
-  modalSubtitle: {
-    fontSize: 14,
-    color: colors.muted,
-    ...rtlText,
-    marginBottom: 20,
-  },
-  currentProgressContainer: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  currentProgressLabel: {
-    fontSize: 15,
-    color: colors.muted,
-    ...rtlText,
-  },
-  currentProgressValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: colors.primary,
-  },
-  adjustSection: {
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  adjustLabel: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: colors.textSecondary,
-    ...rtlText,
-    marginBottom: 16,
-  },
-  sliderContainer: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 24,
-  },
-  sliderButton: {
-    backgroundColor: colors.inputBg,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  sliderButtonText: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: colors.primary,
-  },
-  progressInputContainer: {
-    flexDirection: row,
-    alignItems: "center",
-    backgroundColor: colors.inputBg,
-    borderRadius: radii.md,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    minWidth: 100,
-  },
-  progressInput: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: colors.primary,
-    textAlign: "center",
-    minWidth: 60,
-  },
-  percentSymbol: {
-    fontSize: 18,
-    color: colors.muted,
-    marginStart: 4,
-  },
-  modalActions: {
-    flexDirection: row,
-    gap: 12,
-  },
-  saveButton: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: radii.md,
-    alignItems: "center",
-  },
-  saveButtonText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: colors.inputBg,
-    paddingVertical: 14,
-    borderRadius: radii.md,
-    alignItems: "center",
-  },
-  cancelButtonText: {
-    color: colors.muted,
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  warningNote: {
-    flexDirection: row,
-    backgroundColor: "#FFF8E7",
-    padding: 16,
-    borderRadius: radii.md,
-    marginTop: 20,
-    borderWidth: 1,
-    borderColor: "#FFE0B2",
-  },
-  warningIcon: {
-    fontSize: 18,
-    marginEnd: 10,
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#B76E3C",
-    lineHeight: 20,
-    ...rtlText,
   },
 });
