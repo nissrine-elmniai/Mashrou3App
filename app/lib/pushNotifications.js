@@ -1,14 +1,32 @@
-import { Platform } from "react-native";
+import { Platform, NativeModules } from "react-native";
 import Constants from "expo-constants";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 
 let notificationsModule = null;
 let deviceModule = null;
 let handlerConfigured = false;
+let pushModulesUnavailable = false;
+
+function canUsePushNativeModules() {
+  if (Platform.OS !== "ios" && Platform.OS !== "android") {
+    return false;
+  }
+  const hasNotifications =
+    !!NativeModules.ExpoPushTokenManager || !!NativeModules.ExpoNotifications;
+  const hasDevice = !!NativeModules.ExpoDevice;
+  return hasNotifications && hasDevice;
+}
 
 async function loadPushModules() {
+  if (pushModulesUnavailable) {
+    return null;
+  }
   if (notificationsModule && deviceModule) {
     return { notifications: notificationsModule, device: deviceModule };
+  }
+  if (!canUsePushNativeModules()) {
+    pushModulesUnavailable = true;
+    return null;
   }
 
   try {
@@ -16,6 +34,12 @@ async function loadPushModules() {
       import("expo-notifications"),
       import("expo-device"),
     ]);
+
+    if (typeof notifications.setNotificationHandler !== "function") {
+      pushModulesUnavailable = true;
+      return null;
+    }
+
     notificationsModule = notifications;
     deviceModule = device;
 
@@ -32,7 +56,10 @@ async function loadPushModules() {
 
     return { notifications, device };
   } catch (e) {
-    console.warn("[push] native modules unavailable:", e?.message || e);
+    pushModulesUnavailable = true;
+    if (__DEV__) {
+      console.warn("[push] native modules unavailable:", e?.message || e);
+    }
     return null;
   }
 }
@@ -76,10 +103,12 @@ async function getCurrentExpoPushToken(Notifications) {
 }
 
 function pushNativeUnavailableError() {
+  const inExpoGo = Constants.appOwnership === "expo";
   return {
     ok: false,
-    error:
-      "إشعارات الجهاز غير متاحة — ثبّت آخر نسخة من التطبيق (EAS development build)",
+    error: inExpoGo
+      ? "حدّث تطبيق Expo Go إلى آخر إصدار (SDK 54) لتفعيل الإشعارات"
+      : "إشعارات الجهاز غير متاحة — أعد بناء التطبيق: npx expo run:android",
   };
 }
 
