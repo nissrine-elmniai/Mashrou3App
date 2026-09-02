@@ -1,3 +1,4 @@
+import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
@@ -17,6 +18,8 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Menu, Bell, Plus, X, SquarePen, Archive } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
+import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
+import { getActiveRegularSeason, filterSeancesForSeason } from "../../lib/seasonScope";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import {
   getAllSeances,
@@ -27,6 +30,7 @@ import {
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
 } from "../../lib/seancesApi";
+import { GENDER_OPTIONS } from "../../constants/roles";
 
 const palette = {
   primary: "#2E7D32",
@@ -45,11 +49,13 @@ const EMPTY_FORM = {
   nom: "",
   superviseurId: null,
   jour: null,
+  genre: null,
 };
 
 export default function AdminSeasonsScreen({ navigation }) {
   const { openSidebar, sidebar } = useAdminSidebar(navigation, "sessions");
-  const { currentUser, stats } = useApp();
+  const { currentUser, stats, seasons } = useApp();
+  const activeSeason = getActiveRegularSeason(seasons);
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
   const fabBottom = Math.max(insets.bottom, 16) + 16;
@@ -74,14 +80,24 @@ export default function AdminSeasonsScreen({ navigation }) {
       getAllSeances(),
       getSupervisorProfiles(),
     ]);
-    if (seancesRes.ok) setSeances(sortSeancesByJour(seancesRes.seances));
+    if (seancesRes.ok) {
+      const scoped = activeSeason?.id
+        ? filterSeancesForSeason(seancesRes.seances, activeSeason.id)
+        : [];
+      setSeances(sortSeancesByJour(scoped));
+    } else {
+      Alert.alert("تنبيه", seancesRes.error || "تعذر تحميل الحصص");
+      setSeances([]);
+    }
     if (supervisorsRes.ok) setSupervisors(supervisorsRes.supervisors);
     setLoading(false);
-  }, []);
+  }, [activeSeason?.id]);
 
-  useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+  useFocusEffect(
+    useCallback(() => {
+      loadAll();
+    }, [loadAll])
+  );
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
@@ -113,6 +129,7 @@ export default function AdminSeasonsScreen({ navigation }) {
       nom: seance.nom || "",
       superviseurId: seance.superviseur_id || null,
       jour: JOUR_SEMAINE_VALUES.includes(seance.jour) ? seance.jour : null,
+      genre: seance.genre || null,
     });
     setModalVisible(true);
   };
@@ -131,6 +148,14 @@ export default function AdminSeasonsScreen({ navigation }) {
       Alert.alert("تنبيه", "اختر يوم الحصة");
       return;
     }
+    if (!form.genre) {
+      Alert.alert("تنبيه", "اختر جنس الحصة (ذكر أو أنثى)");
+      return;
+    }
+    if (!activeSeason?.id) {
+      Alert.alert("تنبيه", "أنشئ موسماً جديداً أولاً من لوحة التحكم");
+      return;
+    }
     setSaving(true);
     let result;
     if (editingId) {
@@ -140,6 +165,7 @@ export default function AdminSeasonsScreen({ navigation }) {
           nom,
           superviseur_id: form.superviseurId,
           jour: form.jour,
+          genre: form.genre,
         },
       });
     } else {
@@ -147,12 +173,22 @@ export default function AdminSeasonsScreen({ navigation }) {
         nom,
         superviseurId: form.superviseurId,
         jour: form.jour,
+        genre: form.genre,
+        saisonId: activeSeason.id,
       });
     }
     setSaving(false);
     if (!result.ok) {
       Alert.alert("تنبيه", result.error);
       return;
+    }
+    if (result.seance) {
+      setSeances((prev) =>
+        sortSeancesByJour([
+          result.seance,
+          ...prev.filter((s) => s.id !== result.seance.id),
+        ])
+      );
     }
     setModalVisible(false);
     Alert.alert(
@@ -233,12 +269,20 @@ export default function AdminSeasonsScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        <ActiveSeasonBanner
+          season={activeSeason}
+          hint="الحصص والمشرفون والأعضاء المعروضون هنا خاصون بهذا الموسم فقط"
+        />
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
+        ) : !activeSeason ? (
+          <Text style={styles.emptyText}>أنشئ موسماً جديداً لإضافة الحصص</Text>
         ) : seances.length === 0 ? (
-          <Text style={styles.emptyText}>لا توجد حصص بعد — أضف حصة أولاً</Text>
+          <Text style={styles.emptyText}>
+            لا توجد حصص لهذا الموسم — أضف حصة أولاً
+          </Text>
         ) : (
           seances.map((seance) => {
             const memberCount = (seance.inscriptions || []).filter(
@@ -298,6 +342,9 @@ export default function AdminSeasonsScreen({ navigation }) {
                 ) : null}
                 {seance.jour ? (
                   <Text style={styles.cardSup}>اليوم: {seance.jour}</Text>
+                ) : null}
+                {seance.genre ? (
+                  <Text style={styles.cardSup}>الجنس: {seance.genre}</Text>
                 ) : null}
 
                 <View style={styles.badgesRow}>
@@ -400,6 +447,30 @@ export default function AdminSeasonsScreen({ navigation }) {
                 );
               })}
             </ScrollView>
+
+            <Text style={styles.modalLabel}>جنس الحصة</Text>
+            <View style={styles.jourChipsRow}>
+              {GENDER_OPTIONS.map((opt) => {
+                const active = form.genre === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[styles.jourChip, active && styles.jourChipActive]}
+                    onPress={() => setField("genre", opt.value)}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={[
+                        styles.jourChipText,
+                        active && styles.jourChipTextActive,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
             <Text style={styles.modalLabel}>المشرف</Text>
             <View style={styles.supervisorChips}>

@@ -17,6 +17,8 @@ import {
 } from "../../components/ui";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, row } from "../../constants/rtl";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 
 function normalizeName(value) {
   return String(value || "")
@@ -37,8 +39,10 @@ export default function AdminGroupsScreen({ navigation }) {
   } = useApp();
 
   const supervisors = getSupervisors();
-  const defaultSeasonId =
-    seasons.find((s) => s.active)?.id || seasons[0]?.id || "";
+  const activeSeason = getActiveRegularSeason(seasons);
+  const defaultSeasonId = activeSeason?.id || "";
+
+  const seasonGroups = groups.filter((g) => g.seasonId === defaultSeasonId);
 
   const [name, setName] = useState("");
   const [supervisorName, setSupervisorName] = useState("");
@@ -162,6 +166,10 @@ export default function AdminGroupsScreen({ navigation }) {
       icon="people"
       onBack={() => navigation.goBack()}
     >
+      <ActiveSeasonBanner
+        season={activeSeason}
+        hint="المجموعات المعروضة خاصة بالموسم الحالي فقط"
+      />
       <SectionCard title="إضافة مجموعة" subtitle="اسم المجموعة واسم المشرف">
         <Text style={styles.label}>اسم المجموعة</Text>
         <FormInput
@@ -186,11 +194,13 @@ export default function AdminGroupsScreen({ navigation }) {
         />
       </SectionCard>
 
-      <Text style={styles.listTitle}>كل المجموعات</Text>
-      {groups.length === 0 ? (
-        <EmptyState text="لا توجد مجموعات بعد" />
+      <Text style={styles.listTitle}>مجموعات الموسم الحالي</Text>
+      {!activeSeason ? (
+        <EmptyState text="أنشئ موسماً جديداً أولاً" />
+      ) : seasonGroups.length === 0 ? (
+        <EmptyState text="لا توجد مجموعات لهذا الموسم بعد" />
       ) : (
-        groups.map((g) => {
+        seasonGroups.map((g) => {
           const supervisor = getUserById(g.supervisorId);
           const isEditing = editingId === g.id;
 

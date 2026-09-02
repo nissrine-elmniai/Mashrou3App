@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,9 +7,13 @@ import {
   ScrollView,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { Menu, Bell, Plus } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
+import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import {
   ROLES,
   userHasRole,
@@ -21,6 +25,8 @@ import { rtlText, row } from "../../constants/rtl";
 const palette = {
   primary: "#2E7D32",
   gold: "#FBC02D",
+  teal: "#00897B",
+  orange: "#D97706",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
   blue: "#1976D2",
@@ -30,6 +36,38 @@ const palette = {
   placeholder: "#999999",
   border: "#E0E0E0",
 };
+
+const QUICK_ACTIONS = [
+  {
+    key: "season",
+    label: "انطلاق موسم جديد",
+    route: "AdminNewSeason",
+    bg: palette.primary,
+    fg: "#fff",
+  },
+  {
+    key: "supervisor",
+    label: "إضافة مشرف",
+    route: "AdminSupervisors",
+    bg: palette.gold,
+    fg: palette.textPrimary,
+  },
+  {
+    key: "exam",
+    label: "إنشاء اختبار",
+    route: "AdminTests",
+    params: { initialTab: "create" },
+    bg: palette.teal,
+    fg: "#fff",
+  },
+  {
+    key: "notify",
+    label: "إشعار",
+    route: "AdminNotifications",
+    bg: palette.orange,
+    fg: "#fff",
+  },
+];
 
 function parseActivityDate(value) {
   if (!value) return null;
@@ -184,7 +222,7 @@ function DashboardHome({ navigation, stats, activities }) {
   const statCards = [
     { label: "الأعضاء", value: stats?.members ?? 0, icon: "👥" },
     { label: "المشرفون", value: stats?.supervisors ?? 0, icon: "👨\u200d🏫" },
-    { label: "الحصص", value: stats?.groups ?? 0, icon: "📅" },
+    { label: "الحصص", value: stats?.seances ?? 0, icon: "📅" },
     {
       label: "الاختبارات",
       value: stats?.exams ?? 0,
@@ -211,36 +249,25 @@ function DashboardHome({ navigation, stats, activities }) {
         ))}
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={dhStyles.actionsScroll}
-        contentContainerStyle={dhStyles.actionsContent}
-      >
-        <TouchableOpacity
-          style={[dhStyles.actionBtn, { backgroundColor: palette.gold }]}
-          onPress={() => navigation.navigate("AdminSupervisors")}
-        >
-          <Plus size={16} color={palette.textPrimary} />
-          <Text style={[dhStyles.actionBtnText, { color: palette.textPrimary }]}>إضافة مشرف</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[dhStyles.actionBtn, { backgroundColor: palette.primary }]}
-          onPress={() =>
-            navigation.navigate("AdminTests", { initialTab: "create" })
-          }
-        >
-          <Plus size={16} color="#fff" />
-          <Text style={[dhStyles.actionBtnText, { color: "#fff" }]}>إنشاء اختبار</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[dhStyles.actionBtn, dhStyles.actionBtnOutline]}
-          onPress={() => navigation.navigate("AdminNotifications")}
-        >
-          <Plus size={16} color={palette.textSecondary} />
-          <Text style={[dhStyles.actionBtnText, { color: palette.textSecondary }]}>إشعار</Text>
-        </TouchableOpacity>
-      </ScrollView>
+      <View style={dhStyles.actionsGrid}>
+        {QUICK_ACTIONS.map((action) => (
+          <TouchableOpacity
+            key={action.key}
+            style={[dhStyles.actionBtn, { backgroundColor: action.bg }]}
+            onPress={() =>
+              navigation.navigate(action.route, action.params)
+            }
+          >
+            <Plus size={13} color={action.fg} />
+            <Text
+              style={[dhStyles.actionBtnText, { color: action.fg }]}
+              numberOfLines={2}
+            >
+              {action.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <View style={dhStyles.activityCard}>
         <Text style={dhStyles.activityTitle}>النشاط الأخير</Text>
@@ -274,7 +301,6 @@ export default function AdminDashboard({ navigation }) {
   const {
     stats,
     currentUser,
-    users,
     exams,
     seasons,
     registrations,
@@ -282,28 +308,67 @@ export default function AdminDashboard({ navigation }) {
   } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
+  const activeSeason = getActiveRegularSeason(seasons);
+  const [seasonStats, setSeasonStats] = useState({
+    members: 0,
+    supervisors: 0,
+    seances: 0,
+  });
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        if (!activeSeason?.id) {
+          setSeasonStats({ members: 0, supervisors: 0, seances: 0 });
+          return;
+        }
+        const res = await getSeasonDashboardStats(activeSeason.id);
+        if (!cancelled && res.ok) {
+          setSeasonStats({
+            members: res.members,
+            supervisors: res.supervisors,
+            seances: res.seances,
+          });
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [activeSeason?.id])
+  );
+
+  const pendingRegs = useMemo(
+    () =>
+      registrations.filter(
+        (r) =>
+          r.status === REGISTRATION_STATUS.PENDING &&
+          (!activeSeason || !r.seasonId || r.seasonId === activeSeason.id)
+      ).length,
+    [registrations, activeSeason]
+  );
 
   const derivedStats = {
-    members:
-      stats?.members ??
-      users.filter((u) => userHasRole(u, ROLES.MEMBER)).length,
-    supervisors:
-      stats?.supervisors ??
-      users.filter((u) => userHasRole(u, ROLES.SUPERVISOR)).length,
-    groups: stats?.groups ?? seasons?.length ?? 0,
+    members: seasonStats.members,
+    supervisors: seasonStats.supervisors,
+    seances: seasonStats.seances,
     exams: stats?.exams ?? exams?.length ?? 0,
-    pendingRegs: stats?.pendingRegs ?? 0,
+    pendingRegs: stats?.pendingRegs ?? pendingRegs,
   };
 
   const recentActivities = useMemo(
     () =>
       buildRecentActivities({
-        registrations,
+        registrations: activeSeason
+          ? registrations.filter(
+              (r) => !r.seasonId || r.seasonId === activeSeason.id
+            )
+          : registrations,
         exams,
-        users,
+        users: [],
         notifications,
       }),
-    [registrations, exams, users, notifications]
+    [registrations, exams, notifications, activeSeason]
   );
 
   const displayName = currentUser
@@ -354,6 +419,12 @@ export default function AdminDashboard({ navigation }) {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.bannerWrap}>
+          <ActiveSeasonBanner
+            season={activeSeason}
+            hint="الإحصائيات أدناه خاصة بهذا الموسم فقط"
+          />
+        </View>
         <DashboardHome
           navigation={navigation}
           stats={derivedStats}
@@ -376,6 +447,10 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 24,
+  },
+  bannerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   topBar: {
     backgroundColor: "#fff",
@@ -471,30 +546,29 @@ const dhStyles = StyleSheet.create({
     fontSize: 12,
     color: palette.textPrimary,
   },
-  actionsScroll: {
-    flexGrow: 0,
-    marginBottom: 24,
-  },
-  actionsContent: {
+  actionsGrid: {
     flexDirection: row,
-    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 8,
+    marginBottom: 20,
   },
   actionBtn: {
+    width: "48%",
     flexDirection: row,
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 16,
+    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 8,
     paddingVertical: 8,
-    borderRadius: 12,
-  },
-  actionBtnOutline: {
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "transparent",
+    borderRadius: 10,
   },
   actionBtnText: {
+    flexShrink: 1,
     fontWeight: "600",
-    fontSize: 14,
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 15,
     ...rtlText,
   },
   activityCard: {

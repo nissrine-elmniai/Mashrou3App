@@ -11,6 +11,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Menu, Bell, ClipboardList } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
+import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { rtlText, row } from "../../constants/rtl";
 import {
   getMemberProfiles,
@@ -41,7 +43,8 @@ function levelColor(level) {
 
 export default function AdminMembersScreen({ navigation }) {
   const { openSidebar, sidebar } = useAdminSidebar(navigation, "members");
-  const { stats, currentUser } = useApp();
+  const { stats, currentUser, seasons } = useApp();
+  const activeSeason = getActiveRegularSeason(seasons);
 
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState([]);
@@ -54,7 +57,7 @@ export default function AdminMembersScreen({ navigation }) {
       setLoading(true);
       const [profRes, inscRes, progRes] = await Promise.all([
         getMemberProfiles(),
-        getAllAcceptedInscriptions(),
+        getAllAcceptedInscriptions({ saisonId: activeSeason?.id || null }),
         getAllProgressionAdmin(),
       ]);
       if (cancelled) return;
@@ -66,11 +69,14 @@ export default function AdminMembersScreen({ navigation }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeSeason?.id]);
 
   const members = useMemo(() => {
+    const enrolledIds = new Set(inscriptions.map((i) => i.membre_id));
     return profiles
-      .filter((p) => p.account_status !== "invited")
+      .filter(
+        (p) => p.account_status !== "invited" && enrolledIds.has(p.id)
+      )
       .map((p) => {
         const inscription = inscriptions.find((i) => i.membre_id === p.id);
         const entries = progressions
@@ -168,14 +174,23 @@ export default function AdminMembersScreen({ navigation }) {
           </TouchableOpacity>
         ) : null}
 
-        <Text style={styles.sectionTitle}>جميع الأعضاء</Text>
+        <ActiveSeasonBanner
+          season={activeSeason}
+          hint="يُعرض هنا فقط الأعضاء المسجلون في الموسم الحالي"
+        />
+
+        <Text style={styles.sectionTitle}>أعضاء الموسم الحالي</Text>
 
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
+        ) : !activeSeason ? (
+          <Text style={styles.emptyText}>أنشئ موسماً جديداً أولاً</Text>
         ) : members.length === 0 ? (
-          <Text style={styles.emptyText}>لا يوجد أعضاء بعد</Text>
+          <Text style={styles.emptyText}>
+            لا يوجد أعضاء مسجلون في هذا الموسم بعد
+          </Text>
         ) : (
           members.map((member) => (
             <MemberCard key={member.id} member={member} />

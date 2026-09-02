@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { sortSeancesByJour } from "./seancesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -355,6 +356,72 @@ export async function getMemberProfileFields(membreId) {
       niveau: merged.niveau,
       quantiteHifz: merged.quantiteHifz,
       genre,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+function buildEditableProfilePayload(fields = {}) {
+  const payload = {};
+  if (fields.phone !== undefined) {
+    payload.phone = pickProfileText(fields.phone);
+  }
+  if (fields.school !== undefined) {
+    payload.school = pickProfileText(fields.school);
+  }
+  if (fields.level !== undefined) {
+    payload.level = pickProfileText(fields.level);
+  }
+  if (fields.hifzAmount !== undefined) {
+    payload.hifz_amount = pickProfileText(fields.hifzAmount);
+  }
+  return payload;
+}
+
+/**
+ * Met à jour les champs contact/inscription d'un membre (profiles uniquement).
+ * Colonnes autorisées : phone, school, level, hifz_amount — jamais identité.
+ * Sécurité serveur : policy profiles_update_superviseur (migration 0026).
+ */
+export async function updateMemberInfo(memberId, fields = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!memberId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+
+  const payload = buildEditableProfilePayload(fields);
+  if (Object.keys(payload).length === 0) {
+    return { ok: false, error: "لا توجد بيانات للتحديث" };
+  }
+
+  payload.updated_at = new Date().toISOString();
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("profiles")
+        .update(payload)
+        .eq("id", memberId)
+        .select("phone, school, level, hifz_amount")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "تحديث ملف العضو"
+    );
+
+    if (error) {
+      logSupabaseError("updateMemberInfo", error);
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+
+    return {
+      ok: true,
+      telephone: pickProfileText(data?.phone),
+      ecole: pickProfileText(data?.school),
+      niveau: pickProfileText(data?.level),
+      quantiteHifz: pickProfileText(data?.hifz_amount),
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

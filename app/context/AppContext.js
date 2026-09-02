@@ -7,13 +7,16 @@ import React, {
   useState,
 } from "react";
 import { ActivityIndicator, View, StyleSheet } from "react-native";
-import { DEMO_PASSWORD, emptyState, bootstrapUsers } from "../data/seed";
+import { DEMO_PASSWORD, emptyState, bootstrapUsers, bootstrapSeasons } from "../data/seed";
 import { loadAppState, saveAppState, clearAppState } from "../data/storage";
 import {
   ACCOUNT_STATUS,
   DASHBOARD_BY_ROLE,
+  REGISTRATION_KIND,
   REGISTRATION_STATUS,
   ROLES,
+  SEASON_TYPES,
+  getRegistrationKind,
   normalizeRoles,
   resolveSessionRole,
   userHasRole,
@@ -34,8 +37,18 @@ import {
 } from "../lib/auth";
 import {
   upsertMemberApplication,
+  insertPendingMemberApplication,
   markMemberApplicationActivated,
 } from "../lib/memberApplicationsApi";
+import { updateMemberInfo } from "../lib/membersApi";
+import { sendAlert } from "../lib/alertsApi";
+import { archiveSeancesForSaisonIds } from "../lib/seancesApi";
+import {
+  closeRegularSaisons,
+  syncSeasonsWithSupabase,
+  upsertSaison,
+} from "../lib/saisonsApi";
+import { getActiveRegularSeason } from "../lib/seasonScope";
 
 const AppContext = createContext(null);
 
@@ -124,6 +137,9 @@ export function AppProvider({ children }) {
   const [attendance, setAttendance] = useState(emptyState.attendance);
   const [exams, setExams] = useState(emptyState.exams);
   const [notifications, setNotifications] = useState(emptyState.notifications);
+  const [memberPrograms, setMemberPrograms] = useState(
+    emptyState.memberPrograms || []
+  );
   const [currentUser, setCurrentUser] = useState(null);
   /** Session Supabase Auth, alimentée en best-effort par login() quand le compte est
    *  aussi seedé côté Supabase. null tant qu'aucun lien n'a réussi — ne conditionne
@@ -135,19 +151,35 @@ export function AppProvider({ children }) {
     (async () => {
       const saved = await loadAppState();
       let loadedUsers = bootstrapUsers;
+      let loadedSeasons = bootstrapSeasons;
       if (saved) {
         loadedUsers =
           Array.isArray(saved.users) && saved.users.length > 0
             ? saved.users
             : bootstrapUsers;
+        loadedSeasons =
+          Array.isArray(saved.seasons) && saved.seasons.length > 0
+            ? saved.seasons
+            : bootstrapSeasons;
         setUsers(loadedUsers);
-        setSeasons(saved.seasons || []);
+        setSeasons(loadedSeasons);
         setRegistrations(saved.registrations || []);
         setGroups(saved.groups || []);
         setProgress(saved.progress || []);
         setAttendance(saved.attendance || []);
         setExams(saved.exams || []);
         setNotifications(saved.notifications || []);
+        setMemberPrograms(saved.memberPrograms || emptyState.memberPrograms || []);
+      } else {
+        setUsers(loadedUsers);
+        setSeasons(loadedSeasons);
+      }
+
+      if (isSupabaseConfigured()) {
+        const seasonSync = await syncSeasonsWithSupabase(loadedSeasons);
+        if (seasonSync.ok && seasonSync.seasons) {
+          setSeasons(seasonSync.seasons);
+        }
       }
 
       let restored = null;
@@ -203,6 +235,7 @@ export function AppProvider({ children }) {
       attendance,
       exams,
       notifications,
+      memberPrograms,
       currentUserId: currentUser?.id || null,
     });
   }, [
@@ -215,6 +248,7 @@ export function AppProvider({ children }) {
     attendance,
     exams,
     notifications,
+    memberPrograms,
     currentUser,
   ]);
 
@@ -352,12 +386,13 @@ export function AppProvider({ children }) {
     setAttendance(emptyState.attendance);
     setExams(emptyState.exams);
     setNotifications(emptyState.notifications);
+    setMemberPrograms(emptyState.memberPrograms || []);
     setSupabaseSession(null);
     setCurrentUser(null);
   };
 
-  /** Demande d’inscription publique (sans mot de passe) */
-  const submitMemberApplication = ({
+  /** Demande d'inscription publique (sans mot de passe) */
+  const submitMemberApplication = async ({
     fullName,
     school = "",
     level,
@@ -365,6 +400,9 @@ export function AppProvider({ children }) {
     hifzAmount = "",
     seasonId,
     email = "",
+    gender = "",
+    seanceId = null,
+    seanceName = "",
   }) => {
     const name = String(fullName || "").trim();
     const phoneClean = String(phone || "").trim();
@@ -372,15 +410,15 @@ export function AppProvider({ children }) {
     const levelClean = String(level || "").trim();
     const hifzClean = String(hifzAmount || "").trim();
     const emailClean = String(email || "").trim().toLowerCase();
-    if (
-      !name ||
-      !schoolClean ||
-      !levelClean ||
-      !phoneClean ||
-      !emailClean ||
-      !hifzClean
-    ) {
+    const genderClean = String(gender || "").trim();
+    if (!name || !schoolClean || !levelClean || !phoneClean || !emailClean) {
       return { ok: false, error: "الرجاء ملء جميع الحقول المطلوبة" };
+    }
+    if (!genderClean || (genderClean !== "ذكر" && genderClean !== "أنثى")) {
+      return { ok: false, error: "اختر الجنس (ذكر أو أنثى)" };
+    }
+    if (!seanceId) {
+      return { ok: false, error: "اختر الحصة المناسبة لجنسك" };
     }
     if (!emailClean.includes("@")) {
       return { ok: false, error: "أدخل بريداً إلكترونياً صالحاً" };
@@ -404,6 +442,7 @@ export function AppProvider({ children }) {
     const { firstName, lastName } = splitFullName(name);
     const registration = {
       id: uid("r"),
+      kind: REGISTRATION_KIND.JOIN,
       userId: null,
       seasonId: resolvedSeasonId,
       fullName: name,
@@ -414,15 +453,26 @@ export function AppProvider({ children }) {
       phone: phoneClean,
       hifzAmount: hifzClean,
       email: emailClean,
+      gender: genderClean,
+      seanceId,
+      seanceName: String(seanceName || "").trim(),
       freeTimes: [],
       status: REGISTRATION_STATUS.PENDING,
       inviteToken: null,
       createdAt: todayStr(),
     };
+
+    if (isSupabaseConfigured()) {
+      const sync = await insertPendingMemberApplication(registration);
+      if (!sync.ok && !sync.skipped) {
+        return { ok: false, error: sync.error || "تعذر حفظ الطلب" };
+      }
+    }
+
     setRegistrations((prev) => [...prev, registration]);
     pushNotification({
-      title: "طلب تسجيل جديد",
-      body: `طلب من ${name} — راجعه من طلبات التسجيل`,
+      title: "طلب انضمام جديد",
+      body: `طلب انضمام من ${name} — راجعه من طلبات الانضمام`,
       audience: "admin",
     });
     return { ok: true, registration };
@@ -516,6 +566,60 @@ export function AppProvider({ children }) {
     return season;
   };
 
+  const startNewSeason = async ({
+    name,
+    startDate,
+    endDate,
+    openRegistration = true,
+  }) => {
+    const seasonName = String(name || "").trim();
+    const start = String(startDate || "").trim();
+    const end = String(endDate || "").trim();
+    if (!seasonName || !start || !end) {
+      return { ok: false, error: "املأ جميع الحقول" };
+    }
+
+    const previousRegularIds = seasons
+      .filter((s) => s.type === SEASON_TYPES.REGULAR)
+      .map((s) => s.id);
+
+    const season = {
+      id: uid("s"),
+      name: seasonName,
+      type: SEASON_TYPES.REGULAR,
+      startDate: start,
+      endDate: end,
+      registrationOpen: !!openRegistration,
+      active: true,
+      remote: false,
+    };
+
+    setSeasons((prev) => {
+      const closed = prev.map((s) =>
+        s.type === SEASON_TYPES.REGULAR
+          ? { ...s, registrationOpen: false, active: false }
+          : s
+      );
+      return [...closed, season];
+    });
+
+    await archiveSeancesForSaisonIds(previousRegularIds).catch(() => {});
+    await closeRegularSaisons(previousRegularIds).catch(() => {});
+    await upsertSaison(season).catch(() => {});
+
+    const alertMessage = openRegistration
+      ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`
+      : `انطلاق موسم جديد: «${seasonName}» — سيفتح باب التسجيل لاحقاً.`;
+    pushNotification({
+      title: "انطلاق موسم جديد",
+      body: alertMessage,
+      audience: "members",
+    });
+    sendAlert(alertMessage, "members").catch(() => {});
+
+    return { ok: true, season };
+  };
+
   const announceRegistrationForm = (seasonId) => {
     const season = seasons.find((s) => s.id === seasonId);
     if (!season) return { ok: false, error: "الموسم غير موجود" };
@@ -530,11 +634,13 @@ export function AppProvider({ children }) {
         return s;
       })
     );
+    const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`;
     pushNotification({
-      title: "إعلان استمارة التسجيل",
-      body: `الاستمارة مفتوحة الآن: ${season.name}. سجّل عبر لوحة العضو.`,
+      title: "فتح باب التسجيل",
+      body: alertMessage,
       audience: "members",
     });
+    sendAlert(alertMessage, "members").catch(() => {});
     return { ok: true, season };
   };
 
@@ -548,11 +654,13 @@ export function AppProvider({ children }) {
     updateSeason(seasonId, { registrationOpen: open });
     const season = seasons.find((s) => s.id === seasonId);
     if (season && open) {
+      const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`;
       pushNotification({
         title: "فتح باب التسجيل",
-        body: `تم فتح استمارة: ${season.name}`,
+        body: alertMessage,
         audience: "members",
       });
+      sendAlert(alertMessage, "members").catch(() => {});
     }
   };
 
@@ -586,6 +694,7 @@ export function AppProvider({ children }) {
     }
     const registration = {
       id: uid("r"),
+      kind: REGISTRATION_KIND.SEASON_RENEWAL,
       userId,
       seasonId,
       freeTimes,
@@ -594,8 +703,8 @@ export function AppProvider({ children }) {
     };
     setRegistrations((prev) => [...prev, registration]);
     pushNotification({
-      title: "طلب تسجيل جديد",
-      body: "وصل طلب تسجيل من عضو — راجعه من طلبات التسجيل",
+      title: "إعادة تسجيل موسم",
+      body: "وصل طلب إعادة تسجيل من عضو حالي — راجعه من طلبات التسجيل",
       audience: "admin",
     });
     return { ok: true, registration };
@@ -606,16 +715,21 @@ export function AppProvider({ children }) {
       const reg = registrations.find((r) => r.id === registrationId);
       if (!reg) return { ok: false, error: "الطلب غير موجود" };
 
+      const kind = getRegistrationKind(reg);
+      const isSeasonRenewal = kind === REGISTRATION_KIND.SEASON_RENEWAL;
+
       if (status === REGISTRATION_STATUS.REJECTED) {
-        const sync = await upsertMemberApplication(
-          reg,
-          REGISTRATION_STATUS.REJECTED
-        );
-        if (!sync.ok) {
-          return {
-            ok: false,
-            error: sync.error || "تعذر حفظ الرفض في Supabase",
-          };
+        if (!isSeasonRenewal) {
+          const sync = await upsertMemberApplication(
+            reg,
+            REGISTRATION_STATUS.REJECTED
+          );
+          if (!sync.ok) {
+            return {
+              ok: false,
+              error: sync.error || "تعذر حفظ الرفض في Supabase",
+            };
+          }
         }
 
         setRegistrations((prev) =>
@@ -626,15 +740,43 @@ export function AppProvider({ children }) {
           )
         );
         pushNotification({
-          title: "تم رفض طلب تسجيل",
-          body: `رُفض طلب: ${reg.fullName || reg.phone}`,
-          audience: "admin",
+          title: isSeasonRenewal ? "رُفضت إعادة التسجيل" : "تم رفض طلب الانضمام",
+          body: isSeasonRenewal
+            ? "رُفض طلب إعادة تسجيل موسم"
+            : `رُفض طلب: ${reg.fullName || reg.phone}`,
+          audience: isSeasonRenewal && reg.userId ? "user" : "admin",
+          userId: isSeasonRenewal ? reg.userId : undefined,
         });
-        return { ok: true };
+        return { ok: true, kind };
       }
 
       if (status === REGISTRATION_STATUS.ACCEPTED) {
         const acceptedAt = todayStr();
+
+        if (isSeasonRenewal) {
+          setRegistrations((prev) =>
+            prev.map((r) =>
+              r.id === registrationId
+                ? { ...r, status: REGISTRATION_STATUS.ACCEPTED, acceptedAt }
+                : r
+            )
+          );
+          if (reg.userId) {
+            pushNotification({
+              title: "قُبل تسجيلك للموسم",
+              body: "تم قبول طلب إعادة تسجيلك للموسم الجديد.",
+              audience: "user",
+              userId: reg.userId,
+            });
+          }
+          pushNotification({
+            title: "إعادة تسجيل مقبولة",
+            body: "قُبلت إعادة تسجيل عضو للموسم.",
+            audience: "admin",
+          });
+          return { ok: true, registration: reg, kind };
+        }
+
         const sync = await upsertMemberApplication(
           { ...reg, acceptedAt },
           REGISTRATION_STATUS.INVITED
@@ -662,10 +804,10 @@ export function AppProvider({ children }) {
         );
         pushNotification({
           title: "دعوة انضمام",
-          body: `تم قبول طلب ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
+          body: `تم قبول طلب انضمام ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
           audience: "admin",
         });
-        return { ok: true, registration: reg };
+        return { ok: true, registration: reg, kind };
       }
 
       setRegistrations((prev) =>
@@ -1411,6 +1553,95 @@ export function AppProvider({ children }) {
     );
   };
 
+  const updateMemberHifzGoal = async (hifzAmount) => {
+    const clean = String(hifzAmount || "").trim();
+    if (!clean) {
+      return { ok: false, error: "أدخل هدفك أولاً" };
+    }
+    if (!currentUser) {
+      return { ok: false, error: "يجب تسجيل الدخول" };
+    }
+
+    if (currentUser.authId && isSupabaseConfigured()) {
+      const sync = await updateMemberInfo(currentUser.authId, {
+        hifzAmount: clean,
+      });
+      if (!sync.ok) {
+        return sync;
+      }
+    }
+
+    const patchUser = (user) =>
+      user.id === currentUser.id ? { ...user, hifzAmount: clean } : user;
+
+    setUsers((prev) => prev.map(patchUser));
+    setCurrentUser((prev) => (prev ? { ...prev, hifzAmount: clean } : prev));
+    return { ok: true, hifzAmount: clean };
+  };
+
+  const getMemberPrograms = (memberId = currentUser?.id) =>
+    memberPrograms.filter((p) => p.userId === memberId);
+
+  const saveMemberProgram = (program, memberId = currentUser?.id) => {
+    if (!memberId) return { ok: false, error: "يجب تسجيل الدخول" };
+    const title = String(program.title || "").trim();
+    const nbHizb = Number(program.nbHizb);
+    const durationDays = Number(program.durationDays);
+    const progression = Math.min(
+      100,
+      Math.max(0, Number(program.progression) || 0)
+    );
+    if (!title) return { ok: false, error: "أدخل اسم البرنامج" };
+    if (!Number.isFinite(nbHizb) || nbHizb <= 0) {
+      return { ok: false, error: "أدخل عدد أحزاب صحيحاً" };
+    }
+    if (!Number.isFinite(durationDays) || durationDays <= 0) {
+      return { ok: false, error: "أدخل مدة صحيحة بالأيام" };
+    }
+
+    const row = {
+      id: program.id || uid("mp"),
+      userId: memberId,
+      title,
+      nbHizb,
+      durationDays,
+      startDate: String(program.startDate || todayStr()).trim() || todayStr(),
+      progression,
+    };
+
+    setMemberPrograms((prev) => {
+      const exists = prev.some((p) => p.id === row.id);
+      if (exists) {
+        return prev.map((p) => (p.id === row.id ? { ...p, ...row } : p));
+      }
+      return [...prev, row];
+    });
+    return { ok: true, program: row };
+  };
+
+  const deleteMemberProgram = (programId, memberId = currentUser?.id) => {
+    if (!memberId || !programId) {
+      return { ok: false, error: "معرّف البرنامج مفقود" };
+    }
+    setMemberPrograms((prev) =>
+      prev.filter((p) => !(p.id === programId && p.userId === memberId))
+    );
+    return { ok: true };
+  };
+
+  const updateMemberProgramProgress = (
+    programId,
+    progression,
+    memberId = currentUser?.id
+  ) => {
+    const pct = Math.min(100, Math.max(0, Number(progression) || 0));
+    const target = memberPrograms.find(
+      (p) => p.id === programId && p.userId === memberId
+    );
+    if (!target) return { ok: false, error: "البرنامج غير موجود" };
+    return saveMemberProgram({ ...target, progression: pct }, memberId);
+  };
+
   const addProgressNote = (progressId, note) => {
     setProgress((prev) =>
       prev.map((p) =>
@@ -1602,8 +1833,11 @@ export function AppProvider({ children }) {
     groups.filter((g) => g.supervisorId === supervisorId);
 
   const stats = useMemo(() => {
+    const activeSeason = getActiveRegularSeason(seasons);
     const pendingRegs = registrations.filter(
-      (r) => r.status === REGISTRATION_STATUS.PENDING
+      (r) =>
+        r.status === REGISTRATION_STATUS.PENDING &&
+        (!activeSeason || !r.seasonId || r.seasonId === activeSeason.id)
     ).length;
     const members = users.filter(
       (u) =>
@@ -1613,6 +1847,9 @@ export function AppProvider({ children }) {
     const supervisors = users.filter((u) =>
       userHasRole(u, ROLES.SUPERVISOR)
     ).length;
+    const groupsForSeason = activeSeason
+      ? groups.filter((g) => g.seasonId === activeSeason.id)
+      : groups;
     const avgProgress =
       progress.length === 0
         ? 0
@@ -1633,10 +1870,11 @@ export function AppProvider({ children }) {
       pendingRegs,
       members,
       supervisors,
-      groups: groups.length,
+      groups: groupsForSeason.length,
       seasons: seasons.length,
       avgProgress,
       exams: exams.length,
+      activeSeasonId: activeSeason?.id || null,
     };
   }, [registrations, users, progress, groups, seasons, exams]);
 
@@ -1666,6 +1904,7 @@ export function AppProvider({ children }) {
     resetPassword,
     confirmPasswordReset,
     createSeason,
+    startNewSeason,
     updateSeason,
     setRegistrationOpen,
     activateSeason,
@@ -1682,6 +1921,11 @@ export function AppProvider({ children }) {
     addMember,
     saveAttendance,
     updateMemberProgress,
+    updateMemberHifzGoal,
+    getMemberPrograms,
+    saveMemberProgram,
+    deleteMemberProgram,
+    updateMemberProgramProgress,
     addProgressNote,
     addExamResult,
     createExam,
@@ -1694,6 +1938,7 @@ export function AppProvider({ children }) {
     getSupervisors,
     getMemberGroup,
     getMemberProgress,
+    getActiveRegularSeason: () => getActiveRegularSeason(seasons),
     getSupervisorGroups,
   };
 

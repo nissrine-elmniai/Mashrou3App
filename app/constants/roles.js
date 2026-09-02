@@ -81,6 +81,23 @@ export const REGISTRATION_STATUS_LABELS = {
   activated: "تم إنشاء الحساب",
 };
 
+/** نوع الطلب: انضمام أول مرة أو إعادة تسجيل موسم */
+export const REGISTRATION_KIND = {
+  JOIN: "join",
+  SEASON_RENEWAL: "season_renewal",
+};
+
+export const REGISTRATION_KIND_LABELS = {
+  join: "طلب انضمام",
+  season_renewal: "إعادة تسجيل موسم",
+};
+
+export function getRegistrationKind(reg) {
+  if (reg?.kind) return reg.kind;
+  if (reg?.userId) return REGISTRATION_KIND.SEASON_RENEWAL;
+  return REGISTRATION_KIND.JOIN;
+}
+
 /** Étapes UI du stepper (1-based) */
 export const REGISTRATION_STEPS = [
   { key: "register", label: "التسجيل" },
@@ -112,6 +129,12 @@ export const ACCOUNT_STATUS = {
   INVITED: "invited",
   ACTIVE: "active",
 };
+
+/** الجنس — طلب الانضمام والحصص */
+export const GENDER_OPTIONS = [
+  { value: "ذكر", label: "ذكر" },
+  { value: "أنثى", label: "أنثى" },
+];
 
 /** مستويات حفظ القرآن */
 export const LEVEL_OPTIONS = [

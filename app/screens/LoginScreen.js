@@ -132,26 +132,27 @@ export default function LoginScreen({ navigation }) {
                 <Text style={styles.forgotPasswordLink}>نسيت كلمة المرور؟</Text>
               </TouchableOpacity>
 
-              <View style={styles.separator} />
-
               <TouchableOpacity
                 onPress={() => navigation.navigate("Register")}
+                style={styles.simpleLinkRow}
               >
                 <Text style={styles.signupLink}>طلب الانضمام</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => navigation.navigate("ActivateAccount")}
+                style={styles.simpleLinkRow}
+              >
+                <Text style={styles.signupLink}>عضو جديد</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 onPress={() =>
                   navigation.navigate("ActivateAccount", { role: "supervisor" })
                 }
-                style={{ marginTop: 14 }}
+                style={styles.simpleLinkRow}
               >
                 <Text style={styles.signupLink}>مشرف جديد</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => navigation.navigate("ActivateAccount")}
-                style={{ marginTop: 14 }}
-              >
-                <Text style={styles.signupLink}>عضو جديد</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -263,28 +264,16 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     textAlign: "center",
   },
-  signupContainer: {
-    flexDirection: row,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  signupText: { fontSize: 15, color: colors.muted, writingDirection: "rtl" },
   signupLink: {
     fontSize: 15,
     fontWeight: "600",
     color: colors.primary,
-    marginStart: 5,
     textDecorationLine: "underline",
     writingDirection: "rtl",
   },
-  activateHint: {
-    fontSize: 12,
-    color: colors.muted,
-    textAlign: "center",
-    marginTop: 4,
-    writingDirection: "rtl",
+  simpleLinkRow: {
+    marginTop: 14,
+    alignItems: "center",
   },
   linksContainer: { marginTop: 24, alignItems: "center", width: "100%" },
   forgotPasswordLink: {
@@ -295,12 +284,5 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
     writingDirection: "rtl",
     fontWeight: "500",
-  },
-  separator: {
-    height: 1,
-    width: "60%",
-    backgroundColor: colors.border,
-    marginVertical: 16,
-    alignSelf: "center",
   },
 });

@@ -52,7 +52,7 @@ export default function AdminSummerSchoolScreen({ navigation }) {
     Alert.alert(
       announceNow ? "تم إعلان الاستمارة الصيفية" : "تم إنشاء المدرسة الصيفية",
       announceNow
-        ? `تم إنشاء «${season.name}» وفتح استمارة التسجيل الصيفي.\nيملأ المنخرطون الجدد الاستمارة من لوحة العضو.`
+        ? `تم إنشاء «${season.name}» وفتح استمارة التسجيل الصيفي.\nيمكن للأعضاء الحاليين التسجيل من تبويب «التسجيل».`
         : `تم إنشاء «${season.name}». يمكنك لاحقاً إعلان استمارة التسجيل.`
     );
   };
@@ -65,7 +65,7 @@ export default function AdminSummerSchoolScreen({ navigation }) {
     }
     Alert.alert(
       "تم إعلان الاستمارة الصيفية",
-      `استمارة «${seasonName}» مفتوحة الآن للمنخرطين الجدد.`
+      `استمارة «${seasonName}» مفتوحة الآن للأعضاء الحاليين من تبويب «التسجيل».`
     );
   };
 
