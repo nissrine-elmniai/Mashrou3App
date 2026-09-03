@@ -14,6 +14,12 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+function mapSenderName(row) {
+  const p = row?.sender;
+  const name = `${p?.first_name || ""} ${p?.last_name || ""}`.trim();
+  return name || "الإدارة";
+}
+
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
   if (/null value in column ["'](\w+)["']/i.test(msg)) {
@@ -276,29 +282,45 @@ export async function getVisibleAlerts() {
 
 /**
  * Alertes visibles avec statut d'acquittement (alert_acknowledgments.alert_id).
- * @returns { ok, alerts: [{ id, message, audience, createdAt, acknowledged }] }
+ * @returns { ok, alerts: [{ id, message, createdAt, senderName, acknowledged }] }
  */
 export async function getVisibleAlertsWithAckStatus() {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const [visibleRes, acksRes] = await Promise.all([
-      withTimeout(
+    let visibleRes = await withTimeout(
+      supabase
+        .from("alerts")
+        .select(
+          "id, message, title, body, created_at, created_by, sender:profiles!alerts_created_by_fkey(first_name, last_name)"
+        )
+        .order("created_at", { ascending: false })
+        .limit(50),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+
+    if (
+      visibleRes.error &&
+      /relationship|PGRST200|Could not find/i.test(visibleRes.error.message || "")
+    ) {
+      visibleRes = await withTimeout(
         supabase
           .from("alerts")
-          .select("id, message, title, body, audience, created_at")
+          .select("id, message, title, body, created_at, created_by")
           .order("created_at", { ascending: false })
           .limit(50),
         SUPABASE_TIMEOUT_MS,
         "قراءة التنبيهات"
-      ),
-      withTimeout(
-        supabase.from("alert_acknowledgments").select("alert_id"),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة الإقرارات"
-      ),
-    ]);
+      );
+    }
+
+    const acksRes = await withTimeout(
+      supabase.from("alert_acknowledgments").select("alert_id"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الإقرارات"
+    );
 
     if (visibleRes.error || acksRes.error) {
       return {
@@ -313,8 +335,8 @@ export async function getVisibleAlertsWithAckStatus() {
       alerts: (visibleRes.data || []).map((a) => ({
         id: a.id,
         message: a.message || a.body || a.title || "",
-        audience: a.audience,
         createdAt: a.created_at,
+        senderName: mapSenderName(a),
         acknowledged: acked.has(a.id),
       })),
     };

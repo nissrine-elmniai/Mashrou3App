@@ -17,16 +17,16 @@ import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getSupervisorProfiles } from "../../lib/seancesApi";
 import { mergeInboxRows } from "../../lib/messagesApi";
-import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { initials } from "../supervisor/supervisorHelpers";
 
 export default function AdminChatScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "chat");
   const { currentUser, stats } = useApp();
-  const { threads, loading: threadsLoading } = useInboxThreads();
+  const { openSidebar, sidebar, messagesFab, threads, threadsLoading } = useAdminSidebar(
+    navigation,
+    "chat"
+  );
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(true);
-  const [seenAt, setSeenAt] = useState({});
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -61,14 +61,13 @@ export default function AdminChatScreen({ navigation }) {
   }, []);
 
   const rows = useMemo(() => {
-    const merged = mergeInboxRows(contacts, threads, seenAt);
+    const merged = mergeInboxRows(contacts, threads);
     return merged.filter((r) => r.role !== "member");
-  }, [contacts, threads, seenAt]);
+  }, [contacts, threads]);
 
   const loading = contactsLoading || threadsLoading;
 
   const openThread = (row) => {
-    setSeenAt((prev) => ({ ...prev, [row.id]: Date.now() }));
     navigation.navigate("ChatConversation", {
       contactId: row.id,
       contactName: row.name,
@@ -131,11 +130,13 @@ export default function AdminChatScreen({ navigation }) {
               time={row.time}
               avatarLetter={row.avatarLetter}
               unread={row.unread}
+              unreadCount={row.unreadCount}
               onPress={() => openThread(row)}
             />
           ))}
         </ScrollView>
       )}
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

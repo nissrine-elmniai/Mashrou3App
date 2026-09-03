@@ -83,6 +83,54 @@ export async function getMySeance() {
 }
 
 /**
+ * Date d'inscription du membre connecté (self-view).
+ * @param {string} [authId] UUID profiles.id — sinon session auth courante
+ * @returns {{ ok: boolean, dateInscription?: string|null, error?: string }}
+ */
+export async function getMyInscriptionDate(authId = null) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", dateInscription: null };
+  }
+  const membreId = authId || (await currentAuthId());
+  if (!membreId) {
+    return { ok: false, error: "يجب تسجيل الدخول", dateInscription: null };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select("date_inscription")
+        .eq("membre_id", membreId)
+        .eq("statut", "accepte")
+        .order("date_inscription", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تاريخ التسجيل"
+    );
+    if (error) {
+      return {
+        ok: false,
+        error: mapTableError(error, "inscriptions"),
+        dateInscription: null,
+      };
+    }
+    const raw = data?.date_inscription || null;
+    return {
+      ok: true,
+      dateInscription: raw ? String(raw).slice(0, 10) : null,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      dateInscription: null,
+    };
+  }
+}
+
+/**
  * Profil admin de référence (chat superviseur <-> admin). RLS :
  * profiles_select_superviseur_admin limite la lecture des profils admin
  * aux comptes superviseur.
@@ -172,7 +220,7 @@ export async function getConversation({ otherUserId, seanceId = null }) {
     let query = supabase
       .from("messages")
       .select(
-        "id, seance_id, sender_id, recipient_id, contenu, image_url, created_at, sender:profiles!messages_sender_id_fkey(first_name, last_name), recipient:profiles!messages_recipient_id_fkey(first_name, last_name)"
+        "id, seance_id, sender_id, recipient_id, contenu, image_url, created_at, read_at, sender:profiles!messages_sender_id_fkey(first_name, last_name), recipient:profiles!messages_recipient_id_fkey(first_name, last_name)"
       )
       .or(
         `and(sender_id.eq.${userId},recipient_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},recipient_id.eq.${userId})`
@@ -192,6 +240,52 @@ export async function getConversation({ otherUserId, seanceId = null }) {
       return { ok: false, error: mapTableError(error, "messages") };
     }
     return { ok: true, messages: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Marque comme lus les messages reçus de otherUserId (read_at = maintenant).
+ * Ne touche jamais aux messages dont l'utilisateur est l'expéditeur.
+ * Policy RLS messages_update_read : scopée sur to_user_id (colonne legacy
+ * remplie par le trigger messages_sync_legacy_columns). Ne pas modifier
+ * cette policy.
+ * @param {object} params { otherUserId, seanceId? }
+ * @returns { ok, error? }
+ */
+export async function markConversationRead({ otherUserId, seanceId = null }) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!otherUserId || typeof otherUserId !== "string" || !UUID_RE.test(otherUserId)) {
+    return { ok: false, error: "المحادثة غير محددة" };
+  }
+  const userId = await currentAuthId();
+  if (!userId) {
+    return { ok: false, error: "يجب تسجيل الدخول" };
+  }
+
+  try {
+    let query = supabase
+      .from("messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("recipient_id", userId)
+      .eq("sender_id", otherUserId)
+      .is("read_at", null);
+    if (seanceId) {
+      query = query.eq("seance_id", seanceId);
+    }
+
+    const { error } = await withTimeout(
+      query,
+      SUPABASE_TIMEOUT_MS,
+      "تحديث حالة القراءة"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "messages") };
+    }
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -383,7 +477,7 @@ export async function getInboxThreads() {
       supabase
         .from("messages")
         .select(
-          "id, seance_id, sender_id, recipient_id, contenu, created_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, role), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, role)"
+          "id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, role), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, role)"
         )
         .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
         .order("created_at", { ascending: false })
@@ -397,9 +491,17 @@ export async function getInboxThreads() {
 
     const threads = [];
     const seen = new Set();
+    const unreadCountByOther = new Map();
     for (const m of data || []) {
       const other = otherParty(m, userId);
-      if (!other.id || seen.has(other.id)) continue;
+      if (!other.id) continue;
+      if (m.recipient_id === userId && !m.read_at) {
+        unreadCountByOther.set(
+          other.id,
+          (unreadCountByOther.get(other.id) || 0) + 1
+        );
+      }
+      if (seen.has(other.id)) continue;
       seen.add(other.id);
       const p = other.profile || {};
       threads.push({
@@ -412,7 +514,14 @@ export async function getInboxThreads() {
         lastAt: m.created_at,
         incoming: other.incoming,
         seanceId: m.seance_id || null,
+        unread: false,
+        unreadCount: 0,
       });
+    }
+    for (const t of threads) {
+      const n = unreadCountByOther.get(t.otherId) || 0;
+      t.unreadCount = n;
+      t.unread = n > 0;
     }
     return { ok: true, threads };
   } catch (e) {
@@ -451,21 +560,16 @@ export function subscribeMyMessages(onMessage) {
 /**
  * Fusionne une liste de contacts avec les derniers messages (inbox).
  * Les conversations récentes passent en tête pour répondre tout de suite.
+ * unread : au moins un message entrant avec read_at null (calculé dans getInboxThreads).
  * @param {object} [options]
  * @param {boolean} [options.appendUnknown=true] hors-contacts (autres threads)
  */
-export function mergeInboxRows(contacts, threads, seenAt = {}, options = {}) {
+export function mergeInboxRows(contacts, threads, options = {}) {
   const appendUnknown = options.appendUnknown !== false;
   const byId = new Map((threads || []).map((t) => [t.otherId, t]));
   const rows = (contacts || []).map((c) => {
     const t = byId.get(c.id);
     const lastAt = t?.lastAt || null;
-    const openedAt = seenAt[c.id] || 0;
-    const unread = !!(
-      t?.incoming &&
-      lastAt &&
-      new Date(lastAt).getTime() > openedAt
-    );
     return {
       id: c.id,
       name: c.name,
@@ -476,7 +580,8 @@ export function mergeInboxRows(contacts, threads, seenAt = {}, options = {}) {
       lastMessage: t?.lastMessage || "لا توجد رسائل بعد",
       lastAt,
       time: formatRelativeTime(lastAt),
-      unread,
+      unread: !!t?.unread,
+      unreadCount: t?.unreadCount || 0,
     };
   });
 
@@ -485,7 +590,6 @@ export function mergeInboxRows(contacts, threads, seenAt = {}, options = {}) {
       if (rows.some((r) => r.id === t.otherId)) continue;
       const name =
         `${t.firstName || ""} ${t.lastName || ""}`.trim() || t.email || "—";
-      const openedAt = seenAt[t.otherId] || 0;
       rows.push({
         id: t.otherId,
         name,
@@ -496,11 +600,8 @@ export function mergeInboxRows(contacts, threads, seenAt = {}, options = {}) {
         lastMessage: t.lastMessage || "لا توجد رسائل بعد",
         lastAt: t.lastAt,
         time: formatRelativeTime(t.lastAt),
-        unread: !!(
-          t.incoming &&
-          t.lastAt &&
-          new Date(t.lastAt).getTime() > openedAt
-        ),
+        unread: !!t.unread,
+        unreadCount: t.unreadCount || 0,
       });
     }
   }
@@ -512,6 +613,14 @@ export function mergeInboxRows(contacts, threads, seenAt = {}, options = {}) {
     return (a.name || "").localeCompare(b.name || "", "ar");
   });
   return rows;
+}
+
+/** Libellé latin du badge non lu : vide, "1"…"9", ou "9+". */
+export function formatUnreadBadge(count) {
+  const n = Number(count) || 0;
+  if (n <= 0) return "";
+  if (n > 9) return "9+";
+  return String(n);
 }
 
 /** Horodatage relatif arabe pour la liste des conversations. */

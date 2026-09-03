@@ -77,7 +77,7 @@ function SectionCard({ title, subtitle, children }) {
 }
 
 export default function AdminStatsScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "stats");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "stats");
   const { seasons, currentUser, stats: appStats } = useApp();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -471,6 +471,7 @@ export default function AdminStatsScreen({ navigation }) {
           </>
         )}
       </ScrollView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

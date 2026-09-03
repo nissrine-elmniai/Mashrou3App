@@ -270,15 +270,22 @@ export async function getSeanceMembers(seanceId) {
       })
       .filter(Boolean);
 
-    const appsByUser = await fetchLatestMemberApplications(members.map((m) => m.userId));
+    const userIds = members.map((m) => m.userId);
+    const [appsByUser, genreByUser] = await Promise.all([
+      fetchLatestMemberApplications(userIds),
+      fetchMembresGenreMap(userIds),
+    ]);
     const enrichedMembers = members.map((m) => {
-      const merged = mergeContactFields(m, appsByUser[m.userId]);
+      const app = appsByUser[m.userId];
+      const merged = mergeContactFields(m, app);
       return {
         ...m,
         telephone: merged.telephone,
         ecole: merged.ecole,
         niveau: merged.niveau,
         quantiteHifz: merged.quantiteHifz,
+        genre:
+          formatGenderLabel(genreByUser[m.userId] || app?.genre) || null,
       };
     });
 
@@ -333,6 +340,31 @@ async function fetchMembreGenre(membreId) {
   return formatGenderLabel(data?.genre);
 }
 
+async function fetchMembresGenreMap(userIds) {
+  if (!userIds?.length) return {};
+  const { data, error } = await withTimeout(
+    supabase.from("membres").select("user_id, genre").in("user_id", userIds),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة جنس الأعضاء"
+  );
+  if (error) {
+    const msg = error?.message || "";
+    if (
+      /relation.*does not exist|Could not find the table/i.test(msg) ||
+      /permission|row-level security|RLS|42501|violates row/i.test(msg)
+    ) {
+      return {};
+    }
+    logSupabaseError("fetchMembresGenreMap", error);
+    return {};
+  }
+  const map = {};
+  for (const row of data || []) {
+    if (row.user_id) map[row.user_id] = row.genre;
+  }
+  return map;
+}
+
 function mergeContactFields(primary, fallback) {
   return {
     telephone:
@@ -356,7 +388,7 @@ async function fetchLatestMemberApplications(userIds) {
   const { data, error } = await withTimeout(
     supabase
       .from("member_applications")
-      .select("user_id, phone, school, level, hifz_amount, updated_at")
+      .select("user_id, phone, school, level, hifz_amount, genre, updated_at")
       .in("user_id", userIds)
       .order("updated_at", { ascending: false }),
     SUPABASE_TIMEOUT_MS,
@@ -446,7 +478,9 @@ function buildEditableProfilePayload(fields = {}) {
 /**
  * Met à jour les champs contact/inscription d'un membre (profiles uniquement).
  * Colonnes autorisées : phone, school, level, hifz_amount — jamais identité.
- * Sécurité serveur : policy profiles_update_superviseur (migration 0026).
+ * Sécurité serveur : profiles_update_own (auth.uid() = id) — le superviseur a
+ * perdu l'accès en écriture sur profiles (migration 0030), donc seul le membre
+ * lui-même peut appeler ceci sur sa propre ligne.
  */
 export async function updateMemberInfo(memberId, fields = {}) {
   if (!isSupabaseConfigured()) {

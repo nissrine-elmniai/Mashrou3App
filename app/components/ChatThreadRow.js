@@ -2,6 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { colors } from "../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../constants/rtl";
+import { formatUnreadBadge } from "../lib/messagesApi";
 
 export function ChatThreadRow({
   name,
@@ -10,17 +11,15 @@ export function ChatThreadRow({
   avatarLetter,
   avatarPrimary,
   unread,
+  unreadCount = 0,
   highlighted,
-  hideBorder = false,
   onPress,
 }) {
+  const badgeLabel = unread ? formatUnreadBadge(unreadCount) : "";
+
   return (
     <TouchableOpacity
-      style={[
-        styles.rowItem,
-        highlighted && styles.rowHighlight,
-        hideBorder && styles.rowNoBorder,
-      ]}
+      style={[styles.rowItem, highlighted && styles.rowHighlight]}
       activeOpacity={0.7}
       onPress={onPress}
     >
@@ -47,8 +46,10 @@ export function ChatThreadRow({
       <View style={styles.meta}>
         {time ? <Text style={styles.time}>{time}</Text> : null}
         {unread ? (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>1</Text>
+          <View style={[styles.badge, badgeLabel.length > 1 && styles.badgeWide]}>
+            {badgeLabel ? (
+              <Text style={styles.badgeText}>{badgeLabel}</Text>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -62,12 +63,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     padding: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
     backgroundColor: colors.card,
   },
   rowHighlight: { backgroundColor: colors.primarySoft },
-  rowNoBorder: { borderBottomWidth: 0 },
   avatarWrap: { position: "relative" },
   avatar: {
     width: 42,
@@ -85,13 +83,17 @@ const styles = StyleSheet.create({
   meta: { alignItems: "center", gap: 4 },
   time: { color: colors.placeholder, fontSize: 11 },
   badge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    paddingHorizontal: 4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: colors.gold,
     justifyContent: "center",
     alignItems: "center",
   },
-  badgeText: { color: colors.text, fontSize: 11, fontFamily: fonts.bold },
+  badgeWide: { paddingHorizontal: 5 },
+  badgeText: {
+    color: colors.text,
+    fontSize: 10,
+    fontFamily: fonts.bold,
+  },
 });

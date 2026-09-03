@@ -297,7 +297,7 @@ function DashboardHome({ navigation, stats, activities }) {
 }
 
 export default function AdminDashboard({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "home");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "home");
   const {
     stats,
     currentUser,
@@ -432,6 +432,7 @@ export default function AdminDashboard({ navigation }) {
         />
       </ScrollView>
 
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

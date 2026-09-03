@@ -83,7 +83,7 @@ function seasonDateToStorage(value) {
 }
 
 export default function AdminSeasonsScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "sessions");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "sessions");
   const { currentUser, stats, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
   const insets = useSafeAreaInsets();
@@ -624,6 +624,7 @@ export default function AdminSeasonsScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

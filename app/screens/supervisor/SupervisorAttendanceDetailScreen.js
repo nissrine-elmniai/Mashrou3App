@@ -12,7 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../constants/theme";
-import { rtlText, rtlTextBold, fonts, arrowBack } from "../../constants/rtl";
+import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
 import { QuickButton } from "../../components/ui";
 import { AttendanceRow } from "./components/SupervisorWidgets";
 import { initials, STATUS_COLORS } from "./supervisorHelpers";
@@ -144,7 +144,6 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
           <Ionicons name={arrowBack} size={22} color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{headerTitle}</Text>
-        <View style={styles.headerPlaceholder} />
       </View>
 
       <View style={styles.banner}>
@@ -227,19 +226,19 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: colors.primary,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexDirection: "row",
+    paddingVertical: 16,
+    flexDirection: rtlRow,
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 10,
   },
-  backBtn: { padding: 4 },
+  backBtn: { padding: 2 },
   headerTitle: {
+    flex: 1,
     color: "white",
     fontFamily: fonts.bold,
-    fontSize: 17,
+    fontSize: 18,
     ...rtlTextBold,
   },
-  headerPlaceholder: { width: 30 },
   banner: {
     backgroundColor: colors.card,
     padding: 14,

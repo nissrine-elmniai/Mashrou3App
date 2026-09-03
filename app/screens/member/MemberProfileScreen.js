@@ -1,477 +1,312 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   StyleSheet,
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  StatusBar,
-  Switch,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
-import { ROLE_LABELS, SEASON_TYPES } from "../../constants/roles";
-import { colors, radii, shadows } from "../../constants/theme";
-import { row, arrowBack, rtlText, fonts } from "../../constants/rtl";
-import { EmptyState, StatChip } from "../../components/ui";
-import ChangePasswordModal from "../../components/ChangePasswordModal";
+import { colors } from "../../constants/theme";
+import { rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
+import {
+  getMemberProfileFields,
+  formatGenderLabel,
+} from "../../lib/membersApi";
+import { getMySeance, getMyInscriptionDate } from "../../lib/messagesApi";
+import {
+  getMemberProgressionSummary,
+  getMemberSeasonObjectif,
+} from "../../lib/progressApi";
+import { getMemberPresenceSummary } from "../../lib/presenceApi";
+import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import SessionCard from "../../components/profile/SessionCard";
+import ProgressCard from "../../components/profile/ProgressCard";
+import AttendanceCard from "../../components/profile/AttendanceCard";
 
+/** Genre depuis currentUser uniquement — pas de fetch member_applications. */
+function displayGenderFromUser(gender) {
+  const raw = String(gender || "").trim();
+  if (!raw || raw === "غير محدد") return null;
+  return formatGenderLabel(raw) || null;
+}
+
+/**
+ * Self-view membre — الملف الشخصي.
+ * Props conceptuelles : showRemove=false, headerLeft="logout".
+ */
 export default function MemberProfileScreen({ navigation }) {
-  const { currentUser, logout, seasons, exams, getMemberProgress } = useApp();
-  const fullName = currentUser
-    ? `${currentUser.firstName} ${currentUser.lastName}`
-    : "";
+  const { currentUser, logout } = useApp();
+  const authId = currentUser?.authId || currentUser?.id || null;
 
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [passwordModal, setPasswordModal] = useState(false);
-  const insets = useSafeAreaInsets();
-
-  const activeSeason =
-    seasons.find((s) => s.active && s.type === SEASON_TYPES.REGULAR) ||
-    seasons.find((s) => s.type === SEASON_TYPES.REGULAR) ||
-    seasons[0];
-
-  const myProgress = getMemberProgress(currentUser?.id, activeSeason?.id);
-  const myExams = exams.filter((e) => e.memberId === currentUser?.id);
-  const totalAhzab = myProgress
-    ? Math.round((myProgress.hifzPages || 0) / 20)
-    : 0;
+  const [contactFields, setContactFields] = useState({
+    phone: currentUser?.phone || null,
+    school: currentUser?.school || null,
+    level: currentUser?.level || null,
+    hifzAmount: currentUser?.hifzAmount || null,
+  });
+  const [sessionState, setSessionState] = useState({
+    loading: !!authId,
+    groupName: null,
+    jour: null,
+    heureDebut: null,
+    seanceId: null,
+    saisonId: null,
+    registrationDate: null,
+  });
+  const [progressState, setProgressState] = useState({
+    loading: !!authId,
+    error: null,
+    hasData: false,
+    metrics: null,
+    note: null,
+    objectif: null,
+  });
+  const [presenceState, setPresenceState] = useState({
+    loading: !!authId,
+    error: null,
+    hasData: false,
+    rate: null,
+    presentCount: 0,
+    absentCount: 0,
+    records: [],
+  });
 
   const handleLogout = () => {
-    logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
+
+  const loadProfileData = useCallback(async () => {
+    if (!authId) {
+      setSessionState({
+        loading: false,
+        groupName: null,
+        jour: null,
+        heureDebut: null,
+        seanceId: null,
+        saisonId: null,
+        registrationDate: null,
+      });
+      setProgressState({
+        loading: false,
+        error: null,
+        hasData: false,
+        metrics: null,
+        note: null,
+        objectif: null,
+      });
+      setPresenceState({
+        loading: false,
+        error: null,
+        hasData: false,
+        rate: null,
+        presentCount: 0,
+        absentCount: 0,
+        records: [],
+      });
+      return;
+    }
+
+    setProgressState((s) => ({ ...s, loading: true, error: null }));
+    setPresenceState((s) => ({ ...s, loading: true, error: null }));
+    setSessionState((s) => ({ ...s, loading: true }));
+
+    const [fieldsRes, seanceRes, inscRes] = await Promise.all([
+      getMemberProfileFields(authId),
+      getMySeance(),
+      getMyInscriptionDate(authId),
+    ]);
+
+    if (fieldsRes.ok) {
+      setContactFields({
+        phone: fieldsRes.telephone || currentUser?.phone || null,
+        school: fieldsRes.ecole || currentUser?.school || null,
+        level: fieldsRes.niveau || currentUser?.level || null,
+        hifzAmount: fieldsRes.quantiteHifz || currentUser?.hifzAmount || null,
+      });
+    }
+
+    const seance = seanceRes.ok ? seanceRes.seance : null;
+    const seanceId = seance?.id || null;
+    const saisonId = seance?.saison_id || null;
+
+    setSessionState({
+      loading: false,
+      groupName: seance?.nom || null,
+      jour: seance?.jour || null,
+      heureDebut: seance?.heure_debut || null,
+      seanceId,
+      saisonId,
+      registrationDate: inscRes.ok ? inscRes.dateInscription : null,
+    });
+
+    const [progRes, objRes, presRes] = await Promise.all([
+      getMemberProgressionSummary(authId),
+      saisonId
+        ? getMemberSeasonObjectif(authId, saisonId)
+        : Promise.resolve({ ok: true, objectif: null }),
+      getMemberPresenceSummary(authId, seanceId),
+    ]);
+
+    if (!progRes.ok) {
+      setProgressState({
+        loading: false,
+        error: progRes.error,
+        hasData: false,
+        metrics: null,
+        note: null,
+        objectif: null,
+      });
+    } else {
+      setProgressState({
+        loading: false,
+        error: null,
+        hasData: progRes.hasData,
+        metrics: progRes.metrics,
+        note: progRes.metrics?.notes || null,
+        objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
+      });
+    }
+
+    if (!presRes.ok) {
+      setPresenceState({
+        loading: false,
+        error: presRes.error,
+        hasData: false,
+        rate: null,
+        presentCount: 0,
+        absentCount: 0,
+        records: [],
+      });
+    } else {
+      setPresenceState({
+        loading: false,
+        error: null,
+        hasData: presRes.hasData,
+        rate: presRes.rate,
+        presentCount: presRes.presentCount ?? 0,
+        absentCount: presRes.absentCount ?? 0,
+        records: presRes.records || [],
+      });
+    }
+  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfileData();
+    }, [loadProfileData])
+  );
+
+  useEffect(() => {
+    setContactFields((prev) => ({
+      phone: prev.phone || currentUser?.phone || null,
+      school: prev.school || currentUser?.school || null,
+      level: prev.level || currentUser?.level || null,
+      hifzAmount: prev.hifzAmount || currentUser?.hifzAmount || null,
+    }));
+  }, [currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={colors.gradientHeader[0]}
-      />
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
-          <View style={styles.headerTop}>
-            <TouchableOpacity
-              style={styles.headerAction}
-              onPress={() => navigation.goBack()}
-            >
-              <Text style={styles.headerText}>رجوع</Text>
-              <Ionicons name={arrowBack} size={20} color="white" />
-            </TouchableOpacity>
+      <StatusBar style="light" />
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+          accessibilityLabel="رجوع"
+        >
+          <Ionicons name={arrowBack} size={22} color="white" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>الملف الشخصي</Text>
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={handleLogout}
+          activeOpacity={0.7}
+          accessibilityLabel="تسجيل الخروج"
+        >
+          <Ionicons name="log-out-outline" size={22} color="white" />
+        </TouchableOpacity>
+      </View>
 
-            <TouchableOpacity style={styles.headerAction} onPress={handleLogout}>
-              <Text style={styles.headerText}>تسجيل الخروج</Text>
-              <Ionicons name="log-out-outline" size={20} color="white" />
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        {sessionState.loading && !contactFields.phone ? (
+          <ActivityIndicator color={colors.primary} style={styles.pageLoader} />
+        ) : null}
 
-        <View style={styles.profileSection}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {currentUser?.firstName || "عضو"}
-            </Text>
-          </View>
+        <ProfileInfoCard
+          email={currentUser?.email || null}
+          gender={displayGenderFromUser(currentUser?.gender)}
+          phone={contactFields.phone}
+          school={contactFields.school}
+          level={contactFields.level}
+          hifzAmount={contactFields.hifzAmount}
+        />
 
-          <Text style={styles.userName}>{fullName}</Text>
+        <SessionCard
+          groupName={sessionState.groupName}
+          jour={sessionState.jour}
+          heureDebut={sessionState.heureDebut}
+          registrationDate={sessionState.registrationDate}
+        />
 
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>
-              {ROLE_LABELS[currentUser?.role] || "عضو"}
-            </Text>
-          </View>
+        <ProgressCard progressState={progressState} />
 
-          {myProgress ? (
-            <View style={styles.chipsRow}>
-              <StatChip
-                icon="book-outline"
-                label="صفحات الحفظ"
-                value={myProgress.hifzPages || 0}
-                color={colors.primary}
-              />
-              <StatChip
-                icon="layers-outline"
-                label="أحزاب"
-                value={totalAhzab}
-                color={colors.gold}
-              />
-              {myProgress.reviewPages ? (
-                <StatChip
-                  icon="refresh-outline"
-                  label="مراجعة"
-                  value={myProgress.reviewPages}
-                  color={colors.orange}
-                />
-              ) : null}
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.content}>
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>المعلومات الشخصية</Text>
-              <Text style={styles.cardSub}>معلومات ملفك الشخصي</Text>
-            </View>
-
-            <InfoItem
-              label="الاسم الكامل"
-              value={fullName}
-              icon="person-outline"
-            />
-            <InfoItem
-              label="تاريخ الميلاد"
-              value={currentUser?.birthDate || "—"}
-              icon="calendar-outline"
-              yellow
-            />
-            <InfoItem
-              label="البريد"
-              value={currentUser?.email || "—"}
-              icon="mail-outline"
-            />
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>سجل الاختبارات</Text>
-              <Text style={styles.cardSub}>نتائجك المسجلة في التقييمات</Text>
-            </View>
-
-            {myExams.length === 0 ? (
-              <EmptyState text="لا توجد اختبارات مسجلة بعد" />
-            ) : (
-              myExams.map((e) => (
-                <View key={e.id} style={styles.examRow}>
-                  <View style={styles.examInfo}>
-                    <Text style={styles.examLevel}>{e.level || e.title}</Text>
-                    <Text style={styles.examDate}>{e.date}</Text>
-                  </View>
-                  <View style={styles.scorePill}>
-                    <Text style={styles.scoreText}>{e.score}</Text>
-                  </View>
-                </View>
-              ))
-            )}
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>الإشعارات</Text>
-              <Text style={styles.cardSub}>استلام التنبيهات والتحديثات</Text>
-            </View>
-
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>تفعيل الإشعارات</Text>
-              <Switch
-                value={notificationsEnabled}
-                onValueChange={setNotificationsEnabled}
-                trackColor={{ true: colors.primary, false: colors.border }}
-                thumbColor="white"
-              />
-            </View>
-          </View>
-
-          <View style={[styles.card, styles.accountCard]}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>الحساب</Text>
-              <Text style={styles.cardSub}>إدارة حسابك</Text>
-            </View>
-
-            <ActionButton
-              label="تغيير كلمة المرور"
-              color={colors.primary}
-              icon="lock-closed-outline"
-              onPress={() => setPasswordModal(true)}
-            />
-            <ActionButton
-              label="تسجيل الخروج"
-              color={colors.red}
-              icon="log-out-outline"
-              onPress={handleLogout}
-            />
-          </View>
-        </View>
+        <AttendanceCard
+          key={`${authId || ""}_${sessionState.seanceId || ""}`}
+          presenceState={presenceState}
+        />
       </ScrollView>
-
-      <ChangePasswordModal
-        visible={passwordModal}
-        onClose={() => setPasswordModal(false)}
-        bottomInset={Math.max(insets.bottom, 16)}
-      />
     </SafeAreaView>
   );
 }
 
-const InfoItem = ({ label, value, icon, yellow }) => (
-  <View style={styles.infoBox}>
-    <View style={styles.iconWrapper}>
-      <Ionicons
-        name={icon}
-        size={20}
-        color={yellow ? colors.gold : colors.primary}
-      />
-    </View>
-
-    <View style={styles.infoContent}>
-      <Text style={styles.inlineLabel}>{label}</Text>
-      <Text style={styles.inlineValue}>{value}</Text>
-    </View>
-  </View>
-);
-
-const ActionButton = ({ label, color, icon, onPress }) => (
-  <TouchableOpacity
-    style={[styles.actionBtn, { borderColor: color }]}
-    onPress={onPress}
-  >
-    {icon && (
-      <Ionicons name={icon} size={18} color={color} style={{ marginStart: 8 }} />
-    )}
-    <Text style={[styles.actionText, { color }]}>{label}</Text>
-  </TouchableOpacity>
-);
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F5F7F6" },
-
-  header: {
-    height: 200,
-    paddingHorizontal: 20,
-    justifyContent: "center",
-  },
-
-  headerTop: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
-  headerAction: {
-    flexDirection: row,
-    alignItems: "center",
-  },
-
-  headerText: {
-    color: "white",
-    fontWeight: "bold",
-    marginHorizontal: 6,
-    writingDirection: "rtl",
-  },
-
-  profileSection: {
-    alignItems: "center",
-    marginTop: -40,
-    marginBottom: 20,
-  },
-
-  avatar: {
-    width: 95,
-    height: 95,
-    borderRadius: radii.pill,
-    backgroundColor: colors.gold,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 4,
-    borderColor: "white",
-    ...shadows.card,
-  },
-
-  avatarText: {
-    color: "white",
-    fontSize: 30,
-    fontWeight: "bold",
-  },
-
-  userName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginTop: 10,
-    color: colors.primaryDark,
-    ...rtlText,
-  },
-
-  badge: {
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: radii.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 3,
-    marginTop: 6,
-  },
-
-  badgeText: {
-    color: colors.primary,
-    fontWeight: "bold",
-    fontSize: 12,
-    ...rtlText,
-  },
-
-  chipsRow: {
-    flexDirection: row,
-    flexWrap: "wrap",
-    justifyContent: "center",
-    marginTop: 12,
-    paddingHorizontal: 20,
-  },
-
+  container: { flex: 1, backgroundColor: colors.bg },
   content: {
-    paddingHorizontal: 20,
+    padding: 16,
+    paddingBottom: 32,
+    gap: 16,
   },
-
-  card: {
-    backgroundColor: "white",
-    borderRadius: radii.lg,
-    marginBottom: 20,
-    overflow: "hidden",
-    ...shadows.card,
-  },
-
-  cardHeader: {
-    backgroundColor: colors.soft,
-    padding: 15,
-    alignItems: "flex-end",
-  },
-
-  cardTitle: {
-    fontSize: 17,
-    fontWeight: "bold",
-    color: colors.primary,
-    ...rtlText,
-  },
-
-  cardSub: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 3,
-    ...rtlText,
-  },
-
-  infoBox: {
-    flexDirection: row,
+  header: {
+    flexDirection: rtlRow,
     alignItems: "center",
-    backgroundColor: "#F9F9F9",
-    margin: 10,
-    padding: 12,
-    borderRadius: radii.md,
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: colors.primary,
   },
-
-  iconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.soft,
+  headerBtn: {
+    padding: 4,
+    minWidth: 30,
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
   },
-
-  infoContent: {
+  headerTitle: {
     flex: 1,
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginStart: 12,
+    color: "white",
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    ...rtlTextBold,
   },
-
-  inlineLabel: {
-    fontSize: 12,
-    color: colors.muted,
-    textAlign: "right",
-    writingDirection: "rtl",
-  },
-
-  inlineValue: {
-    fontSize: 15,
-    fontWeight: "bold",
-    color: colors.text,
-    textAlign: "left",
-    writingDirection: "rtl",
-  },
-
-  examRow: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#F9F9F9",
-    margin: 10,
-    padding: 12,
-    borderRadius: radii.md,
-  },
-
-  examInfo: {
-    alignItems: "flex-end",
-  },
-
-  examLevel: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: colors.text,
-    ...rtlText,
-  },
-
-  examDate: {
-    fontSize: 12,
-    color: colors.muted,
-    marginTop: 2,
-    ...rtlText,
-  },
-
-  scorePill: {
-    minWidth: 44,
-    alignItems: "center",
-    backgroundColor: colors.soft,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-    borderRadius: radii.pill,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-
-  scoreText: {
-    fontSize: 15,
-    fontWeight: "bold",
-    color: colors.primary,
-    ...rtlText,
-  },
-
-  switchRow: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#F9F9F9",
-    margin: 10,
-    padding: 12,
-    borderRadius: radii.md,
-  },
-
-  switchLabel: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: colors.text,
-    ...rtlText,
-  },
-
-  accountCard: {
-    backgroundColor: "#FFFDE7",
-  },
-
-  actionBtn: {
-    flexDirection: row,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    paddingVertical: 12,
-    marginHorizontal: 15,
-    marginBottom: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "white",
-  },
-
-  actionText: {
-    fontWeight: "bold",
-    fontSize: 14,
-    ...rtlText,
-  },
+  pageLoader: { marginVertical: 8 },
 });

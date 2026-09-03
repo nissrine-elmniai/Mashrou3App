@@ -39,7 +39,7 @@ const palette = {
 };
 
 export default function AdminRegistrationsScreen({ navigation, route }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "registrations");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "registrations");
   const seasonType = route?.params?.seasonType || SEASON_TYPES.REGULAR;
   const isSummer = seasonType === SEASON_TYPES.SUMMER;
 
@@ -476,6 +476,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           })
         )}
       </ScrollView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

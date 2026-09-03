@@ -201,7 +201,7 @@ export default function SupervisorAttendanceScreen({
                   <>
                     <Text style={styles.summaryDot}> · </Text>
                     <Text style={styles.summaryText}>
-                      نسبة الحضور {historySummary.attendancePct}%
+                    {historySummary.attendancePct}%
                     </Text>
                   </>
                 ) : null}

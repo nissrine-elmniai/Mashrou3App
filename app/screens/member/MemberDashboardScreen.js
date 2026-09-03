@@ -20,26 +20,48 @@ import {
   getMyProgress,
   computeProgressMetrics,
   getMemberSeasonObjectif,
+  getMemberProgressionSummary,
 } from "../../lib/progressApi";
 import {
   REGISTRATION_STATUS_LABELS,
   SEASON_TYPES,
-  ROLE_LABELS,
 } from "../../constants/roles";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, row, arrowForward, fonts } from "../../constants/rtl";
 import {
   StatCard,
   SectionCard,
-  QuickButton,
   EmptyState,
   MemberBottomTabBar,
 } from "../../components/ui";
 import { ProgressRing } from "../../components/ProgressRing";
-import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import {
+  getVisibleAlerts,
+  getUnacknowledgedAlerts,
+  subscribeToNewAlerts,
+} from "../../lib/alertsApi";
+import {
+  getMemberProfileFields,
+  formatGenderLabel,
+} from "../../lib/membersApi";
+import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
+import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { getMemberPresenceSummary } from "../../lib/presenceApi";
+import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import SessionCard from "../../components/profile/SessionCard";
+import ProgressCard from "../../components/profile/ProgressCard";
+import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
+import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
 import MemberProgramsPanel from "./MemberProgramsPanel";
 import MemberRegistrationPanel from "./MemberRegistrationPanel";
+
+/** Genre depuis currentUser uniquement — pas de fetch member_applications. */
+function displayGenderFromUser(gender) {
+  const raw = String(gender || "").trim();
+  if (!raw || raw === "غير محدد") return null;
+  return formatGenderLabel(raw) || null;
+}
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 const TOTAL_JUZ = 30;
@@ -94,19 +116,59 @@ export default function MemberDashboardScreen({ navigation }) {
     exams,
     logout,
     submitSeasonRegistration,
-    getMemberGroup,
     getNotificationsForUser,
     getMemberPrograms,
   } = useApp();
 
+  const authId = currentUser?.authId || currentUser?.id || null;
+  const { threads } = useInboxThreads();
+  const messagesUnread = useMemo(
+    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
+    [threads]
+  );
+
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
+  const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const [progressEntries, setProgressEntries] = useState([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [selectedTimes, setSelectedTimes] = useState([]);
   const [summerTimes, setSummerTimes] = useState([]);
   const [passwordModal, setPasswordModal] = useState(false);
+  const [editInfoModal, setEditInfoModal] = useState(false);
   const [seasonObjectif, setSeasonObjectif] = useState("");
+  const [contactFields, setContactFields] = useState({
+    phone: currentUser?.phone || null,
+    school: currentUser?.school || null,
+    level: currentUser?.level || null,
+    hifzAmount: currentUser?.hifzAmount || null,
+  });
+  const [sessionState, setSessionState] = useState({
+    loading: false,
+    groupName: null,
+    jour: null,
+    heureDebut: null,
+    seanceId: null,
+    saisonId: null,
+    registrationDate: null,
+  });
+  const [progressState, setProgressState] = useState({
+    loading: false,
+    error: null,
+    hasData: false,
+    metrics: null,
+    note: null,
+    objectif: null,
+  });
+  const [presenceState, setPresenceState] = useState({
+    loading: false,
+    error: null,
+    hasData: false,
+    rate: null,
+    presentCount: 0,
+    absentCount: 0,
+    records: [],
+  });
 
   const loadProgressEntries = useCallback(async () => {
     setActivitiesLoading(true);
@@ -123,21 +185,25 @@ export default function MemberDashboardScreen({ navigation }) {
     }, [loadProgressEntries])
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const res = await getVisibleAlerts();
-      if (!cancelled && res.ok) setAdminAlerts(res.alerts);
-    };
-    load();
-    const unsub = subscribeToNewAlerts(() => {
-      load();
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
+  const loadAlerts = useCallback(async () => {
+    const [visible, pending] = await Promise.all([
+      getVisibleAlerts(),
+      getUnacknowledgedAlerts(),
+    ]);
+    if (visible.ok) setAdminAlerts(visible.alerts.slice(0, 3));
+    if (pending.ok) setPendingAlertCount(pending.alerts.length);
   }, []);
+
+  useEffect(() => {
+    loadAlerts();
+    return subscribeToNewAlerts(() => loadAlerts());
+  }, [loadAlerts]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadAlerts();
+    }, [loadAlerts])
+  );
 
   const openRegular = seasons.filter(
     (s) => s.registrationOpen && s.type === SEASON_TYPES.REGULAR
@@ -175,7 +241,160 @@ export default function MemberDashboardScreen({ navigation }) {
     }, [loadSeasonObjectif])
   );
 
-  const myGroup = getMemberGroup(currentUser?.id, activeRegular?.id);
+  const loadProfileData = useCallback(async () => {
+    if (!authId) {
+      setSessionState({
+        loading: false,
+        groupName: null,
+        jour: null,
+        heureDebut: null,
+        seanceId: null,
+        saisonId: null,
+        registrationDate: null,
+      });
+      setProgressState({
+        loading: false,
+        error: null,
+        hasData: false,
+        metrics: null,
+        note: null,
+        objectif: null,
+      });
+      setPresenceState({
+        loading: false,
+        error: null,
+        hasData: false,
+        rate: null,
+        presentCount: 0,
+        absentCount: 0,
+        records: [],
+      });
+      return;
+    }
+
+    setProgressState((s) => ({ ...s, loading: true, error: null }));
+    setPresenceState((s) => ({ ...s, loading: true, error: null }));
+    setSessionState((s) => ({ ...s, loading: true }));
+
+    const [fieldsRes, seanceRes, inscRes] = await Promise.all([
+      getMemberProfileFields(authId),
+      getMySeance(),
+      getMyInscriptionDate(authId),
+    ]);
+
+    if (fieldsRes.ok) {
+      setContactFields({
+        phone: fieldsRes.telephone || currentUser?.phone || null,
+        school: fieldsRes.ecole || currentUser?.school || null,
+        level: fieldsRes.niveau || currentUser?.level || null,
+        hifzAmount: fieldsRes.quantiteHifz || currentUser?.hifzAmount || null,
+      });
+    }
+
+    const seance = seanceRes.ok ? seanceRes.seance : null;
+    const seanceId = seance?.id || null;
+    const saisonId = seance?.saison_id || null;
+
+    setSessionState({
+      loading: false,
+      groupName: seance?.nom || null,
+      jour: seance?.jour || null,
+      heureDebut: seance?.heure_debut || null,
+      seanceId,
+      saisonId,
+      registrationDate: inscRes.ok ? inscRes.dateInscription : null,
+    });
+
+    const [progRes, objRes, presRes] = await Promise.all([
+      getMemberProgressionSummary(authId),
+      saisonId
+        ? getMemberSeasonObjectif(authId, saisonId)
+        : Promise.resolve({ ok: true, objectif: null }),
+      getMemberPresenceSummary(authId, seanceId),
+    ]);
+
+    if (!progRes.ok) {
+      setProgressState({
+        loading: false,
+        error: progRes.error,
+        hasData: false,
+        metrics: null,
+        note: null,
+        objectif: null,
+      });
+    } else {
+      setProgressState({
+        loading: false,
+        error: null,
+        hasData: progRes.hasData,
+        metrics: progRes.metrics,
+        note: progRes.metrics?.notes || null,
+        objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
+      });
+    }
+
+    if (!presRes.ok) {
+      setPresenceState({
+        loading: false,
+        error: presRes.error,
+        hasData: false,
+        rate: null,
+        presentCount: 0,
+        absentCount: 0,
+        records: [],
+      });
+    } else {
+      setPresenceState({
+        loading: false,
+        error: null,
+        hasData: presRes.hasData,
+        rate: presRes.rate,
+        presentCount: presRes.presentCount ?? 0,
+        absentCount: presRes.absentCount ?? 0,
+        records: presRes.records || [],
+      });
+    }
+  }, [
+    authId,
+    currentUser?.phone,
+    currentUser?.school,
+    currentUser?.level,
+    currentUser?.hifzAmount,
+  ]);
+
+  const handleProfileInfoSaved = useCallback(
+    (saved) => {
+      setContactFields((prev) => ({
+        ...prev,
+        phone: saved?.phone ?? prev.phone,
+        school: saved?.school ?? prev.school,
+        level: saved?.level ?? prev.level,
+      }));
+      loadProfileData();
+    },
+    [loadProfileData]
+  );
+
+  // Profil : chargement uniquement quand le tab "ملفي" est actif (pas au montage dashboard).
+  useEffect(() => {
+    if (tab !== "profile") return;
+    loadProfileData();
+  }, [tab, loadProfileData]);
+
+  useEffect(() => {
+    setContactFields((prev) => ({
+      phone: prev.phone || currentUser?.phone || null,
+      school: prev.school || currentUser?.school || null,
+      level: prev.level || currentUser?.level || null,
+      hifzAmount: prev.hifzAmount || currentUser?.hifzAmount || null,
+    }));
+  }, [
+    currentUser?.phone,
+    currentUser?.school,
+    currentUser?.level,
+    currentUser?.hifzAmount,
+  ]);
+
   const myExams = exams.filter((e) => e.memberId === currentUser?.id);
   const myMemberPrograms = getMemberPrograms();
 
@@ -331,8 +550,17 @@ export default function MemberDashboardScreen({ navigation }) {
     : "";
 
   const handleLogout = () => {
-    logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
 
   const handleRegister = (seasonId, times, resetFn) => {
@@ -408,9 +636,31 @@ export default function MemberDashboardScreen({ navigation }) {
             ) : tab === "registration" ? (
               <Ionicons name="clipboard-outline" size={22} color="white" />
             ) : null}
-            <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={20} color="white" />
-            </TouchableOpacity>
+            {tab === "home" || tab === "profile" ? (
+              <View style={styles.headerEnd}>
+                <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
+                  <Ionicons name="log-out-outline" size={22} color="white" />
+                </TouchableOpacity>
+                {tab === "home" ? (
+                  <TouchableOpacity
+                    style={styles.headerIconWrap}
+                    onPress={() => navigation.navigate("MemberAlerts")}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="تنبيهات الإدارة"
+                  >
+                    <Ionicons name="notifications-outline" size={22} color="white" />
+                    {pendingAlertCount > 0 ? (
+                      <View style={styles.headerBellBadge}>
+                        <Text style={styles.headerBellBadgeText}>
+                          {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         </LinearGradient>
       </View>
@@ -479,21 +729,16 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard
-              title="الإشعارات"
-              subtitle="تنبيهات الإدارة تظهر هنا مباشرة"
-            >
-              {adminAlerts.length === 0 ? (
-                <EmptyState text="لا توجد تنبيهات بعد" />
-              ) : (
-                adminAlerts.slice(0, 5).map((n) => (
+            {adminAlerts.length > 0 ? (
+              <SectionCard title="الإشعارات">
+                {adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
                     <Text style={styles.notifTitle}>تنبيه من الإدارة</Text>
                     <Text style={styles.notifBody}>{n.message}</Text>
                   </View>
-                ))
-              )}
-            </SectionCard>
+                ))}
+              </SectionCard>
+            ) : null}
 
             <SectionCard
               title="آخر النشاطات"
@@ -537,60 +782,55 @@ export default function MemberDashboardScreen({ navigation }) {
         )}
 
         {tab === "profile" && (
-          <>
-            <SectionCard title="الملف الشخصي" subtitle="معلومات الحساب">
-              <View style={styles.profileTop}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>
-                    {currentUser?.firstName?.[0] || "ع"}
-                    {currentUser?.lastName?.[0] || ""}
-                  </Text>
-                </View>
-                <Text style={styles.profileName}>{fullName}</Text>
-                <View style={styles.rolePill}>
-                  <Text style={styles.rolePillText}>
-                    {ROLE_LABELS[currentUser?.role] || "عضو"}
-                  </Text>
-                </View>
-              </View>
-
-              <InfoRow label="البريد" value={currentUser?.email || "—"} />
-              <InfoRow
-                label="تاريخ الميلاد"
-                value={currentUser?.birthDate || "—"}
-              />
-              {myGroup ? <InfoRow label="مجموعتي" value={myGroup.name} /> : null}
-
-              <QuickButton
+          <View style={styles.profileTab}>
+            {sessionState.loading && !contactFields.phone ? (
+              <ActivityIndicator
                 color={colors.primary}
-                icon="lock-closed-outline"
-                label="تغيير كلمة المرور"
-                onPress={() => setPasswordModal(true)}
+                style={styles.profileLoader}
               />
-              <QuickButton
-                color={colors.red}
-                icon="log-out-outline"
-                label="تسجيل الخروج"
-                onPress={handleLogout}
-              />
-            </SectionCard>
-
-            {myExams.length > 0 ? (
-              <SectionCard title="نتائج الاختبارات" subtitle="درجاتك المسجلة">
-                {myExams.map((e) => (
-                  <StatCard
-                    key={e.id}
-                    icon="school-outline"
-                    iconColor={colors.gold}
-                    borderColor={colors.borderGold}
-                    label={`${e.level} • ${e.date}`}
-                    value={e.score}
-                    valueColor={colors.gold}
-                  />
-                ))}
-              </SectionCard>
             ) : null}
-          </>
+
+            <ProfileInfoCard
+              email={currentUser?.email || null}
+              gender={displayGenderFromUser(currentUser?.gender)}
+              phone={contactFields.phone}
+              school={contactFields.school}
+              level={contactFields.level}
+              hifzAmount={contactFields.hifzAmount}
+              onEdit={() => setEditInfoModal(true)}
+            />
+
+            <SessionCard
+              groupName={sessionState.groupName}
+              jour={sessionState.jour}
+              heureDebut={sessionState.heureDebut}
+              registrationDate={sessionState.registrationDate}
+            />
+
+            <ProgressCard progressState={progressState} />
+
+            <AttendanceCard
+              key={`${authId || ""}_${sessionState.seanceId || ""}`}
+              presenceState={presenceState}
+            />
+
+            <TouchableOpacity
+              style={styles.changePasswordLink}
+              onPress={() => setPasswordModal(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name="lock-closed-outline"
+                size={16}
+                color={colors.muted}
+              />
+              <View>
+                <Text style={styles.changePasswordLinkText}>
+                  تغيير كلمة المرور
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
         )}
       </ScrollView>
 
@@ -602,12 +842,33 @@ export default function MemberDashboardScreen({ navigation }) {
           activeOpacity={0.85}
         >
           <Ionicons name="chatbubble-ellipses" size={24} color="white" />
+          {messagesUnread > 0 ? (
+            <View style={styles.fabBadge}>
+              <Text style={styles.fabBadgeText}>
+                {formatUnreadBadge(messagesUnread)}
+              </Text>
+            </View>
+          ) : null}
         </TouchableOpacity>
       </View>
 
       <ChangePasswordModal
         visible={passwordModal}
         onClose={() => setPasswordModal(false)}
+        bottomInset={Math.max(insets.bottom, 16)}
+      />
+
+      <EditProfileInfoModal
+        visible={editInfoModal}
+        onClose={() => setEditInfoModal(false)}
+        onSaved={handleProfileInfoSaved}
+        authId={authId}
+        email={currentUser?.email || null}
+        gender={displayGenderFromUser(currentUser?.gender)}
+        hifzAmount={contactFields.hifzAmount}
+        phone={contactFields.phone}
+        school={contactFields.school}
+        level={contactFields.level}
         bottomInset={Math.max(insets.bottom, 16)}
       />
     </SafeAreaView>
@@ -650,15 +911,6 @@ function ActivityCard({ activity, onPress }) {
   );
 }
 
-function InfoRow({ label, value }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
 
@@ -696,10 +948,34 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   headerBtn: {
-    marginStart: 10,
-    padding: 8,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(255,255,255,0.15)",
+    flexDirection: row,
+    alignItems: "center",
+    gap: 6,
+  },
+  headerEnd: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  headerIconWrap: { position: "relative", padding: 2 },
+  headerBellBadge: {
+    position: "absolute",
+    top: -4,
+    left: -6,
+    backgroundColor: colors.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  headerBellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontFamily: fonts.bold,
   },
 
   scroll: {
@@ -987,45 +1263,27 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   notifBody: { ...rtlText, color: colors.muted, fontSize: 13 },
-  profileTop: { alignItems: "center", marginBottom: 12 },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: colors.primary,
-    justifyContent: "center",
-    alignItems: "center",
+  profileTab: {
+    gap: 16,
   },
-  avatarText: { color: "white", fontWeight: "bold", fontSize: 20 },
-  profileName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginTop: 12,
-    color: colors.text,
-    ...rtlText,
-  },
-  rolePill: {
-    backgroundColor: colors.soft,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  rolePillText: { color: colors.primaryDark, fontWeight: "600", ...rtlText },
-  infoRow: {
-    width: "100%",
+  profileLoader: { marginVertical: 8 },
+  changePasswordLink: {
     flexDirection: row,
-    justifyContent: "space-between",
-    backgroundColor: colors.bg,
-    borderRadius: radii.md,
-    padding: 12,
-    marginBottom: 8,
+    alignItems: "center",
+    alignSelf: "center",
+    gap: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginTop: 4,
   },
-  infoLabel: { color: colors.muted, ...rtlText },
-  infoValue: { fontWeight: "600", color: colors.text, ...rtlText },
+  changePasswordLinkText: {
+    color: colors.muted,
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    writingDirection: "rtl",
+    textAlign: "center",
+    flexShrink: 0,
+  },
 
   bottomWrap: {},
   fab: {
@@ -1043,5 +1301,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
+  },
+  fabBadge: {
+    position: "absolute",
+    top: -2,
+    end: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: colors.gold,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fabBadgeText: {
+    color: colors.text,
+    fontSize: 10,
+    fontFamily: fonts.bold,
   },
 });
