@@ -72,14 +72,29 @@ async function getOrCreateAuthUser(email, password, role, nom, prenom, telephone
 }
 
 async function getOrCreateSaison() {
+  const saisonId = 's_test_supervisor';
   const { data: existing, error: selErr } = await supabase
-    .from('saisons').select('*').eq('nom', 'Saison Test').maybeSingle();
+    .from('saisons')
+    .select('*')
+    .eq('id', saisonId)
+    .maybeSingle();
   if (selErr) throw selErr;
   if (existing) return existing;
 
-  const { data, error } = await supabase.from('saisons').insert({
-    nom: 'Saison Test', date_debut: '2026-01-01', date_fin: '2026-12-31', statut: 'active'
-  }).select().single();
+  const { data, error } = await supabase
+    .from('saisons')
+    .insert({
+      id: saisonId,
+      name: 'Saison Test',
+      type: 'regular',
+      start_date: '2026-01-01',
+      end_date: '2026-12-31',
+      registration_open: false,
+      active: true,
+      remote: false,
+    })
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }

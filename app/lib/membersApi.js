@@ -62,24 +62,34 @@ async function querySupervisorActiveSeances(supervisorAuthId, selectClause) {
 
 async function attachSaisonDatesToSeances(seances) {
   const list = Array.isArray(seances) ? seances : seances ? [seances] : [];
-  const missing = list.filter((s) => s && !s.saisons?.date_debut && s.saison_id);
+  const missing = list.filter((s) => s && !s.saisons?.start_date && s.saison_id);
   if (missing.length === 0) return list;
 
   const saisonIds = [...new Set(missing.map((s) => s.saison_id).filter(Boolean))];
   const saisonRes = await withTimeout(
-    supabase.from("saisons").select("id, date_debut").in("id", saisonIds),
+    supabase.from("saisons").select("id, start_date").in("id", saisonIds),
     SUPABASE_TIMEOUT_MS,
     "قراءة تواريخ المواسم"
   );
-  if (saisonRes.error || !saisonRes.data?.length) return list;
+  // Log obligatoire : un select sur une colonne inexistante (ex. date_debut)
+  // était avalé ici, et l'écran Présence affichait un fallback sans aucune
+  // trace PostgREST.
+  if (saisonRes.error) {
+    console.warn(
+      "[membersApi] lecture saisons.start_date échouée — historique présence sans date de saison:",
+      saisonRes.error.message || saisonRes.error
+    );
+    return list;
+  }
+  if (!saisonRes.data?.length) return list;
 
   const dateById = Object.fromEntries(
-    saisonRes.data.map((row) => [row.id, row.date_debut])
+    saisonRes.data.map((row) => [row.id, row.start_date])
   );
   return list.map((s) => {
-    if (!s?.saison_id || s.saisons?.date_debut) return s;
-    const date_debut = dateById[s.saison_id];
-    return date_debut ? { ...s, saisons: { date_debut } } : s;
+    if (!s?.saison_id || s.saisons?.start_date) return s;
+    const start_date = dateById[s.saison_id];
+    return start_date ? { ...s, saisons: { start_date } } : s;
   });
 }
 
@@ -99,12 +109,18 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
   try {
     const withSaison = await querySupervisorActiveSeances(
       supervisorAuthId,
-      "*, saisons(date_debut)"
+      "*, saisons(start_date)"
     );
     let rows = withSaison.data || [];
     let error = withSaison.error;
 
     if (error && /relationship|PGRST200|Could not find a relationship/i.test(error?.message || "")) {
+      // Pas de FK seances → saisons : PostgREST refuse l'embed.
+      // On relit les séances sans dates, puis attachSaisonDatesToSeances.
+      console.warn(
+        "[membersApi] embed saisons(start_date) indisponible (PGRST200) — repli select(*) sans dates de saison:",
+        error.message || error
+      );
       const fallback = await querySupervisorActiveSeances(supervisorAuthId, "*");
       rows = fallback.data || [];
       error = fallback.error;

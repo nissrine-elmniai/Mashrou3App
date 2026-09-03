@@ -122,6 +122,34 @@ export async function resolveAdminProfile() {
 }
 
 /**
+ * Tous les profils admin (inbox superviseur, section épinglée).
+ * RLS : profiles_select_superviseur_admin.
+ * @returns { ok, admins }
+ */
+export async function listAdminProfiles() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("profiles")
+        .select("id, first_name, last_name, email")
+        .eq("role", "admin")
+        .order("created_at", { ascending: true }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة حسابات الإدارة"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+    return { ok: true, admins: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
  * Historique d'une conversation entre le membre connecté et otherUserId
  * (les deux sens), trié par date. RG6 est appliqué côté serveur (RLS) :
  * seuls les messages dont on est expéditeur/destinataire remontent.
@@ -423,8 +451,11 @@ export function subscribeMyMessages(onMessage) {
 /**
  * Fusionne une liste de contacts avec les derniers messages (inbox).
  * Les conversations récentes passent en tête pour répondre tout de suite.
+ * @param {object} [options]
+ * @param {boolean} [options.appendUnknown=true] hors-contacts (autres threads)
  */
-export function mergeInboxRows(contacts, threads, seenAt = {}) {
+export function mergeInboxRows(contacts, threads, seenAt = {}, options = {}) {
+  const appendUnknown = options.appendUnknown !== false;
   const byId = new Map((threads || []).map((t) => [t.otherId, t]));
   const rows = (contacts || []).map((c) => {
     const t = byId.get(c.id);
@@ -449,27 +480,29 @@ export function mergeInboxRows(contacts, threads, seenAt = {}) {
     };
   });
 
-  for (const t of threads || []) {
-    if (rows.some((r) => r.id === t.otherId)) continue;
-    const name =
-      `${t.firstName || ""} ${t.lastName || ""}`.trim() || t.email || "—";
-    const openedAt = seenAt[t.otherId] || 0;
-    rows.push({
-      id: t.otherId,
-      name,
-      role: t.role || "",
-      avatarLetter: (t.firstName || name).trim().charAt(0) || "؟",
-      avatarPrimary: t.role === "admin",
-      highlighted: t.role === "admin",
-      lastMessage: t.lastMessage || "لا توجد رسائل بعد",
-      lastAt: t.lastAt,
-      time: formatRelativeTime(t.lastAt),
-      unread: !!(
-        t.incoming &&
-        t.lastAt &&
-        new Date(t.lastAt).getTime() > openedAt
-      ),
-    });
+  if (appendUnknown) {
+    for (const t of threads || []) {
+      if (rows.some((r) => r.id === t.otherId)) continue;
+      const name =
+        `${t.firstName || ""} ${t.lastName || ""}`.trim() || t.email || "—";
+      const openedAt = seenAt[t.otherId] || 0;
+      rows.push({
+        id: t.otherId,
+        name,
+        role: t.role || "",
+        avatarLetter: (t.firstName || name).trim().charAt(0) || "؟",
+        avatarPrimary: t.role === "admin",
+        highlighted: t.role === "admin",
+        lastMessage: t.lastMessage || "لا توجد رسائل بعد",
+        lastAt: t.lastAt,
+        time: formatRelativeTime(t.lastAt),
+        unread: !!(
+          t.incoming &&
+          t.lastAt &&
+          new Date(t.lastAt).getTime() > openedAt
+        ),
+      });
+    }
   }
 
   rows.sort((a, b) => {

@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
+import { EmptyState } from "../../components/ui";
 import { getMySeance, mergeInboxRows } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { initials } from "../supervisor/supervisorHelpers";
@@ -45,32 +46,25 @@ export default function MemberChatInboxScreen({ navigation }) {
     };
   }, []);
 
-  const contacts = useMemo(() => {
-    const list = [
-      {
-        id: threads.find((t) => t.role === "admin")?.otherId || "admin",
-        name: "إدارة المسجد",
-        role: "admin",
-        avatarLetter: "م",
-        avatarPrimary: true,
-        highlighted: true,
-      },
-    ];
-    if (supervisor) list.push(supervisor);
-    return list;
-  }, [threads, supervisor]);
-
-  const rows = useMemo(
-    () => mergeInboxRows(contacts, threads, seenAt),
-    [contacts, threads, seenAt]
+  const contacts = useMemo(
+    () => (supervisor ? [supervisor] : []),
+    [supervisor]
   );
+
+  const rows = useMemo(() => {
+    const merged = mergeInboxRows(contacts, threads, seenAt, {
+      appendUnknown: false,
+    });
+    return merged.filter((r) => r.role !== "admin");
+  }, [contacts, threads, seenAt]);
 
   const openThread = (row) => {
     setSeenAt((prev) => ({ ...prev, [row.id]: Date.now() }));
     navigation.navigate("ChatConversation", {
-      contactId: row.role === "admin" ? "admin" : row.id,
+      contactId: row.id,
       contactName: row.name,
       contactAvatarLetter: row.avatarLetter,
+      contactRole: row.role || "supervisor",
     });
   };
 
@@ -92,6 +86,8 @@ export default function MemberChatInboxScreen({ navigation }) {
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
+      ) : rows.length === 0 ? (
+        <EmptyState text="لا توجد حصة نشطة للتواصل مع المشرف" />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {rows.map((row) => (

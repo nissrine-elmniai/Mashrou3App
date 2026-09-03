@@ -11,11 +11,16 @@ export function ChatThreadRow({
   avatarPrimary,
   unread,
   highlighted,
+  hideBorder = false,
   onPress,
 }) {
   return (
     <TouchableOpacity
-      style={[styles.rowItem, highlighted && styles.rowHighlight]}
+      style={[
+        styles.rowItem,
+        highlighted && styles.rowHighlight,
+        hideBorder && styles.rowNoBorder,
+      ]}
       activeOpacity={0.7}
       onPress={onPress}
     >
@@ -62,6 +67,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   rowHighlight: { backgroundColor: colors.primarySoft },
+  rowNoBorder: { borderBottomWidth: 0 },
   avatarWrap: { position: "relative" },
   avatar: {
     width: 42,

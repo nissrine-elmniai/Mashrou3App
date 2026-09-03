@@ -49,6 +49,27 @@ import {
   upsertSaison,
 } from "../lib/saisonsApi";
 import { getActiveRegularSeason } from "../lib/seasonScope";
+
+/** ISO YYYY-MM-DD pour colonnes Postgres `date`. Accepte aussi YYYY/MM/DD (placeholders admin). Pas de parse JJ/MM/AAAA. */
+function toIsoDateOnly(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const slashIso = raw.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (slashIso) {
+    return `${slashIso[1]}-${slashIso[2].padStart(2, "0")}-${slashIso[3].padStart(2, "0")}`;
+  }
+  return raw;
+}
+
+function withIsoSeasonDates(season) {
+  if (!season) return season;
+  return {
+    ...season,
+    startDate: toIsoDateOnly(season.startDate) || season.startDate || null,
+    endDate: toIsoDateOnly(season.endDate) || season.endDate || null,
+  };
+}
 import {
   clampTumuns,
   enrichMemberProgram,
@@ -205,7 +226,9 @@ export function AppProvider({ children }) {
       }
 
       if (isSupabaseConfigured()) {
-        const seasonSync = await syncSeasonsWithSupabase(loadedSeasons);
+        const seasonSync = await syncSeasonsWithSupabase(
+          (loadedSeasons || []).map(withIsoSeasonDates)
+        );
         if (seasonSync.ok && seasonSync.seasons) {
           setSeasons(seasonSync.seasons);
         }
@@ -635,7 +658,7 @@ export function AppProvider({ children }) {
     openRegistration = true,
   }) => {
     const seasonName = String(name || "").trim();
-    const start = String(startDate || "").trim();
+    const start = toIsoDateOnly(startDate);
     const versionNum = Number.parseInt(String(version || "").trim(), 10);
     if (!seasonName || !start || !Number.isFinite(versionNum) || versionNum < 1) {
       return { ok: false, error: "املأ جميع الحقول" };
