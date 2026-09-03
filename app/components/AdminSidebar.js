@@ -28,6 +28,7 @@ import { useApp } from "../context/AppContext";
 import { rtlText, row, isRTL } from "../constants/rtl";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
+import AdminMessagesFab from "./AdminMessagesFab";
 
 const palette = {
   primary: "#2E7D32",
@@ -252,6 +253,14 @@ export function useAdminSidebar(navigation, activeItem = "home") {
     openSidebar: () => setIsOpen(true),
     threads,
     threadsLoading,
+    unreadTotal,
+    messagesFab: (
+      <AdminMessagesFab
+        navigation={navigation}
+        unreadTotal={unreadTotal}
+        hidden={activeItem === "chat"}
+      />
+    ),
     sidebar: (
       <AdminSidebar
         isOpen={isOpen}

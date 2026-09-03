@@ -55,7 +55,7 @@ const AUDIENCE_LABELS = {
 };
 
 export default function AdminNotificationsScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "notifications");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "notifications");
   const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -282,6 +282,7 @@ export default function AdminNotificationsScreen({ navigation }) {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

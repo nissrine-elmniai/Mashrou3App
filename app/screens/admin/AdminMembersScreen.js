@@ -42,7 +42,7 @@ function levelColor(level) {
 }
 
 export default function AdminMembersScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "members");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "members");
   const { stats, currentUser, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
 
@@ -196,6 +196,7 @@ export default function AdminMembersScreen({ navigation }) {
           ))
         )}
       </ScrollView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

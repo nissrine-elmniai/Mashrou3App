@@ -41,7 +41,7 @@ const palette = {
 };
 
 export default function AdminSettingsScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "settings");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "settings");
   const { currentUser, stats, logout } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -385,6 +385,7 @@ export default function AdminSettingsScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

@@ -86,7 +86,7 @@ function statusMeta(kind) {
 }
 
 export default function AdminTestsScreen({ navigation, route }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "tests");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "tests");
   const { currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -527,6 +527,7 @@ export default function AdminTestsScreen({ navigation, route }) {
         )}
         </ScrollView>
       </KeyboardAvoidingView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );
