@@ -10,10 +10,22 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, fonts, arrowBack, row } from "../../constants/rtl";
+import { StatusBar } from "expo-status-bar";
+import { rtlText, arrowBack, row } from "../../constants/rtl";
 import { formatSeanceScheduleLabel } from "../../lib/seancesApi";
 import { getSeancePresenceOverview } from "../../lib/presenceApi";
+
+const palette = {
+  primary: "#2E7D32",
+  red: "#D32F2F",
+  softGreen: "#E8F5E9",
+  background: "#F5F5F5",
+  textSecondary: "#666666",
+  textPrimary: "#333333",
+  border: "#E0E0E0",
+  card: "#FFFFFF",
+  muted: "#9E9E9E",
+};
 
 function formatDateDisplay(str) {
   if (!str) return "—";
@@ -28,7 +40,7 @@ function InfoRow({ icon, label, value }) {
   return (
     <View style={styles.infoRow}>
       <View style={styles.infoIcon}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
+        <Ionicons name={icon} size={18} color={palette.primary} />
       </View>
       <View style={styles.infoTextWrap}>
         <Text style={styles.infoLabel}>{label}</Text>
@@ -38,11 +50,30 @@ function InfoRow({ icon, label, value }) {
   );
 }
 
-function StatCard({ label, value, color = colors.primary }) {
+function StatCard({ label, value }) {
   return (
-    <View style={[styles.statCard, shadows.card]}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function TopBar({ title, onBack }) {
+  return (
+    <View style={styles.topBar}>
+      <TouchableOpacity
+        onPress={onBack}
+        style={styles.backBtn}
+        hitSlop={12}
+        accessibilityLabel="رجوع"
+      >
+        <Ionicons name={arrowBack} size={22} color={palette.textPrimary} />
+      </TouchableOpacity>
+      <Text style={styles.topBarTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <View style={styles.headerSpacer} />
     </View>
   );
 }
@@ -109,13 +140,8 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
   if (!seance) {
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Ionicons name={arrowBack} size={22} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>تفاصيل الحصة</Text>
-          <View style={styles.headerSpacer} />
-        </View>
+        <StatusBar style="dark" />
+        <TopBar title="تفاصيل الحصة" onBack={() => navigation.goBack()} />
         <Text style={styles.emptyText}>الحصة غير موجودة</Text>
       </SafeAreaView>
     );
@@ -123,19 +149,11 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backBtn}
-          accessibilityLabel="رجوع"
-        >
-          <Ionicons name={arrowBack} size={22} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {seance.nom || "تفاصيل الحصة"}
-        </Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <StatusBar style="dark" />
+      <TopBar
+        title={seance.nom || "تفاصيل الحصة"}
+        onBack={() => navigation.goBack()}
+      />
 
       <ScrollView
         contentContainerStyle={[
@@ -144,7 +162,7 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.card, shadows.card]}>
+        <View style={styles.card}>
           <View style={styles.titleRow}>
             <Text style={styles.seanceName}>{seance.nom}</Text>
             <View
@@ -188,31 +206,23 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
         </View>
 
         {loading ? (
-          <View style={[styles.card, shadows.card, styles.loadingCard]}>
-            <ActivityIndicator color={colors.primary} />
+          <View style={[styles.card, styles.loadingCard]}>
+            <ActivityIndicator color={palette.primary} />
           </View>
         ) : error ? (
-          <View style={[styles.card, shadows.card]}>
+          <View style={styles.card}>
             <Text style={styles.errorText}>{error}</Text>
           </View>
         ) : (
           <>
             <View style={styles.statsRow}>
-              <StatCard
-                label="جلسات مسجّلة"
-                value={overview.sessionCount}
-                color={colors.orange}
-              />
-              <StatCard
-                label="نسبة الحضور"
-                value={`${attendancePct}%`}
-                color={colors.primary}
-              />
+              <StatCard label="جلسات مسجّلة" value={overview.sessionCount} />
+              <StatCard label="نسبة الحضور" value={`${attendancePct}%`} />
             </View>
 
             <Text style={styles.sectionTitle}>السجل</Text>
             {overview.byDateRows.length === 0 ? (
-              <View style={[styles.card, shadows.card]}>
+              <View style={styles.card}>
                 <Text style={styles.emptyText}>
                   لا توجد سجلات حضور لهذه الحصة بعد
                 </Text>
@@ -225,10 +235,7 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
                     ? Math.round((rowItem.presentCount / total) * 100)
                     : 0;
                 return (
-                  <View
-                    key={rowItem.sessionDate}
-                    style={[styles.sessionRow, shadows.card]}
-                  >
+                  <View key={rowItem.sessionDate} style={styles.sessionRow}>
                     <Text style={styles.sessionDate}>
                       {formatDateDisplay(rowItem.sessionDate)}
                     </Text>
@@ -253,31 +260,33 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 10,
+  container: { flex: 1, backgroundColor: palette.background },
+  topBar: {
+    backgroundColor: "#fff",
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: colors.primary,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
   },
   backBtn: { padding: 2 },
-  headerTitle: {
+  topBarTitle: {
     flex: 1,
-    color: "#fff",
-    fontSize: 17,
-    fontFamily: fonts.bold,
-    ...rtlTextBold,
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    fontSize: 16,
+    ...rtlText,
   },
   headerSpacer: { width: 26 },
   content: { padding: 16 },
   card: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
+    backgroundColor: palette.card,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: palette.border,
     marginBottom: 14,
   },
   loadingCard: {
@@ -294,20 +303,20 @@ const styles = StyleSheet.create({
   seanceName: {
     flex: 1,
     fontSize: 18,
-    fontFamily: fonts.bold,
-    color: colors.text,
-    ...rtlTextBold,
+    fontWeight: "bold",
+    color: palette.textPrimary,
+    ...rtlText,
   },
   statusPill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: radii.pill,
+    borderRadius: 999,
   },
-  statusActive: { backgroundColor: colors.soft },
+  statusActive: { backgroundColor: palette.softGreen },
   statusArchived: { backgroundColor: "#EEEEEE" },
-  statusText: { fontSize: 12, fontFamily: fonts.semiBold, ...rtlText },
-  statusActiveText: { color: colors.primary },
-  statusArchivedText: { color: colors.muted },
+  statusText: { fontSize: 12, fontWeight: "600", ...rtlText },
+  statusActiveText: { color: palette.primary },
+  statusArchivedText: { color: palette.muted },
   infoRow: {
     flexDirection: row,
     alignItems: "center",
@@ -318,21 +327,20 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: palette.softGreen,
     alignItems: "center",
     justifyContent: "center",
   },
   infoTextWrap: { flex: 1 },
   infoLabel: {
     fontSize: 12,
-    color: colors.muted,
-    fontFamily: fonts.regular,
+    color: palette.textSecondary,
     ...rtlText,
   },
   infoValue: {
     fontSize: 14,
-    color: colors.text,
-    fontFamily: fonts.semiBold,
+    color: palette.textPrimary,
+    fontWeight: "600",
     marginTop: 2,
     ...rtlText,
   },
@@ -343,38 +351,39 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
+    backgroundColor: palette.card,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: palette.border,
     paddingVertical: 20,
     paddingHorizontal: 12,
     alignItems: "center",
   },
   statValue: {
     fontSize: 28,
-    fontFamily: fonts.bold,
-    ...rtlTextBold,
+    fontWeight: "bold",
+    color: palette.primary,
+    ...rtlText,
   },
   statLabel: {
     fontSize: 13,
-    color: colors.muted,
+    color: palette.textSecondary,
     marginTop: 6,
     textAlign: "center",
     ...rtlText,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontFamily: fonts.bold,
-    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
+    color: palette.textPrimary,
     marginBottom: 10,
-    ...rtlTextBold,
+    ...rtlText,
   },
   sessionRow: {
-    backgroundColor: colors.card,
-    borderRadius: radii.md,
+    backgroundColor: palette.card,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: palette.border,
     padding: 14,
     marginBottom: 8,
     flexDirection: row,
@@ -383,8 +392,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sessionDate: {
-    fontFamily: fonts.semiBold,
-    color: colors.text,
+    fontWeight: "600",
+    color: palette.textPrimary,
     fontSize: 14,
     ...rtlText,
   },
@@ -394,33 +403,34 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sessionPresent: {
-    color: colors.primary,
+    color: palette.primary,
     fontSize: 13,
-    fontFamily: fonts.semiBold,
+    fontWeight: "600",
     ...rtlText,
   },
   sessionAbsent: {
-    color: colors.red,
+    color: palette.red,
     fontSize: 13,
-    fontFamily: fonts.semiBold,
+    fontWeight: "600",
     ...rtlText,
   },
   sessionPct: {
-    color: colors.textSecondary,
+    color: palette.textSecondary,
     fontSize: 13,
-    fontFamily: fonts.bold,
+    fontWeight: "bold",
     minWidth: 36,
     textAlign: "left",
     ...rtlText,
   },
   emptyText: {
     textAlign: "center",
-    color: colors.muted,
+    color: palette.textSecondary,
     paddingVertical: 12,
+    marginTop: 8,
     ...rtlText,
   },
   errorText: {
-    color: colors.red,
+    color: palette.red,
     textAlign: "center",
     ...rtlText,
   },

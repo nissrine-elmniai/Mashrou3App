@@ -24,7 +24,7 @@ import {
   Modal,
   Pressable,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
@@ -247,6 +247,7 @@ function PresenceSectionContent({ presenceState, styles }) {
 }
 
 export default function MemberProfileScreen({ navigation, route }) {
+  const insets = useSafeAreaInsets();
   const {
     memberId,
     seanceId: initialSeanceId,
@@ -263,6 +264,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     groupSchedule: initialGroupSchedule,
     registrationDate,
     canEditSeance = false,
+    adminTheme = false,
   } = route.params || {};
 
   const fullName = `${firstName || ""} ${lastName || ""}`.trim() || "عضو";
@@ -480,18 +482,29 @@ export default function MemberProfileScreen({ navigation, route }) {
     };
   }, [memberId, seanceId, saisonId]);
 
+  const headerIconColor = adminTheme ? "#333333" : "white";
+  const trashColor = adminTheme ? "#D32F2F" : "white";
+
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
+    <SafeAreaView
+      style={[styles.container, adminTheme && styles.containerAdmin]}
+      edges={["top", "bottom"]}
+    >
+      <StatusBar style={adminTheme ? "dark" : "light"} />
+      <View style={[styles.header, adminTheme && styles.headerAdmin]}>
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
           activeOpacity={0.7}
         >
-          <Ionicons name={arrowBack} size={22} color="white" />
+          <Ionicons name={arrowBack} size={22} color={headerIconColor} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>الملف الشخصي</Text>
+        <Text
+          style={[styles.headerTitle, adminTheme && styles.headerTitleAdmin]}
+          numberOfLines={1}
+        >
+          {fullName}
+        </Text>
         {seanceId ? (
           <TouchableOpacity
             style={styles.headerRemoveBtn}
@@ -501,9 +514,9 @@ export default function MemberProfileScreen({ navigation, route }) {
             accessibilityLabel="إزالة من الحصة"
           >
             {removingFromSeance ? (
-              <ActivityIndicator color="white" size="small" />
+              <ActivityIndicator color={trashColor} size="small" />
             ) : (
-              <Ionicons name="trash-outline" size={22} color="white" />
+              <Ionicons name="trash-outline" size={22} color={trashColor} />
             )}
           </TouchableOpacity>
         ) : (
@@ -518,7 +531,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           <Text style={styles.name}>{fullName}</Text>
         </View>
 
-        <View style={[styles.card, shadows.card]}>
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card]}>
           <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
           <ProfileRow
             icon="male-female-outline"
@@ -535,7 +548,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
         </View>
 
-        <View style={[styles.card, shadows.card, styles.cardSpacing]}>
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
           <View style={styles.seanceHeader}>
             <Text style={styles.cardTitleInline}>الحصة</Text>
             {canEditSeance ? (
@@ -556,12 +569,12 @@ export default function MemberProfileScreen({ navigation, route }) {
           <ProfileRow icon="calendar-clear-outline" label="تاريخ التسجيل" value={registrationDateOnly} />
         </View>
 
-        <View style={[styles.card, shadows.card, styles.cardSpacing]}>
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
           <Text style={styles.cardTitle}>التقدم</Text>
           <ProgressSectionContent progressState={progressState} styles={styles} />
         </View>
 
-        <View style={[styles.card, shadows.card, styles.cardSpacing]}>
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
           <Text style={styles.cardTitle}>
             {!presenceState.loading &&
             presenceState.rate != null &&
@@ -588,7 +601,12 @@ export default function MemberProfileScreen({ navigation, route }) {
             style={StyleSheet.absoluteFill}
             onPress={() => !savingSeance && setSeanceModalVisible(false)}
           />
-          <View style={styles.modalCard}>
+          <View
+            style={[
+              styles.modalCard,
+              { paddingBottom: Math.max(insets.bottom, 16) + 12 },
+            ]}
+          >
             <Text style={styles.modalTitle}>اختيار حصة جديدة</Text>
             <Text style={styles.modalHint}>
               اختر الحصة التي تريد نقل العضو إليها
@@ -667,6 +685,7 @@ export default function MemberProfileScreen({ navigation, route }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  containerAdmin: { backgroundColor: "#F5F5F5" },
   content: { padding: 16, paddingBottom: 32 },
 
   header: {
@@ -677,13 +696,22 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     backgroundColor: colors.primary,
   },
+  headerAdmin: {
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0E0E0",
+  },
   backBtn: { padding: 2 },
   headerTitle: {
     flex: 1,
     color: "white",
-    fontSize: 18,
+    fontSize: 16,
     fontFamily: fonts.bold,
     ...rtlTextBold,
+  },
+  headerTitleAdmin: {
+    color: "#333333",
+    fontSize: 16,
   },
   headerRemoveBtn: {
     padding: 4,
@@ -712,6 +740,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: radii.lg,
     padding: 16,
+  },
+  cardAdmin: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E0E0E0",
+    shadowOpacity: 0,
+    elevation: 0,
   },
   cardSpacing: { marginTop: 14 },
   cardTitle: {
@@ -820,16 +856,18 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   modalCloseBtn: {
-    marginTop: 8,
+    marginTop: 12,
     paddingVertical: 14,
     borderRadius: radii.md,
-    backgroundColor: colors.soft,
+    backgroundColor: colors.card,
+    borderWidth: 1.5,
+    borderColor: colors.border,
     alignItems: "center",
   },
   modalCloseBtnText: {
-    color: colors.primaryDark,
+    color: colors.text,
     fontFamily: fonts.semiBold,
-    fontSize: 15,
+    fontSize: 16,
     ...rtlText,
   },
   monthNavBar: {

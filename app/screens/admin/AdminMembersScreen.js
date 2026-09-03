@@ -125,6 +125,7 @@ export default function AdminMembersScreen({ navigation }) {
       groupSchedule: member.groupSchedule || null,
       registrationDate: member.registrationDate,
       canEditSeance: true,
+      adminTheme: true,
     });
   };
 
