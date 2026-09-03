@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -16,12 +16,24 @@ import { useApp } from "../../context/AppContext";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
+import {
+  PROGRAM_TYPE_HIFZ,
+  PROGRAM_TYPE_MOURAJA3A,
+  isHifzProgram,
+  normalizeProgramType,
+} from "../../lib/memberProgramsApi";
+import {
+  flushMemberProgressDelta,
+  scheduleMemberProgressDelta,
+} from "../../lib/progressApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 const EMPTY_FORM = {
   title: "",
   nbHizb: "",
   durationDays: "",
   startDate: "",
+  type: PROGRAM_TYPE_HIFZ,
 };
 
 function todayStr() {
@@ -70,6 +82,7 @@ export default function MemberProgramsPanel({ navigation }) {
     saveMemberProgram,
     deleteMemberProgram,
     adjustMemberProgramTumuns,
+    seasons,
   } = useApp();
 
   const programs = getMemberPrograms();
@@ -77,6 +90,15 @@ export default function MemberProgramsPanel({ navigation }) {
   const [progressModal, setProgressModal] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const activeSeasonIdRef = useRef(null);
+  activeSeasonIdRef.current = getActiveRegularSeason(seasons)?.id ?? null;
+
+  useEffect(
+    () => () => {
+      flushMemberProgressDelta();
+    },
+    []
+  );
 
   const openCreate = () => {
     setEditingId(null);
@@ -91,6 +113,7 @@ export default function MemberProgramsPanel({ navigation }) {
       nbHizb: String(program.nbHizb ?? ""),
       durationDays: String(program.durationDays ?? ""),
       startDate: program.startDate || todayStr(),
+      type: normalizeProgramType(program.type),
     });
     setModalVisible(true);
   };
@@ -112,6 +135,7 @@ export default function MemberProgramsPanel({ navigation }) {
       durationDays: form.durationDays,
       startDate: form.startDate,
       completedTumuns: existing?.completedTumuns ?? 0,
+      type: normalizeProgramType(form.type),
     });
     if (!result.ok) {
       Alert.alert("تنبيه", result.error);
@@ -138,13 +162,26 @@ export default function MemberProgramsPanel({ navigation }) {
     );
   };
 
+  const closeProgressModal = () => {
+    flushMemberProgressDelta();
+    setProgressModal(null);
+  };
+
   const quickUpdateProgress = (program) => {
     setProgressModal(program);
   };
 
   const handleAdjustInModal = (delta) => {
     if (!progressModal) return;
-    adjustMemberProgramTumuns(progressModal.id, delta);
+    const result = adjustMemberProgramTumuns(progressModal.id, delta);
+    if (!result.ok || result.unchanged) return;
+    if (isHifzProgram(result.program)) {
+      scheduleMemberProgressDelta({
+        delta,
+        saisonId: activeSeasonIdRef.current,
+        notes: result.program.title || null,
+      });
+    }
   };
 
   const openDetails = (program) => {
@@ -157,6 +194,7 @@ export default function MemberProgramsPanel({ navigation }) {
         completedTumuns: program.completedTumuns,
         totalTumuns: program.totalTumuns,
         progression: program.progression,
+        type: program.type,
         dateDebut: program.startDate,
         statut: programStatus(program) === "البرنامج منتهي" ? "terminé" : "en cours",
       },
@@ -204,18 +242,23 @@ export default function MemberProgramsPanel({ navigation }) {
         visible={!!progressProgram}
         transparent
         animationType="fade"
-        onRequestClose={() => setProgressModal(null)}
+        onRequestClose={closeProgressModal}
       >
         <View style={styles.modalOverlay}>
           <Pressable
             style={StyleSheet.absoluteFill}
-            onPress={() => setProgressModal(null)}
+            onPress={closeProgressModal}
           />
           <View style={styles.progressModalCard}>
             <Text style={styles.modalTitle}>تحديث التقدم</Text>
             <Text style={styles.progressModalHint}>
               {progressProgram?.title}
             </Text>
+            {progressProgram && !isHifzProgram(progressProgram) ? (
+              <Text style={styles.progressModalHint}>
+                برنامج مراجعة — لا يغيّر موضعك في القرآن
+              </Text>
+            ) : null}
 
             {progressProgram ? (
               <>
@@ -263,7 +306,7 @@ export default function MemberProgramsPanel({ navigation }) {
 
             <TouchableOpacity
               style={styles.saveBtn}
-              onPress={() => setProgressModal(null)}
+              onPress={closeProgressModal}
             >
               <Text style={styles.saveBtnText}>إغلاق</Text>
             </TouchableOpacity>
@@ -305,14 +348,29 @@ function MemberProgramCard({
 
       <TouchableOpacity style={styles.cardBody} onPress={onPress} activeOpacity={0.9}>
 
-        <View style={styles.badgeRow}>
-          <View style={styles.badgeGreen}>
-            <Text style={styles.badgeGreenText}>{program.nbHizb} أحزاب</Text>
+          <View style={styles.badgeRow}>
+            <View
+              style={
+                isHifzProgram(program) ? styles.badgeGreen : styles.badgeGold
+              }
+            >
+              <Text
+                style={
+                  isHifzProgram(program)
+                    ? styles.badgeGreenText
+                    : styles.badgeGoldText
+                }
+              >
+                {isHifzProgram(program) ? "حفظ" : "مراجعة"}
+              </Text>
+            </View>
+            <View style={styles.badgeGreen}>
+              <Text style={styles.badgeGreenText}>{program.nbHizb} أحزاب</Text>
+            </View>
+            <View style={styles.badgeGold}>
+              <Text style={styles.badgeGoldText}>{program.durationDays} يوم</Text>
+            </View>
           </View>
-          <View style={styles.badgeGold}>
-            <Text style={styles.badgeGoldText}>{program.durationDays} يوم</Text>
-          </View>
-        </View>
 
         <View style={styles.metaRow}>
           <Ionicons name="calendar-outline" size={14} color={colors.muted} />
@@ -390,6 +448,46 @@ function ProgramFormModal({ visible, editing, form, onChange, onClose, onSave })
             onChangeText={(v) => setField("title", v)}
             textAlign={textAlignStart}
           />
+
+          <Text style={styles.fieldLabel}>نوع البرنامج</Text>
+          <View style={styles.typeRow}>
+            <TouchableOpacity
+              style={[
+                styles.typeChip,
+                form.type !== PROGRAM_TYPE_MOURAJA3A && styles.typeChipActive,
+              ]}
+              onPress={() => setField("type", PROGRAM_TYPE_HIFZ)}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.typeChipText,
+                  form.type !== PROGRAM_TYPE_MOURAJA3A &&
+                    styles.typeChipTextActive,
+                ]}
+              >
+                حفظ
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.typeChip,
+                form.type === PROGRAM_TYPE_MOURAJA3A && styles.typeChipActive,
+              ]}
+              onPress={() => setField("type", PROGRAM_TYPE_MOURAJA3A)}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.typeChipText,
+                  form.type === PROGRAM_TYPE_MOURAJA3A &&
+                    styles.typeChipTextActive,
+                ]}
+              >
+                مراجعة
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.rowFields}>
             <View style={styles.halfField}>
@@ -652,6 +750,33 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: 6,
     ...rtlText,
+  },
+  typeRow: {
+    flexDirection: row,
+    gap: 8,
+    marginBottom: 14,
+  },
+  typeChip: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: colors.bg,
+  },
+  typeChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.soft,
+  },
+  typeChipText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.muted,
+    ...rtlText,
+  },
+  typeChipTextActive: {
+    color: colors.primary,
   },
   rowFields: {
     flexDirection: row,

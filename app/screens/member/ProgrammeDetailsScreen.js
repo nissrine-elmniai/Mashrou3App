@@ -1,5 +1,5 @@
 // app/screens/member/ProgrammeDetailScreen.js
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -11,13 +11,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
-import { addProgressEntry } from "../../lib/progressApi";
+import {
+  flushMemberProgressDelta,
+  scheduleMemberProgressDelta,
+} from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
+import { isHifzProgram } from "../../lib/memberProgramsApi";
 import { row as rtlRow, rtlText, arrowBack } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
-
-const HISTORY_DEBOUNCE_MS = 800;
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
   const routeProgram = route.params?.programme;
@@ -46,6 +48,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
         completedTumuns: programFromContext.completedTumuns,
         totalTumuns: programFromContext.totalTumuns,
         progression: programFromContext.progression,
+        type: programFromContext.type,
         dateDebut: programFromContext.startDate,
         statut: programFromContext.progression >= 100 ? "terminé" : "en_cours",
       };
@@ -75,12 +78,33 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     };
   }, [programFromContext, routeProgram]);
 
-  const historyTimerRef = useRef(null);
-  const pendingHistoryRef = useRef(null);
-
   const { completed: hizbCompletes, remaining: hizbRestants } = hizbBreakdown(
     programData.completedTumuns,
     programData.nbHizb
+  );
+
+  const handleAdjustTumuns = (delta) => {
+    if (!programData.id) return;
+    const result = adjustMemberProgramTumuns(programData.id, delta);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
+      return;
+    }
+    if (result.unchanged) return;
+    if (isHifzProgram(result.program)) {
+      scheduleMemberProgressDelta({
+        delta,
+        saisonId: activeSeasonIdRef.current,
+        notes: result.program.title || programData.nom || null,
+      });
+    }
+  };
+
+  useEffect(
+    () => () => {
+      flushMemberProgressDelta();
+    },
+    []
   );
 
   const rawDate = programData.dateDebut;
@@ -136,67 +160,10 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   const atMin = programData.completedTumuns <= 0;
   const atMax = programData.completedTumuns >= programData.totalTumuns;
 
-  const flushProgressHistory = useCallback(async () => {
-    const pending = pendingHistoryRef.current;
-    pendingHistoryRef.current = null;
-    if (!pending || pending.completedTumuns <= 0) return;
-
-    const result = await addProgressEntry({
-      completedTumuns: pending.completedTumuns,
-      nbHizb: pending.nbHizb,
-      saisonId: activeSeasonIdRef.current,
-      notes: `${pending.title} — ${pending.completedTumuns}/${pending.totalTumuns} أثمان`,
-    });
-
-    if (!result.ok) {
-      Alert.alert("تنبيه", result.error || "تعذر تسجيل النشاط");
-    }
-  }, []);
-
-  const scheduleProgressHistory = useCallback(
-    (program) => {
-      pendingHistoryRef.current = {
-        title: program.nom,
-        completedTumuns: program.completedTumuns,
-        totalTumuns: program.totalTumuns,
-        nbHizb: program.nbHizb,
-      };
-      if (historyTimerRef.current) {
-        clearTimeout(historyTimerRef.current);
-      }
-      historyTimerRef.current = setTimeout(flushProgressHistory, HISTORY_DEBOUNCE_MS);
-    },
-    [flushProgressHistory]
-  );
-
-  useEffect(
-    () => () => {
-      if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
-    },
-    []
-  );
-
-  const handleAdjustTumuns = (delta) => {
-    if (!programData.id) return;
-    const result = adjustMemberProgramTumuns(programData.id, delta);
-    if (!result.ok) {
-      Alert.alert("خطأ", result.error);
-      return;
-    }
-    if (delta > 0 && result.program && !result.unchanged) {
-      scheduleProgressHistory({
-        nom: result.program.title,
-        completedTumuns: result.program.completedTumuns,
-        totalTumuns: result.program.totalTumuns,
-        nbHizb: result.program.nbHizb,
-      });
-    }
-  };
-
   const handleDeleteProgramme = () => {
     Alert.alert(
       "حذف البرنامج",
-      `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيتم حذف جميع بيانات التقدم المرتبطة به بشكل نهائي.`,
+      `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيُحذف البرنامج فقط. موضعك في القرآن يبقى كما هو.`,
       [
         { text: "إلغاء", style: "cancel" },
         {
@@ -243,6 +210,11 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
           <View style={[styles.card, styles.mainCard]}>
             <View style={styles.rowBetween}>
               <View style={styles.headerIcons}>
+                <View style={styles.badgeGreen}>
+                  <Text style={styles.badgeTextGreen}>
+                    {isHifzProgram(programData) ? "حفظ" : "مراجعة"}
+                  </Text>
+                </View>
                 <View style={styles.badgeGreen}>
                   <Text style={styles.badgeTextGreen}>
                     {programData.nbHizb} أحزاب

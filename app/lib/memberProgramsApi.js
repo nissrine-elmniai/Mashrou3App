@@ -26,6 +26,20 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+export const PROGRAM_TYPE_HIFZ = "hifz";
+export const PROGRAM_TYPE_MOURAJA3A = "mouraja3a";
+
+export function normalizeProgramType(raw) {
+  return raw === PROGRAM_TYPE_MOURAJA3A
+    ? PROGRAM_TYPE_MOURAJA3A
+    : PROGRAM_TYPE_HIFZ;
+}
+
+export function isHifzProgram(program) {
+  return normalizeProgramType(program?.type) === PROGRAM_TYPE_HIFZ;
+}
+
+/** progress_percentage (colonne générée SQL) n'est pas lue : le % est recalculé côté client. */
 function rowToProgram(row) {
   return {
     id: row.id,
@@ -35,6 +49,7 @@ function rowToProgram(row) {
     durationDays: row.duration_days,
     startDate: row.start_date,
     completedTumuns: row.completed_tumuns ?? 0,
+    type: normalizeProgramType(row.type),
   };
 }
 
@@ -48,6 +63,7 @@ function programToRow(program, membreId) {
     duration_days: Number(program.durationDays) || 0,
     start_date: program.startDate || null,
     completed_tumuns: clampTumuns(program.completedTumuns ?? 0, nbHizb),
+    type: normalizeProgramType(program.type),
     updated_at: new Date().toISOString(),
   };
 }
