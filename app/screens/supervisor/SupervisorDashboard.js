@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -30,6 +30,8 @@ import {
   registerSupervisorAttendanceSaved,
   unregisterSupervisorAttendanceSaved,
 } from "./supervisorAttendanceBridge";
+import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { formatUnreadBadge } from "../../lib/messagesApi";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -67,7 +69,13 @@ export default function SupervisorDashboard({ navigation }) {
     refetch,
   } = useSupervisorMembers(selectedGroupId);
 
-  const fullName = currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : "";
+  const { threads } = useInboxThreads();
+  const messagesUnread = useMemo(
+    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
+    [threads]
+  );
+
+  const fullName = currentUser?.firstName?.trim() || "";
 
   useEffect(() => {
     if (!selectedGroupId && myGroups[0]) {
@@ -137,7 +145,7 @@ export default function SupervisorDashboard({ navigation }) {
         <View style={styles.headerWrap}>
           <View style={styles.headerCard}>
             <View style={styles.headerStart}>
-              <Text style={styles.headerGreeting}>مرحباً</Text>
+              <Text style={styles.headerGreeting}>السلام عليكم</Text>
               <Text style={styles.headerName}>{fullName || "المشرف"}</Text>
             </View>
             <View style={styles.headerEnd}>
@@ -195,6 +203,8 @@ export default function SupervisorDashboard({ navigation }) {
                 isMarkingWindowOpen={isMarkingWindowOpen}
                 showPresenceReminder={showPresenceReminder}
                 onChangeTab={setTab}
+                threads={threads}
+                dataSource={dataSource}
               />
             )}
             {tab === "members" && (
@@ -224,6 +234,7 @@ export default function SupervisorDashboard({ navigation }) {
                 navigation={navigation}
                 members={members}
                 activeGroup={activeGroup}
+                threads={threads}
               />
             )}
           </>
@@ -240,11 +251,20 @@ export default function SupervisorDashboard({ navigation }) {
               onPress={() => setTab(t.key)}
               activeOpacity={0.7}
             >
-              <Ionicons
-                name={isActive ? t.iconActive : t.icon}
-                size={22}
-                color={isActive ? colors.primary : colors.placeholder}
-              />
+              <View style={styles.tabIconWrap}>
+                <Ionicons
+                  name={isActive ? t.iconActive : t.icon}
+                  size={22}
+                  color={isActive ? colors.primary : colors.placeholder}
+                />
+                {t.key === "messages" && messagesUnread > 0 ? (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>
+                      {formatUnreadBadge(messagesUnread)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={[styles.bottomBarLabel, isActive && styles.bottomBarLabelActive]}>
                 {t.label}
               </Text>
@@ -337,6 +357,24 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   bottomBarItem: { flex: 1, paddingVertical: 10, alignItems: "center", gap: 2 },
+  tabIconWrap: { position: "relative", paddingHorizontal: 6 },
+  tabBadge: {
+    position: "absolute",
+    top: -6,
+    end: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: colors.gold,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  tabBadgeText: {
+    color: colors.text,
+    fontSize: 9,
+    fontFamily: fonts.bold,
+  },
   bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
   bottomBarLabelActive: { color: colors.primary },
 });

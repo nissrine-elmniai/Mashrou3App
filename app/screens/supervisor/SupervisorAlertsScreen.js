@@ -20,12 +20,6 @@ import {
   subscribeToNewAlerts,
 } from "../../lib/alertsApi";
 
-const AUDIENCE_LABELS = {
-  all: "الجميع",
-  members: "الأعضاء",
-  supervisors: "المشرفون",
-};
-
 function formatTime(iso) {
   if (!iso) return "";
   try {
@@ -127,10 +121,8 @@ export default function SupervisorAlertsScreen({ navigation }) {
                 <View style={styles.alertTopRow}>
                   <View style={styles.alertMeta}>
                     <Text style={styles.alertTime}>{formatTime(alert.createdAt)}</Text>
-                    {alert.audience ? (
-                      <Text style={styles.alertAudience}>
-                        {AUDIENCE_LABELS[alert.audience] || alert.audience}
-                      </Text>
+                    {alert.senderName ? (
+                      <Text style={styles.alertSender}>من {alert.senderName}</Text>
                     ) : null}
                   </View>
                   {alert.acknowledged ? (
@@ -216,7 +208,7 @@ const styles = StyleSheet.create({
   },
   alertMeta: { flex: 1 },
   alertTime: { fontSize: 12, color: colors.muted, ...rtlText },
-  alertAudience: {
+  alertSender: {
     fontSize: 11,
     color: colors.primary,
     marginTop: 2,

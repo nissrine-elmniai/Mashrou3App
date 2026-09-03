@@ -23,6 +23,7 @@ import {
   getMySeance,
   resolveAdminProfile,
   getConversation,
+  markConversationRead,
   sendMessage,
   subscribeConversation,
 } from "../../lib/messagesApi";
@@ -125,6 +126,7 @@ export default function ChatConversationScreen({ navigation, route }) {
         const res = await getConversation({ otherUserId: otherId, seanceId });
         if (cancelled || !res.ok) return;
         setMessages((res.messages || []).map((m) => normalizeMessage(m, authId)));
+        markConversationRead({ otherUserId: otherId, seanceId });
       } catch (e) {
         console.warn(
           "ChatConversationScreen: échec de chargement —",

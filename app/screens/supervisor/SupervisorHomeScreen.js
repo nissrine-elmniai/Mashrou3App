@@ -1,12 +1,15 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, fonts } from "../../constants/rtl";
-import { EmptyState, QuickButton } from "../../components/ui";
+import { rtlText, rtlTextBold, fonts, row } from "../../constants/rtl";
+import { EmptyState, QuickButton, SectionCard } from "../../components/ui";
 import { MiniStat } from "./components/SupervisorWidgets";
 import BroadcastMessageModal from "./components/BroadcastMessageModal";
 import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import { formatRelativeTime } from "../../lib/messagesApi";
+import { useSupervisorActivity } from "./hooks/useSupervisorActivity";
 
 /**
  * Données séance/membres fournies par SupervisorDashboard (un seul fetch hook).
@@ -19,9 +22,17 @@ export default function SupervisorHomeScreen({
   isMarkingWindowOpen = false,
   showPresenceReminder = false,
   onChangeTab,
+  threads = [],
+  dataSource = "mock",
 }) {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [recentAlerts, setRecentAlerts] = useState([]);
+  const { activities } = useSupervisorActivity({
+    seanceId: activeGroup?.id || null,
+    members,
+    threads,
+    enabled: dataSource === "supabase",
+  });
 
   const loadRecentAlerts = useCallback(async () => {
     const res = await getVisibleAlerts();
@@ -105,18 +116,49 @@ export default function SupervisorHomeScreen({
         onPress={openBroadcast}
       />
 
-      <View style={styles.alertsCard}>
-        <Text style={styles.sessionTitle}>تنبيهات الإدارة</Text>
-        {recentAlerts.length === 0 ? (
-          <Text style={styles.sessionSchedule}>لا توجد تنبيهات بعد</Text>
-        ) : (
-          recentAlerts.map((alert) => (
-            <View key={alert.id} style={styles.alertRow}>
-              <Text style={styles.alertText}>{alert.message}</Text>
+      {recentAlerts.length > 0 ? (
+        <SectionCard title="الإشعارات" borderColor={colors.card}>
+          {recentAlerts.map((alert) => (
+            <View key={alert.id} style={styles.activityRow}>
+              <View style={styles.activityIconWrap}>
+                <Ionicons
+                  name="notifications-outline"
+                  size={16}
+                  color={colors.primary}
+                />
+              </View>
+              <Text style={styles.activityText} numberOfLines={2}>
+                {alert.message}
+              </Text>
+              <Text style={styles.activityWhen}>
+                {formatRelativeTime(alert.createdAt)}
+              </Text>
             </View>
-          ))
-        )}
-      </View>
+          ))}
+        </SectionCard>
+      ) : null}
+
+      {activities.length > 0 ? (
+        <SectionCard title="آخر النشاطات" borderColor={colors.card}>
+          {activities.map((activity) => (
+            <View key={activity.id} style={styles.activityRow}>
+              <View style={styles.activityIconWrap}>
+                <Ionicons
+                  name={activity.icon}
+                  size={16}
+                  color={colors.primary}
+                />
+              </View>
+              <Text style={styles.activityText} numberOfLines={2}>
+                {activity.title}
+              </Text>
+              <Text style={styles.activityWhen}>
+                {formatRelativeTime(activity.at)}
+              </Text>
+            </View>
+          ))}
+        </SectionCard>
+      ) : null}
 
       <BroadcastMessageModal
         visible={broadcastOpen}
@@ -154,29 +196,31 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   statsRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
-  alertsCard: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    marginBottom: 14,
+  activityRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
   },
-  alertsTitle: {
+  activityIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  activityText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 13,
     fontFamily: fonts.regular,
-    fontSize: 16,
-    color: colors.text,
     ...rtlText,
   },
-  alertRow: {
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: "#FFFAFA",
-    borderWidth: 1,
-    borderColor: "#FFF5F5",
-    borderRadius: 14,
-    overflow: "hidden",
+  activityWhen: {
+    color: colors.muted,
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    ...rtlText,
   },
-  alertText: { color: "#000", fontSize: 14, lineHeight: 22, ...rtlText },
 });

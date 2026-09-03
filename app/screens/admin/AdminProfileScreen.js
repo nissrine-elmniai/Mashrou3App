@@ -5,6 +5,7 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ArrowRight, LogOut, Mail, Shield, User, CheckCircle } from "lucide-react-native";
@@ -38,9 +39,18 @@ export default function AdminProfileScreen({ navigation }) {
       ? "نشط"
       : currentUser.accountStatus;
 
-  const handleLogout = async () => {
-    await logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+  const handleLogout = () => {
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
 
   const infoRows = [

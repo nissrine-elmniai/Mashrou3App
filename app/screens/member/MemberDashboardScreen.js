@@ -35,12 +35,17 @@ import {
   MemberBottomTabBar,
 } from "../../components/ui";
 import { ProgressRing } from "../../components/ProgressRing";
-import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import {
+  getVisibleAlerts,
+  getUnacknowledgedAlerts,
+  subscribeToNewAlerts,
+} from "../../lib/alertsApi";
 import {
   getMemberProfileFields,
   formatGenderLabel,
 } from "../../lib/membersApi";
-import { getMySeance, getMyInscriptionDate } from "../../lib/messagesApi";
+import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
+import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import SessionCard from "../../components/profile/SessionCard";
@@ -116,9 +121,15 @@ export default function MemberDashboardScreen({ navigation }) {
   } = useApp();
 
   const authId = currentUser?.authId || currentUser?.id || null;
+  const { threads } = useInboxThreads();
+  const messagesUnread = useMemo(
+    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
+    [threads]
+  );
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
+  const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const [progressEntries, setProgressEntries] = useState([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [selectedTimes, setSelectedTimes] = useState([]);
@@ -174,21 +185,25 @@ export default function MemberDashboardScreen({ navigation }) {
     }, [loadProgressEntries])
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      const res = await getVisibleAlerts();
-      if (!cancelled && res.ok) setAdminAlerts(res.alerts);
-    };
-    load();
-    const unsub = subscribeToNewAlerts(() => {
-      load();
-    });
-    return () => {
-      cancelled = true;
-      unsub();
-    };
+  const loadAlerts = useCallback(async () => {
+    const [visible, pending] = await Promise.all([
+      getVisibleAlerts(),
+      getUnacknowledgedAlerts(),
+    ]);
+    if (visible.ok) setAdminAlerts(visible.alerts.slice(0, 3));
+    if (pending.ok) setPendingAlertCount(pending.alerts.length);
   }, []);
+
+  useEffect(() => {
+    loadAlerts();
+    return subscribeToNewAlerts(() => loadAlerts());
+  }, [loadAlerts]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadAlerts();
+    }, [loadAlerts])
+  );
 
   const openRegular = seasons.filter(
     (s) => s.registrationOpen && s.type === SEASON_TYPES.REGULAR
@@ -535,8 +550,17 @@ export default function MemberDashboardScreen({ navigation }) {
     : "";
 
   const handleLogout = () => {
-    logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
 
   const handleRegister = (seasonId, times, resetFn) => {
@@ -612,9 +636,31 @@ export default function MemberDashboardScreen({ navigation }) {
             ) : tab === "registration" ? (
               <Ionicons name="clipboard-outline" size={22} color="white" />
             ) : null}
-            <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={20} color="white" />
-            </TouchableOpacity>
+            {tab === "home" || tab === "profile" ? (
+              <View style={styles.headerEnd}>
+                <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
+                  <Ionicons name="log-out-outline" size={22} color="white" />
+                </TouchableOpacity>
+                {tab === "home" ? (
+                  <TouchableOpacity
+                    style={styles.headerIconWrap}
+                    onPress={() => navigation.navigate("MemberAlerts")}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="تنبيهات الإدارة"
+                  >
+                    <Ionicons name="notifications-outline" size={22} color="white" />
+                    {pendingAlertCount > 0 ? (
+                      <View style={styles.headerBellBadge}>
+                        <Text style={styles.headerBellBadgeText}>
+                          {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         </LinearGradient>
       </View>
@@ -683,21 +729,16 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard
-              title="الإشعارات"
-              subtitle="تنبيهات الإدارة تظهر هنا مباشرة"
-            >
-              {adminAlerts.length === 0 ? (
-                <EmptyState text="لا توجد تنبيهات بعد" />
-              ) : (
-                adminAlerts.slice(0, 5).map((n) => (
+            {adminAlerts.length > 0 ? (
+              <SectionCard title="الإشعارات">
+                {adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
                     <Text style={styles.notifTitle}>تنبيه من الإدارة</Text>
                     <Text style={styles.notifBody}>{n.message}</Text>
                   </View>
-                ))
-              )}
-            </SectionCard>
+                ))}
+              </SectionCard>
+            ) : null}
 
             <SectionCard
               title="آخر النشاطات"
@@ -799,6 +840,13 @@ export default function MemberDashboardScreen({ navigation }) {
           activeOpacity={0.85}
         >
           <Ionicons name="chatbubble-ellipses" size={24} color="white" />
+          {messagesUnread > 0 ? (
+            <View style={styles.fabBadge}>
+              <Text style={styles.fabBadgeText}>
+                {formatUnreadBadge(messagesUnread)}
+              </Text>
+            </View>
+          ) : null}
         </TouchableOpacity>
       </View>
 
@@ -898,10 +946,34 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   headerBtn: {
-    marginStart: 10,
-    padding: 8,
-    borderRadius: radii.pill,
-    backgroundColor: "rgba(255,255,255,0.15)",
+    flexDirection: row,
+    alignItems: "center",
+    gap: 6,
+  },
+  headerEnd: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  headerIconWrap: { position: "relative", padding: 2 },
+  headerBellBadge: {
+    position: "absolute",
+    top: -4,
+    left: -6,
+    backgroundColor: colors.red,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  headerBellBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontFamily: fonts.bold,
   },
 
   scroll: {
@@ -1224,5 +1296,22 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
+  },
+  fabBadge: {
+    position: "absolute",
+    top: -2,
+    end: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: colors.gold,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fabBadgeText: {
+    color: colors.text,
+    fontSize: 10,
+    fontFamily: fonts.bold,
   },
 });

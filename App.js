@@ -256,6 +256,11 @@ function RootNavigator() {
           }
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="MemberAlerts"
+          component={SupervisorAlertsScreen}
+          options={{ headerShown: false }}
+        />
 
         <Stack.Screen
           name="SupervisorDashboard"
