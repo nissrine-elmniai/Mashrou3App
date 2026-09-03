@@ -83,6 +83,54 @@ export async function getMySeance() {
 }
 
 /**
+ * Date d'inscription du membre connecté (self-view).
+ * @param {string} [authId] UUID profiles.id — sinon session auth courante
+ * @returns {{ ok: boolean, dateInscription?: string|null, error?: string }}
+ */
+export async function getMyInscriptionDate(authId = null) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", dateInscription: null };
+  }
+  const membreId = authId || (await currentAuthId());
+  if (!membreId) {
+    return { ok: false, error: "يجب تسجيل الدخول", dateInscription: null };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select("date_inscription")
+        .eq("membre_id", membreId)
+        .eq("statut", "accepte")
+        .order("date_inscription", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تاريخ التسجيل"
+    );
+    if (error) {
+      return {
+        ok: false,
+        error: mapTableError(error, "inscriptions"),
+        dateInscription: null,
+      };
+    }
+    const raw = data?.date_inscription || null;
+    return {
+      ok: true,
+      dateInscription: raw ? String(raw).slice(0, 10) : null,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      dateInscription: null,
+    };
+  }
+}
+
+/**
  * Profil admin de référence (chat superviseur <-> admin). RLS :
  * profiles_select_superviseur_admin limite la lecture des profils admin
  * aux comptes superviseur.

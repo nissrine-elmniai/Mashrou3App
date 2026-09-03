@@ -399,7 +399,9 @@ function buildEditableProfilePayload(fields = {}) {
 /**
  * Met à jour les champs contact/inscription d'un membre (profiles uniquement).
  * Colonnes autorisées : phone, school, level, hifz_amount — jamais identité.
- * Sécurité serveur : policy profiles_update_superviseur (migration 0026).
+ * Sécurité serveur : profiles_update_own (auth.uid() = id) — le superviseur a
+ * perdu l'accès en écriture sur profiles (migration 0030), donc seul le membre
+ * lui-même peut appeler ceci sur sa propre ligne.
  */
 export async function updateMemberInfo(memberId, fields = {}) {
   if (!isSupabaseConfigured()) {
