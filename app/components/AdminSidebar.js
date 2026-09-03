@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ScrollView,
   Animated,
   Modal,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -25,6 +26,8 @@ import {
 } from "lucide-react-native";
 import { useApp } from "../context/AppContext";
 import { rtlText, row, isRTL } from "../constants/rtl";
+import { useInboxThreads } from "../hooks/useInboxThreads";
+import { formatUnreadBadge } from "../lib/messagesApi";
 
 const palette = {
   primary: "#2E7D32",
@@ -70,6 +73,7 @@ export function AdminSidebar({
   currentUser,
   onLogout,
   activeItem = "home",
+  unreadTotal = 0,
 }) {
   const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
@@ -192,6 +196,13 @@ export function AdminSidebar({
                   >
                     {item.label}
                   </Text>
+                  {item.id === "chat" && unreadTotal > 0 ? (
+                    <View style={sbStyles.unreadBadge}>
+                      <Text style={sbStyles.unreadBadgeText}>
+                        {formatUnreadBadge(unreadTotal)}
+                      </Text>
+                    </View>
+                  ) : null}
                 </TouchableOpacity>
               );
             })}
@@ -216,15 +227,31 @@ export function AdminSidebar({
 export function useAdminSidebar(navigation, activeItem = "home") {
   const [isOpen, setIsOpen] = useState(false);
   const { currentUser, logout } = useApp();
+  const { threads, loading: threadsLoading } = useInboxThreads();
+  const unreadTotal = useMemo(
+    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
+    [threads]
+  );
 
-  const handleLogout = async () => {
-    setIsOpen(false);
-    await logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+  const handleLogout = () => {
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          setIsOpen(false);
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
 
   return {
     openSidebar: () => setIsOpen(true),
+    threads,
+    threadsLoading,
     sidebar: (
       <AdminSidebar
         isOpen={isOpen}
@@ -233,6 +260,7 @@ export function useAdminSidebar(navigation, activeItem = "home") {
         currentUser={currentUser}
         onLogout={handleLogout}
         activeItem={activeItem}
+        unreadTotal={unreadTotal}
       />
     ),
   };
@@ -319,6 +347,21 @@ const sbStyles = StyleSheet.create({
   },
   menuItemTextActive: {
     color: palette.primary,
+  },
+  unreadBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: "#EAB308",
+    justifyContent: "center",
+    alignItems: "center",
+    marginStart: "auto",
+  },
+  unreadBadgeText: {
+    color: "#1F2937",
+    fontSize: 10,
+    fontWeight: "bold",
   },
   logoutWrap: {
     paddingHorizontal: 16,

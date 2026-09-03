@@ -7,7 +7,6 @@ import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { initials } from "./supervisorHelpers";
 import { mergeInboxRows, listAdminProfiles } from "../../lib/messagesApi";
-import { useInboxThreads } from "../../hooks/useInboxThreads";
 
 function adminDisplayName(admin) {
   const name = `${admin.first_name || ""} ${admin.last_name || ""}`.trim();
@@ -18,9 +17,8 @@ export default function SupervisorMessagesScreen({
   navigation,
   members = [],
   activeGroup = null,
+  threads = [],
 }) {
-  const { threads } = useInboxThreads();
-  const [seenAt, setSeenAt] = useState({});
   const [admins, setAdmins] = useState([]);
   const [search, setSearch] = useState("");
 
@@ -89,13 +87,13 @@ export default function SupervisorMessagesScreen({
   );
 
   const adminRows = useMemo(
-    () => mergeInboxRows(adminContacts, threads, seenAt, { appendUnknown: false }),
-    [adminContacts, threads, seenAt]
+    () => mergeInboxRows(adminContacts, threads, { appendUnknown: false }),
+    [adminContacts, threads]
   );
 
   const memberRows = useMemo(
-    () => mergeInboxRows(memberContacts, threads, seenAt, { appendUnknown: false }),
-    [memberContacts, threads, seenAt]
+    () => mergeInboxRows(memberContacts, threads, { appendUnknown: false }),
+    [memberContacts, threads]
   );
 
   const filteredMemberRows = useMemo(() => {
@@ -110,7 +108,6 @@ export default function SupervisorMessagesScreen({
   );
 
   const openThread = (row) => {
-    setSeenAt((prev) => ({ ...prev, [row.id]: Date.now() }));
     navigation.navigate("ChatConversation", {
       contactId: row.id,
       contactName: row.name,
@@ -157,7 +154,7 @@ export default function SupervisorMessagesScreen({
           avatarPrimary
           highlighted={!!row.unread}
           unread={row.unread}
-          hideBorder
+          unreadCount={row.unreadCount}
           onPress={() => openThread(row)}
         />
       ))}
@@ -185,6 +182,7 @@ export default function SupervisorMessagesScreen({
               avatarLetter={row.avatarLetter}
               highlighted={!!row.unread}
               unread={row.unread}
+              unreadCount={row.unreadCount}
               onPress={() => openThread(row)}
             />
           ))
@@ -196,7 +194,7 @@ export default function SupervisorMessagesScreen({
 
 const styles = StyleSheet.create({
   flexFill: { flex: 1 },
-  topBlock: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8 },
+  topBlock: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
   summaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -204,9 +202,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     backgroundColor: colors.primary,
     borderRadius: radii.lg,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 10,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 14,
   },
   summaryText: {
     fontSize: 16,
@@ -239,7 +237,7 @@ const styles = StyleSheet.create({
   },
   messagesDividerText: {
     color: colors.gold,
-    fontSize: 13,
+    fontSize: 14,
     fontFamily: fonts.bold,
     ...rtlText,
   },

@@ -22,7 +22,6 @@ export default function MemberChatInboxScreen({ navigation }) {
   const { threads, loading: threadsLoading } = useInboxThreads();
   const [supervisor, setSupervisor] = useState(null);
   const [seanceLoading, setSeanceLoading] = useState(true);
-  const [seenAt, setSeenAt] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -52,14 +51,13 @@ export default function MemberChatInboxScreen({ navigation }) {
   );
 
   const rows = useMemo(() => {
-    const merged = mergeInboxRows(contacts, threads, seenAt, {
+    const merged = mergeInboxRows(contacts, threads, {
       appendUnknown: false,
     });
     return merged.filter((r) => r.role !== "admin");
-  }, [contacts, threads, seenAt]);
+  }, [contacts, threads]);
 
   const openThread = (row) => {
-    setSeenAt((prev) => ({ ...prev, [row.id]: Date.now() }));
     navigation.navigate("ChatConversation", {
       contactId: row.id,
       contactName: row.name,
@@ -100,6 +98,7 @@ export default function MemberChatInboxScreen({ navigation }) {
               avatarPrimary={row.avatarPrimary}
               highlighted={row.highlighted}
               unread={row.unread}
+              unreadCount={row.unreadCount}
               onPress={() => openThread(row)}
             />
           ))}
