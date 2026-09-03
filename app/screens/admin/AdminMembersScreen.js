@@ -82,8 +82,9 @@ export default function AdminMembersScreen({ navigation }) {
         const entries = progressions
           .filter((e) => e.membre_id === p.id)
           .sort((a, b) => {
-            const d = (x) => `${x.date_saisie}T${x.date || ""}`;
-            return d(b) < d(a) ? -1 : 1;
+            const ta = new Date(a.date || 0).getTime();
+            const tb = new Date(b.date || 0).getTime();
+            return tb - ta;
           });
         const latest = entries[0];
         const pct = computeProgressMetrics(latest)?.globalPct ?? 0;

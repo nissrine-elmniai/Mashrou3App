@@ -250,6 +250,13 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="MemberProgress"
+          getComponent={() =>
+            require("./app/screens/member/MemberProgressScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="MemberChatInbox"
           getComponent={() =>
             require("./app/screens/member/MemberChatInboxScreen").default

@@ -27,14 +27,20 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
+import { useApp } from "../../context/AppContext";
 import {
-  getMemberProgressionSummary,
+  getMemberProgressEntries,
+  computeProgressMetrics,
+  computeProgressPace,
+  latestProgressionRow,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { getMemberProfileFields, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
-import { initials, deriveLevel, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
+import { initials, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
 import { groupMemberPresenceByMonth } from "./supervisorAttendanceHelpers";
+import ProgressCard from "../../components/profile/ProgressCard";
 
 const PRESENCE_LABELS = {
   present: "حاضر",
@@ -80,65 +86,6 @@ function PresenceMiniRow({ date, status }) {
       <Text style={styles.presenceMiniDate}>{date || "—"}</Text>
       <Text style={[styles.presenceMiniStatus, { color: statusColor }]}>{label}</Text>
     </View>
-  );
-}
-
-function formatTumunCourant(metrics) {
-  if (metrics?.tumunCourant == null) return "—";
-  return String(metrics.tumunCourant);
-}
-
-function ProgressSectionContent({ progressState, styles }) {
-  if (progressState.loading) {
-    return <ActivityIndicator color={colors.primary} style={styles.loader} />;
-  }
-  if (progressState.error) {
-    return <Text style={styles.errorText}>{progressState.error}</Text>;
-  }
-  if (!progressState.hasData) {
-    return <Text style={styles.emptyText}>لم يتم تسجيل أي تقدم بعد</Text>;
-  }
-
-  const metrics = progressState.metrics;
-  const globalPct = metrics?.globalPct ?? 0;
-
-  return (
-    <>
-      <ProfileRow
-        icon="analytics-outline"
-        label="النسبة الإجمالية"
-        value={`${globalPct}%`}
-      />
-      <ProfileRow icon="ribbon-outline" label="المستوى" value={deriveLevel(globalPct)} />
-      <ProfileRow
-        icon="book-outline"
-        label="الجزء الحالي"
-        value={String(metrics?.juzeCourant ?? "")}
-      />
-      <ProfileRow
-        icon="layers-outline"
-        label="الثمن الحالي"
-        value={formatTumunCourant(metrics)}
-      />
-      <ProfileRow
-        icon="checkmark-done-outline"
-        label="آخر حزب مكتمل"
-        value={String(metrics?.nbHizbCompletes ?? 0)}
-      />
-      {metrics?.dateSaisie ? (
-        <ProfileRow
-          icon="calendar-outline"
-          label="تاريخ آخر تحديث"
-          value={String(metrics.dateSaisie).slice(0, 10)}
-        />
-      ) : null}
-      {progressState.note ? (
-        <ProfileRow icon="document-text-outline" label="ملاحظة" value={progressState.note} />
-      ) : null}
-      {progressState.objectif ? (
-        <ProfileRow icon="flag-outline" label="هدف الموسم" value={progressState.objectif} />
-      ) : null}
-    </>
   );
 }
 
@@ -236,6 +183,7 @@ function PresenceSectionContent({ presenceState, styles }) {
 }
 
 export default function MemberProfileScreen({ navigation, route }) {
+  const { seasons } = useApp();
   const {
     memberId,
     seanceId,
@@ -355,7 +303,7 @@ export default function MemberProfileScreen({ navigation, route }) {
 
     (async () => {
       const [progRes, objRes, presRes] = await Promise.all([
-        getMemberProgressionSummary(memberId),
+        getMemberProgressEntries(memberId),
         saisonId
           ? getMemberSeasonObjectif(memberId, saisonId)
           : Promise.resolve({ ok: true, objectif: null }),
@@ -371,15 +319,26 @@ export default function MemberProfileScreen({ navigation, route }) {
           metrics: null,
           note: null,
           objectif: null,
+          seasonDeltaTumuns: null,
+          weekDeltaTumuns: null,
         });
       } else {
+        const entries = progRes.entries || [];
+        const latest = latestProgressionRow(entries);
+        const metrics = latest ? computeProgressMetrics(latest) : null;
+        const pace = computeProgressPace(
+          entries,
+          getActiveRegularSeason(seasons)?.id ?? null
+        );
         setProgressState({
           loading: false,
           error: null,
-          hasData: progRes.hasData,
-          metrics: progRes.metrics,
-          note: progRes.metrics?.notes || null,
+          hasData: !!metrics,
+          metrics,
+          note: metrics?.notes || null,
           objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
+          seasonDeltaTumuns: pace.seasonDeltaTumuns,
+          weekDeltaTumuns: pace.weekDeltaTumuns,
         });
       }
 
@@ -409,7 +368,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [memberId, seanceId, saisonId]);
+  }, [memberId, seanceId, saisonId, seasons]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -472,9 +431,8 @@ export default function MemberProfileScreen({ navigation, route }) {
           <ProfileRow icon="calendar-clear-outline" label="تاريخ التسجيل" value={registrationDateOnly} />
         </View>
 
-        <View style={[styles.card, shadows.card, styles.cardSpacing]}>
-          <Text style={styles.cardTitle}>التقدم</Text>
-          <ProgressSectionContent progressState={progressState} styles={styles} />
+        <View style={styles.cardSpacing}>
+          <ProgressCard progressState={progressState} />
         </View>
 
         <View style={[styles.card, shadows.card, styles.cardSpacing]}>

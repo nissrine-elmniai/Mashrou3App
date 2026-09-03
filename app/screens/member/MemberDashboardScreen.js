@@ -19,15 +19,17 @@ import { useApp } from "../../context/AppContext";
 import {
   getMyProgress,
   computeProgressMetrics,
+  computeProgressPace,
+  latestProgressionRow,
   getMemberSeasonObjectif,
-  getMemberProgressionSummary,
 } from "../../lib/progressApi";
 import {
   REGISTRATION_STATUS_LABELS,
   SEASON_TYPES,
 } from "../../constants/roles";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, row, arrowForward, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
 import {
   StatCard,
   SectionCard,
@@ -47,6 +49,7 @@ import {
 import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
+import { TOTAL_HIZB, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
@@ -65,7 +68,34 @@ function displayGenderFromUser(gender) {
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 const TOTAL_JUZ = 30;
-const TOTAL_HIZB = TOTAL_JUZ * 2;
+const QURAN_TUMUNS = TOTAL_HIZB * TUMUNS_PER_HIZB;
+const LRI = "\u2066";
+const PDI = "\u2069";
+
+/**
+ * Pourcentage d'anneau depuis tumunTotal (480). Une décimale ;
+ * 0 % et 100 % sans décimale. Isolat LTR pour le point et « % ».
+ */
+function formatRingPercent(tumunTotal) {
+  const raw = Math.min(
+    100,
+    Math.max(0, ((Number(tumunTotal) || 0) / QURAN_TUMUNS) * 100)
+  );
+  if (raw <= 0) {
+    return { progress: 0, label: `${LRI}0%${PDI}` };
+  }
+  if (raw >= 100) {
+    return { progress: 100, label: `${LRI}100%${PDI}` };
+  }
+  const one = Math.round(raw * 10) / 10;
+  if (one >= 100) {
+    return { progress: 100, label: `${LRI}100%${PDI}` };
+  }
+  if (one <= 0) {
+    return { progress: 0, label: `${LRI}0%${PDI}` };
+  }
+  return { progress: one, label: `${LRI}${one.toFixed(1)}%${PDI}` };
+}
 
 function parseGoalJuzCount(raw) {
   if (!raw) return null;
@@ -305,33 +335,19 @@ export default function MemberDashboardScreen({ navigation }) {
       registrationDate: inscRes.ok ? inscRes.dateInscription : null,
     });
 
-    const [progRes, objRes, presRes] = await Promise.all([
-      getMemberProgressionSummary(authId),
+    const [objRes, presRes] = await Promise.all([
       saisonId
         ? getMemberSeasonObjectif(authId, saisonId)
         : Promise.resolve({ ok: true, objectif: null }),
       getMemberPresenceSummary(authId, seanceId),
     ]);
 
-    if (!progRes.ok) {
-      setProgressState({
-        loading: false,
-        error: progRes.error,
-        hasData: false,
-        metrics: null,
-        note: null,
-        objectif: null,
-      });
-    } else {
-      setProgressState({
-        loading: false,
-        error: null,
-        hasData: progRes.hasData,
-        metrics: progRes.metrics,
-        note: progRes.metrics?.notes || null,
-        objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
-      });
-    }
+    setProgressState((s) => ({
+      ...s,
+      loading: false,
+      error: null,
+      objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
+    }));
 
     if (!presRes.ok) {
       setPresenceState({
@@ -399,50 +415,63 @@ export default function MemberDashboardScreen({ navigation }) {
   const myMemberPrograms = getMemberPrograms();
 
   const activePrograms = myMemberPrograms.length;
-  const totalAhzab = myMemberPrograms.reduce(
-    (sum, program) =>
-      sum + Math.round((program.nbHizb || 0) * (program.progression || 0) / 100),
-    0
-  );
 
   const memorizationMetrics = useMemo(() => {
-    if (!progressEntries.length) return null;
-    const sorted = [...progressEntries].sort((a, b) => {
-      const ta = parseActivityTimestamp(a.date_saisie || a.date || a.created_at);
-      const tb = parseActivityTimestamp(b.date_saisie || b.date || b.created_at);
-      return tb - ta;
-    });
-    return computeProgressMetrics(sorted[0]);
+    const latest = latestProgressionRow(progressEntries);
+    return latest ? computeProgressMetrics(latest) : null;
   }, [progressEntries]);
 
-  const homeProgress = useMemo(() => {
-    if (myMemberPrograms.length > 0) {
-      const completedHizb = myMemberPrograms.reduce(
-        (sum, program) =>
-          sum +
-          ((Number(program.nbHizb) || 0) * (Number(program.progression) || 0)) / 100,
-        0
-      );
-      return {
-        memorizationPct: Math.min(
-          100,
-          Math.round((completedHizb / TOTAL_HIZB) * 100)
-        ),
-        memorizedJuz: Math.min(TOTAL_JUZ, Math.round(completedHizb / 2)),
-      };
-    }
+  const totalAhzab = memorizationMetrics?.nbHizbCompletes ?? 0;
 
+  const progressPace = useMemo(
+    () =>
+      computeProgressPace(
+        progressEntries,
+        getActiveRegularSeason(seasons)?.id ?? null
+      ),
+    [progressEntries, seasons]
+  );
+
+  const profileProgressState = useMemo(
+    () => ({
+      loading:
+        !memorizationMetrics && (activitiesLoading || progressState.loading),
+      error: progressState.error,
+      hasData: !!memorizationMetrics,
+      metrics: memorizationMetrics,
+      note: memorizationMetrics?.notes || null,
+      objectif: progressState.objectif,
+      seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
+      weekDeltaTumuns: progressPace.weekDeltaTumuns,
+    }),
+    [
+      memorizationMetrics,
+      activitiesLoading,
+      progressState.loading,
+      progressState.error,
+      progressState.objectif,
+      progressPace,
+    ]
+  );
+
+  const homeProgress = useMemo(() => {
     if (memorizationMetrics) {
+      const ring = formatRingPercent(memorizationMetrics.tumunTotal);
       return {
-        memorizationPct: memorizationMetrics.globalPct ?? 0,
+        memorizationPct: ring.progress,
+        memorizationPctLabel: ring.label,
         memorizedJuz: memorizationMetrics.juzeCourant ?? 0,
       };
     }
+    const ring = formatRingPercent(0);
+    return {
+      memorizationPct: 0,
+      memorizationPctLabel: ring.label,
+      memorizedJuz: 0,
+    };
+  }, [memorizationMetrics]);
 
-    return { memorizationPct: 0, memorizedJuz: 0 };
-  }, [myMemberPrograms, memorizationMetrics]);
-
-  const { memorizationPct, memorizedJuz } = homeProgress;
+  const { memorizationPct, memorizationPctLabel, memorizedJuz } = homeProgress;
 
   const goalRaw =
     String(currentUser?.hifzAmount || "").trim() ||
@@ -478,13 +507,13 @@ export default function MemberDashboardScreen({ navigation }) {
       items.push({
         id: `progress-${entry.id || idx}`,
         at: parseActivityTimestamp(
-          entry.date_saisie || entry.date || entry.created_at
+          entry.date || entry.date_saisie || entry.created_at
         ),
         title: "تحديث التقدم",
         body,
         icon: "book-outline",
         color: colors.primary,
-        action: "program",
+        action: "progress",
       });
     });
 
@@ -577,6 +606,8 @@ export default function MemberDashboardScreen({ navigation }) {
     resetFn([]);
   };
 
+  const openProgression = () => navigation.navigate("MemberProgress");
+
   const openProgramme = (program) =>
     navigation.navigate("ProgrammeDetails", {
       programme: {
@@ -585,6 +616,7 @@ export default function MemberDashboardScreen({ navigation }) {
         nbHizb: program.nbHizb,
         duree: program.durationDays,
         progression: program.progression,
+        type: program.type,
         dateDebut: program.startDate,
         statut: program.progression >= 100 ? "terminé" : "en cours",
       },
@@ -593,6 +625,10 @@ export default function MemberDashboardScreen({ navigation }) {
   const openChat = () => navigation.navigate("MemberChatInbox");
 
   const handleActivityPress = (activity) => {
+    if (activity.action === "progress") {
+      openProgression();
+      return;
+    }
     if (activity.action === "program" && myMemberPrograms[0]) {
       openProgramme(myMemberPrograms[0]);
       return;
@@ -675,22 +711,28 @@ export default function MemberDashboardScreen({ navigation }) {
       >
         {tab === "home" && (
           <>
-            <View style={styles.heroCard}>
+            <TouchableOpacity
+              style={styles.heroCard}
+              onPress={openProgression}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="تسجيل موضعي في القرآن"
+            >
               <ProgressRing
                 progress={memorizationPct}
                 size={148}
                 stroke={12}
                 color={colors.primary}
               >
-                <View style={styles.ringInner}>
-                  <Text style={styles.ringPct}>{memorizationPct}%</Text>
+                <View style={styles.ringInner} pointerEvents="none">
+                  <Text style={styles.ringPct}>{memorizationPctLabel}</Text>
                   <Text style={styles.ringSubLabel}>نسبة الحفظ الكلية</Text>
                 </View>
               </ProgressRing>
               <Text style={styles.juzCount}>
                 {memorizedJuz} من {TOTAL_JUZ} جزء
               </Text>
-            </View>
+            </TouchableOpacity>
 
             <View style={styles.goalCard}>
               <View style={styles.goalHeader}>
@@ -702,12 +744,14 @@ export default function MemberDashboardScreen({ navigation }) {
                 />
                 <Text style={styles.goalTitle}>{goalLabel}</Text>
               </View>
-              <View style={styles.goalBarRow}>
-                <Text style={styles.goalBarPct}>{goalPct}%</Text>
-                <View style={styles.goalTrack}>
-                  <View style={[styles.goalFill, { width: `${goalPct}%` }]} />
+              {goalJuz ? (
+                <View style={styles.goalBarRow}>
+                  <Text style={styles.goalBarPct}>{goalPct}%</Text>
+                  <View style={styles.goalTrack}>
+                    <View style={[styles.goalFill, { width: `${goalPct}%` }]} />
+                  </View>
                 </View>
-              </View>
+              ) : null}
             </View>
 
             <StatCard
@@ -807,7 +851,10 @@ export default function MemberDashboardScreen({ navigation }) {
               registrationDate={sessionState.registrationDate}
             />
 
-            <ProgressCard progressState={progressState} />
+            <ProgressCard
+              progressState={profileProgressState}
+              onUpdate={openProgression}
+            />
 
             <AttendanceCard
               key={`${authId || ""}_${sessionState.seanceId || ""}`}
@@ -993,13 +1040,13 @@ const styles = StyleSheet.create({
   ringInner: {
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 8,
+    paddingHorizontal: radii.sm,
   },
   ringPct: {
-    fontSize: 28,
+    fontSize: radii.lg + radii.sm,
     fontFamily: fonts.bold,
     color: colors.primary,
-    ...rtlText,
+    ...rtlTextCenter,
   },
   ringSubLabel: {
     fontSize: 11,
