@@ -26,6 +26,27 @@ function logSupabaseError(context, error) {
   });
 }
 
+function isMissingColumnOrRelationship(error) {
+  const msg = error?.message || "";
+  const code = error?.code || "";
+  return (
+    code === "42703" ||
+    /column.*does not exist/i.test(msg) ||
+    /relationship|PGRST200|Could not find a relationship/i.test(msg)
+  );
+}
+
+function seasonStartFromRow(row) {
+  return row?.date_debut || row?.start_date || row?.saisons?.date_debut || row?.saisons?.start_date || null;
+}
+
+function withNormalizedSaison(seance, startDate) {
+  if (!seance) return seance;
+  const date_debut = startDate || seasonStartFromRow(seance);
+  if (!date_debut) return seance;
+  return { ...seance, saisons: { date_debut, start_date: date_debut } };
+}
+
 /** Traduit une erreur de table Supabase (table absente / RLS / doublon / autre). */
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
@@ -60,26 +81,47 @@ async function querySupervisorActiveSeances(supervisorAuthId, selectClause) {
   );
 }
 
-async function attachSaisonDatesToSeances(seances) {
-  const list = Array.isArray(seances) ? seances : seances ? [seances] : [];
-  const missing = list.filter((s) => s && !s.saisons?.date_debut && s.saison_id);
-  if (missing.length === 0) return list;
-
-  const saisonIds = [...new Set(missing.map((s) => s.saison_id).filter(Boolean))];
-  const saisonRes = await withTimeout(
-    supabase.from("saisons").select("id, date_debut").in("id", saisonIds),
+async function fetchSaisonStartDates(saisonIds) {
+  const first = await withTimeout(
+    supabase.from("saisons").select("id, start_date").in("id", saisonIds),
     SUPABASE_TIMEOUT_MS,
     "قراءة تواريخ المواسم"
   );
-  if (saisonRes.error || !saisonRes.data?.length) return list;
+  if (!first.error && first.data) {
+    return first.data;
+  }
 
+  if (isMissingColumnOrRelationship(first.error)) {
+    const fallback = await withTimeout(
+      supabase.from("saisons").select("id, date_debut").in("id", saisonIds),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تواريخ المواسم"
+    );
+    if (!fallback.error && fallback.data) {
+      return fallback.data;
+    }
+  }
+
+  return [];
+}
+
+async function attachSaisonDatesToSeances(seances) {
+  const list = Array.isArray(seances) ? seances : seances ? [seances] : [];
+  const missing = list.filter((s) => s && !seasonStartFromRow(s) && s.saison_id);
+  if (missing.length === 0) {
+    return list.map((s) => withNormalizedSaison(s));
+  }
+
+  const saisonIds = [...new Set(missing.map((s) => s.saison_id).filter(Boolean))];
+  const rows = await fetchSaisonStartDates(saisonIds);
   const dateById = Object.fromEntries(
-    saisonRes.data.map((row) => [row.id, row.date_debut])
+    (rows || []).map((row) => [row.id, seasonStartFromRow(row)]).filter(([, date]) => date)
   );
+
   return list.map((s) => {
-    if (!s?.saison_id || s.saisons?.date_debut) return s;
-    const date_debut = dateById[s.saison_id];
-    return date_debut ? { ...s, saisons: { date_debut } } : s;
+    if (!s) return s;
+    const date_debut = seasonStartFromRow(s) || dateById[s.saison_id];
+    return withNormalizedSaison(s, date_debut);
   });
 }
 
@@ -99,12 +141,12 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
   try {
     const withSaison = await querySupervisorActiveSeances(
       supervisorAuthId,
-      "*, saisons(date_debut)"
+      "*, saisons(start_date)"
     );
     let rows = withSaison.data || [];
     let error = withSaison.error;
 
-    if (error && /relationship|PGRST200|Could not find a relationship/i.test(error?.message || "")) {
+    if (error && isMissingColumnOrRelationship(error)) {
       const fallback = await querySupervisorActiveSeances(supervisorAuthId, "*");
       rows = fallback.data || [];
       error = fallback.error;
@@ -423,6 +465,68 @@ export async function updateMemberInfo(memberId, fields = {}) {
       ecole: pickProfileText(data?.school),
       niveau: pickProfileText(data?.level),
       quantiteHifz: pickProfileText(data?.hifz_amount),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Change la séance d'un membre inscrit (statut accepte).
+ * Le trigger sync_inscription_saison_id met à jour saison_id automatiquement.
+ */
+export async function updateMemberSeance({
+  memberId,
+  currentSeanceId = null,
+  newSeanceId,
+  saisonId = null,
+}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!memberId || !newSeanceId) {
+    return { ok: false, error: "معرّف العضو أو الحصة مفقود" };
+  }
+  if (currentSeanceId && currentSeanceId === newSeanceId) {
+    return { ok: true, unchanged: true };
+  }
+
+  try {
+    let query = supabase
+      .from("inscriptions")
+      .update({ seance_id: newSeanceId })
+      .eq("membre_id", memberId)
+      .eq("statut", "accepte");
+
+    if (currentSeanceId) {
+      query = query.eq("seance_id", currentSeanceId);
+    } else if (saisonId) {
+      query = query.eq("saison_id", saisonId);
+    }
+
+    const { data, error } = await withTimeout(
+      query.select("id, seance_id, saison_id").maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "تغيير حصة العضو"
+    );
+
+    if (error) {
+      logSupabaseError("updateMemberSeance", error);
+      return { ok: false, error: mapTableError(error, "inscriptions") };
+    }
+
+    if (!data?.id) {
+      return {
+        ok: false,
+        error: "لم يتم العثور على تسجيل مقبول لهذا العضو",
+      };
+    }
+
+    return {
+      ok: true,
+      inscription: data,
+      seanceId: data.seance_id,
+      saisonId: data.saison_id,
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

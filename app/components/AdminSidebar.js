@@ -9,6 +9,7 @@ import {
   Modal,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import {
   X,
   Home,
@@ -22,6 +23,7 @@ import {
   MessageSquare,
   Settings,
   LogOut,
+  BarChart3,
 } from "lucide-react-native";
 import { useApp } from "../context/AppContext";
 import { rtlText, row, isRTL } from "../constants/rtl";
@@ -45,6 +47,7 @@ const MENU_ITEMS = [
   { id: "registrations", label: "طلبات التسجيل", icon: FileText },
   { id: "sessions", label: "الحصص", icon: Calendar },
   { id: "tests", label: "الاختبارات", icon: ClipboardList },
+  { id: "stats", label: "الإحصائيات", icon: BarChart3 },
   { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "chat", label: "الدردشة", icon: MessageSquare },
   { id: "settings", label: "الإعدادات", icon: Settings },
@@ -58,6 +61,7 @@ const ROUTE_MAP = {
   registrations: "AdminRegistrations",
   sessions: "AdminSeasons",
   tests: "AdminTests",
+  stats: "AdminStats",
   notifications: "AdminNotifications",
   chat: "AdminChat",
   settings: "AdminSettings",
@@ -213,6 +217,31 @@ export function AdminSidebar({
   );
 }
 
+export function AdminChatFab({ navigation, hidden = false }) {
+  const insets = useSafeAreaInsets();
+  if (hidden) return null;
+
+  return (
+    <TouchableOpacity
+      style={[
+        fabStyles.fab,
+        { bottom: Math.max(insets.bottom, 16) + 16 },
+      ]}
+      onPress={() => navigation.navigate("AdminChat")}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="الدردشة"
+    >
+      <Ionicons
+        name="chatbubble-ellipses"
+        size={24}
+        color="#fff"
+        pointerEvents="none"
+      />
+    </TouchableOpacity>
+  );
+}
+
 export function useAdminSidebar(navigation, activeItem = "home") {
   const [isOpen, setIsOpen] = useState(false);
   const { currentUser, logout } = useApp();
@@ -226,17 +255,42 @@ export function useAdminSidebar(navigation, activeItem = "home") {
   return {
     openSidebar: () => setIsOpen(true),
     sidebar: (
-      <AdminSidebar
-        isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
-        navigation={navigation}
-        currentUser={currentUser}
-        onLogout={handleLogout}
-        activeItem={activeItem}
-      />
+      <>
+        <AdminChatFab
+          navigation={navigation}
+          hidden={activeItem === "chat"}
+        />
+        <AdminSidebar
+          isOpen={isOpen}
+          onClose={() => setIsOpen(false)}
+          navigation={navigation}
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          activeItem={activeItem}
+        />
+      </>
     ),
   };
 }
+
+const fabStyles = StyleSheet.create({
+  fab: {
+    position: "absolute",
+    end: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: palette.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    zIndex: 5,
+  },
+});
 
 const sbStyles = StyleSheet.create({
   modalContainer: {

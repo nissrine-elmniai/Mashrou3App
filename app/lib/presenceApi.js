@@ -832,3 +832,85 @@ export async function getPresenceReminderForOccurrence(seanceId, sessionDateIso)
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", nbRappels: 0 };
   }
 }
+
+/**
+ * (Admin) Totaux présence/absence d'une séance + résumé par date.
+ * @returns {{ ok, presentCount, absentCount, sessionCount, byDateRows, error? }}
+ */
+export async function getSeancePresenceOverview(seanceId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!seanceId) {
+    return { ok: false, error: "معرّف الحصة مفقود" };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("presences")
+        .select("date, statut, membre_id")
+        .eq("seance_id", seanceId),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة حضور الحصة"
+    );
+
+    if (error) {
+      if (
+        isTableMissingError(error) ||
+        /permission|row-level security|RLS|42501|violates row/i.test(error?.message || "")
+      ) {
+        return {
+          ok: true,
+          presentCount: 0,
+          absentCount: 0,
+          sessionCount: 0,
+          byDateRows: [],
+          degraded: true,
+        };
+      }
+      return { ok: false, error: mapTableError(error, "presences") };
+    }
+
+    let presentCount = 0;
+    let absentCount = 0;
+    const byDate = {};
+
+    for (const row of data || []) {
+      const status = normalizePresenceStatus(row);
+      if (status !== "present" && status !== "absent") continue;
+      const dateKey = extractPresenceDate(row);
+      if (!dateKey) continue;
+
+      if (!byDate[dateKey]) {
+        byDate[dateKey] = { presentCount: 0, absentCount: 0 };
+      }
+      if (status === "present") {
+        presentCount += 1;
+        byDate[dateKey].presentCount += 1;
+      } else {
+        absentCount += 1;
+        byDate[dateKey].absentCount += 1;
+      }
+    }
+
+    const byDateRows = Object.entries(byDate)
+      .map(([sessionDate, stats]) => ({
+        sessionDate,
+        presentCount: stats.presentCount,
+        absentCount: stats.absentCount,
+        markedTotal: stats.presentCount + stats.absentCount,
+      }))
+      .sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
+
+    return {
+      ok: true,
+      presentCount,
+      absentCount,
+      sessionCount: byDateRows.length,
+      byDateRows,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}

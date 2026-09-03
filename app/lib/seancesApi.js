@@ -213,7 +213,7 @@ export async function findActiveSeanceByName(nom, saisonId = null) {
 
 /**
  * (Admin) Création d'une séance.
- * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId? }
+ * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId?, genre?, dateDebut?, dateFin? }
  * @returns { ok, seance? }
  */
 export async function createSeance({
@@ -224,6 +224,8 @@ export async function createSeance({
   heureFin = null,
   superviseurId = null,
   genre = null,
+  dateDebut = null,
+  dateFin = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -249,6 +251,18 @@ export async function createSeance({
     return { ok: false, error: "اختر جنس الحصة (ذكر أو أنثى)" };
   }
 
+  const start = normalizePgDate(dateDebut);
+  const end = normalizePgDate(dateFin);
+  if (!start) {
+    return { ok: false, error: "أدخل تاريخ بداية الحصة" };
+  }
+  if (!end) {
+    return { ok: false, error: "أدخل تاريخ نهاية الحصة" };
+  }
+  if (end < start) {
+    return { ok: false, error: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية" };
+  }
+
   const row = {
     nom: cleanNom,
     saison_id: saisonId || null,
@@ -257,6 +271,8 @@ export async function createSeance({
     heure_fin: heureFin ? normalizePgTime(heureFin) : null,
     superviseur_id: superviseurId || null,
     genre,
+    date_debut: start,
+    date_fin: end,
     statut: "active",
   };
 
@@ -273,6 +289,18 @@ export async function createSeance({
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+/** Normalise une date (YYYY-MM-DD ou YYYY/MM/DD) pour Postgres date. */
+function normalizePgDate(value) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim().replace(/\//g, "-");
+  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!match) return null;
+  const y = match[1];
+  const m = String(match[2]).padStart(2, "0");
+  const d = String(match[3]).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function normalizeTimeValue(value) {
@@ -335,6 +363,33 @@ export async function updateSeance({ seanceId, patch }) {
   if (clean.heure_fin !== undefined && clean.heure_fin !== null && clean.heure_fin !== "") {
     const normalized = normalizePgTime(clean.heure_fin);
     clean.heure_fin = normalized;
+  }
+  if (clean.date_debut !== undefined) {
+    if (clean.date_debut === null || clean.date_debut === "") {
+      return { ok: false, error: "أدخل تاريخ بداية الحصة" };
+    }
+    const normalized = normalizePgDate(clean.date_debut);
+    if (!normalized) {
+      return { ok: false, error: "تاريخ البداية غير صالح" };
+    }
+    clean.date_debut = normalized;
+  }
+  if (clean.date_fin !== undefined) {
+    if (clean.date_fin === null || clean.date_fin === "") {
+      return { ok: false, error: "أدخل تاريخ نهاية الحصة" };
+    }
+    const normalized = normalizePgDate(clean.date_fin);
+    if (!normalized) {
+      return { ok: false, error: "تاريخ النهاية غير صالح" };
+    }
+    clean.date_fin = normalized;
+  }
+  if (
+    clean.date_debut &&
+    clean.date_fin &&
+    clean.date_fin < clean.date_debut
+  ) {
+    return { ok: false, error: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية" };
   }
 
   try {
@@ -539,7 +594,7 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
       supabase
         .from("inscriptions")
         .select(
-          "id, membre_id, seance_id, saison_id, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id)"
+          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin)"
         )
         .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,
