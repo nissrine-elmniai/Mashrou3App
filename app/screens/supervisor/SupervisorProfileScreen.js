@@ -10,7 +10,7 @@ import {
   Alert,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
@@ -22,8 +22,9 @@ import {
   unregisterPushNotifications,
 } from "../../lib/pushNotifications";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, row as rtlRow, fonts, arrowBack } from "../../constants/rtl";
+import { rtlText, rtlTextBold, row as rtlRow, fonts, arrowBack, arrowForward } from "../../constants/rtl";
 import { initials } from "./supervisorHelpers";
+import ChangePasswordModal from "../../components/ChangePasswordModal";
 
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -68,12 +69,14 @@ function SectionCard({ title, subtitle, children }) {
 /** Profil superviseur — champs affichés : identité + users + profiles (dates). */
 export default function SupervisorProfileScreen({ navigation }) {
   const { currentUser, supabaseSession } = useApp();
+  const insets = useSafeAreaInsets();
   const [profileRow, setProfileRow] = useState(null);
   const [usersRow, setUsersRow] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [togglingNotifications, setTogglingNotifications] = useState(false);
+  const [passwordModal, setPasswordModal] = useState(false);
 
   const authId = currentUser?.authId || supabaseSession?.user?.id || null;
 
@@ -230,7 +233,29 @@ export default function SupervisorProfileScreen({ navigation }) {
             )}
           </View>
         </SectionCard>
+        <SectionCard title="الحساب" subtitle="تأمين الدخول إلى التطبيق">
+          <TouchableOpacity
+            style={styles.passwordRow}
+            onPress={() => setPasswordModal(true)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.rowIcon}>
+              <Ionicons name="lock-closed-outline" size={18} color={colors.primary} />
+            </View>
+            <View style={styles.rowTextWrap}>
+              <Text style={styles.rowValue}>تغيير كلمة المرور</Text>
+              <Text style={styles.rowLabel}>تعيين كلمة مرور جديدة</Text>
+            </View>
+            <Ionicons name={arrowForward} size={18} color={colors.muted} />
+          </TouchableOpacity>
+        </SectionCard>
       </ScrollView>
+
+      <ChangePasswordModal
+        visible={passwordModal}
+        onClose={() => setPasswordModal(false)}
+        bottomInset={Math.max(insets.bottom, 16)}
+      />
     </SafeAreaView>
   );
 }
@@ -328,5 +353,12 @@ const styles = StyleSheet.create({
     fontFamily: fonts.semiBold,
     color: colors.text,
     ...rtlText,
+  },
+  passwordRow: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    marginTop: 4,
   },
 });

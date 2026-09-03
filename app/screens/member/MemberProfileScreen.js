@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -78,8 +79,17 @@ export default function MemberProfileScreen({ navigation }) {
   });
 
   const handleLogout = () => {
-    logout();
-    navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "خروج",
+        style: "destructive",
+        onPress: async () => {
+          await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
+        },
+      },
+    ]);
   };
 
   const loadProfileData = useCallback(async () => {

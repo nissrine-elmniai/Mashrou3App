@@ -17,6 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts, textAlignStart } from "../../../constants/rtl";
 import { sendBroadcastToMembers } from "../../../lib/messagesApi";
+import { formatMemberCount } from "../supervisorHelpers";
 
 /**
  * Modal de diffusion : un message identique envoyé en N conversations 1-à-1.
@@ -75,14 +76,14 @@ export default function BroadcastMessageModal({
     if (res.failedCount > 0) {
       Alert.alert(
         "إرسال جزئي",
-        `تم الإرسال إلى ${res.sentCount} من ${res.total} أعضاء`
+        `تم الإرسال إلى ${formatMemberCount(res.sentCount)} من ${formatMemberCount(res.total)}`
       );
       setText("");
       onClose();
       return;
     }
 
-    Alert.alert("تم الإرسال", `تم الإرسال إلى ${res.sentCount} عضو بنجاح`);
+    Alert.alert("تم الإرسال", `تم الإرسال إلى ${formatMemberCount(res.sentCount)} بنجاح`);
     setText("");
     onClose();
   };
@@ -95,7 +96,7 @@ export default function BroadcastMessageModal({
     }
     Alert.alert(
       "تأكيد الإرسال",
-      `سيتم إرسال هذه الرسالة إلى ${count} عضو. هل تريد المتابعة؟`,
+      `سيتم إرسال هذه الرسالة إلى ${formatMemberCount(count)}. هل تريد المتابعة؟`,
       [
         { text: "إلغاء", style: "cancel" },
         { text: "إرسال", onPress: runSend },
@@ -136,7 +137,7 @@ export default function BroadcastMessageModal({
             </View>
 
             <Text style={styles.recipientHint}>
-              سيتم الإرسال إلى {count} عضو
+              سيتم الإرسال إلى {formatMemberCount(count)}
             </Text>
 
             <TextInput
