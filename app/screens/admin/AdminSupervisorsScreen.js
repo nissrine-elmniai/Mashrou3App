@@ -68,7 +68,7 @@ function supervisorSessionLabel(supervisor, seances, invitations) {
 }
 
 export default function AdminSupervisorsScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "supervisors");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "supervisors");
   const { currentUser, stats, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
   const insets = useSafeAreaInsets();
@@ -597,6 +597,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

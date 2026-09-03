@@ -29,7 +29,7 @@ const palette = {
 };
 
 export default function AdminNewSeasonScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "newSeason");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "newSeason");
   const { startNewSeason, currentUser, stats } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -170,6 +170,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

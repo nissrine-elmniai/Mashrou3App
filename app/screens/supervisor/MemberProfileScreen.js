@@ -21,8 +21,10 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Modal,
+  Pressable,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
@@ -39,6 +41,17 @@ import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { getMemberProfileFields, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
 import { initials, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
+import {
+  getMemberProfileFields,
+  removeMemberFromSeance,
+  updateMemberSeance,
+  formatGenderLabel,
+} from "../../lib/membersApi";
+import {
+  getAllSeances,
+  formatSeanceScheduleLabel,
+} from "../../lib/seancesApi";
+import { initials, deriveLevel, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
 import { groupMemberPresenceByMonth } from "./supervisorAttendanceHelpers";
 import ProgressCard from "../../components/profile/ProgressCard";
 
@@ -184,10 +197,11 @@ function PresenceSectionContent({ presenceState, styles }) {
 
 export default function MemberProfileScreen({ navigation, route }) {
   const { seasons } = useApp();
+  const insets = useSafeAreaInsets();
   const {
     memberId,
-    seanceId,
-    saisonId,
+    seanceId: initialSeanceId,
+    saisonId: initialSaisonId,
     firstName,
     lastName,
     email,
@@ -196,13 +210,24 @@ export default function MemberProfileScreen({ navigation, route }) {
     level,
     hifzAmount,
     gender,
-    groupName,
-    groupSchedule,
+    groupName: initialGroupName,
+    groupSchedule: initialGroupSchedule,
     registrationDate,
+    canEditSeance = false,
+    adminTheme = false,
   } = route.params || {};
 
   const fullName = `${firstName || ""} ${lastName || ""}`.trim() || "عضو";
   const registrationDateOnly = registrationDate ? String(registrationDate).slice(0, 10) : null;
+
+  const [seanceId, setSeanceId] = useState(initialSeanceId || null);
+  const [saisonId, setSaisonId] = useState(initialSaisonId || null);
+  const [groupName, setGroupName] = useState(initialGroupName || null);
+  const [groupSchedule, setGroupSchedule] = useState(initialGroupSchedule || null);
+  const [seanceModalVisible, setSeanceModalVisible] = useState(false);
+  const [availableSeances, setAvailableSeances] = useState([]);
+  const [loadingSeances, setLoadingSeances] = useState(false);
+  const [savingSeance, setSavingSeance] = useState(false);
 
   const [progressState, setProgressState] = useState({
     loading: !!memberId,
@@ -229,6 +254,54 @@ export default function MemberProfileScreen({ navigation, route }) {
     gender: formatGenderLabel(gender) || null,
   });
   const [removingFromSeance, setRemovingFromSeance] = useState(false);
+
+  const openSeancePicker = async () => {
+    if (!canEditSeance || savingSeance) return;
+    setSeanceModalVisible(true);
+    setLoadingSeances(true);
+    const res = await getAllSeances({ saisonId: saisonId || null });
+    setLoadingSeances(false);
+    if (!res.ok) {
+      Alert.alert("تنبيه", res.error || "تعذر تحميل الحصص");
+      return;
+    }
+    const memberGenre = contactFields.gender;
+    const active = (res.seances || []).filter((s) => s.statut === "active");
+    const filtered =
+      memberGenre && (memberGenre === "ذكر" || memberGenre === "أنثى")
+        ? active.filter((s) => !s.genre || s.genre === memberGenre)
+        : active;
+    setAvailableSeances(filtered);
+  };
+
+  const applySeanceChange = async (nextSeance) => {
+    if (!nextSeance?.id || !memberId || savingSeance) return;
+    if (nextSeance.id === seanceId) {
+      setSeanceModalVisible(false);
+      return;
+    }
+
+    setSavingSeance(true);
+    const res = await updateMemberSeance({
+      memberId,
+      currentSeanceId: seanceId,
+      newSeanceId: nextSeance.id,
+      saisonId,
+    });
+    setSavingSeance(false);
+
+    if (!res.ok) {
+      Alert.alert("تنبيه", res.error || "تعذر تغيير الحصة");
+      return;
+    }
+
+    setSeanceId(nextSeance.id);
+    setSaisonId(res.saisonId || nextSeance.saison_id || saisonId);
+    setGroupName(nextSeance.nom || null);
+    setGroupSchedule(formatSeanceScheduleLabel(nextSeance) || null);
+    setSeanceModalVisible(false);
+    Alert.alert("تم", `تم نقل العضو إلى حصة «${nextSeance.nom}»`);
+  };
 
   const confirmRemoveFromSeance = () => {
     if (!memberId || !seanceId || removingFromSeance) return;
@@ -370,18 +443,29 @@ export default function MemberProfileScreen({ navigation, route }) {
     };
   }, [memberId, seanceId, saisonId, seasons]);
 
+  const headerIconColor = adminTheme ? "#333333" : "white";
+  const trashColor = adminTheme ? "#D32F2F" : "white";
+
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
+    <SafeAreaView
+      style={[styles.container, adminTheme && styles.containerAdmin]}
+      edges={["top", "bottom"]}
+    >
+      <StatusBar style={adminTheme ? "dark" : "light"} />
+      <View style={[styles.header, adminTheme && styles.headerAdmin]}>
         <TouchableOpacity
           style={styles.backBtn}
           onPress={() => navigation.goBack()}
           activeOpacity={0.7}
         >
-          <Ionicons name={arrowBack} size={22} color="white" />
+          <Ionicons name={arrowBack} size={22} color={headerIconColor} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>الملف الشخصي</Text>
+        <Text
+          style={[styles.headerTitle, adminTheme && styles.headerTitleAdmin]}
+          numberOfLines={1}
+        >
+          {fullName}
+        </Text>
         {seanceId ? (
           <TouchableOpacity
             style={styles.headerRemoveBtn}
@@ -391,9 +475,9 @@ export default function MemberProfileScreen({ navigation, route }) {
             accessibilityLabel="إزالة من الحصة"
           >
             {removingFromSeance ? (
-              <ActivityIndicator color="white" size="small" />
+              <ActivityIndicator color={trashColor} size="small" />
             ) : (
-              <Ionicons name="trash-outline" size={22} color="white" />
+              <Ionicons name="trash-outline" size={22} color={trashColor} />
             )}
           </TouchableOpacity>
         ) : (
@@ -408,7 +492,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           <Text style={styles.name}>{fullName}</Text>
         </View>
 
-        <View style={[styles.card, shadows.card]}>
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card]}>
           <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
           <ProfileRow
             icon="male-female-outline"
@@ -425,17 +509,35 @@ export default function MemberProfileScreen({ navigation, route }) {
           <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
         </View>
 
-        <View style={[styles.card, shadows.card, styles.cardSpacing]}>
-          <ProfileRow icon="people-outline" label="الحصة" value={groupName} />
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
+          <View style={styles.seanceHeader}>
+            <Text style={styles.cardTitleInline}>الحصة</Text>
+            {canEditSeance ? (
+              <TouchableOpacity
+                style={styles.editSeanceBtn}
+                onPress={openSeancePicker}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="تعديل الحصة"
+              >
+                <Ionicons name="create-outline" size={16} color={colors.primary} />
+                <Text style={styles.editSeanceBtnText}>تعديل</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <ProfileRow icon="people-outline" label="الحصة" value={groupName || "—"} />
           <ProfileRow icon="time-outline" label="التوقيت" value={groupSchedule} />
           <ProfileRow icon="calendar-clear-outline" label="تاريخ التسجيل" value={registrationDateOnly} />
         </View>
 
         <View style={styles.cardSpacing}>
           <ProgressCard progressState={progressState} />
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
+          <Text style={styles.cardTitle}>التقدم</Text>
+          <ProgressSectionContent progressState={progressState} styles={styles} />
         </View>
 
-        <View style={[styles.card, shadows.card, styles.cardSpacing]}>
+        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
           <Text style={styles.cardTitle}>
             {!presenceState.loading &&
             presenceState.rate != null &&
@@ -450,12 +552,103 @@ export default function MemberProfileScreen({ navigation, route }) {
           />
         </View>
       </ScrollView>
+
+      <Modal
+        visible={seanceModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => !savingSeance && setSeanceModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => !savingSeance && setSeanceModalVisible(false)}
+          />
+          <View
+            style={[
+              styles.modalCard,
+              { paddingBottom: Math.max(insets.bottom, 16) + 12 },
+            ]}
+          >
+            <Text style={styles.modalTitle}>اختيار حصة جديدة</Text>
+            <Text style={styles.modalHint}>
+              اختر الحصة التي تريد نقل العضو إليها
+            </Text>
+            {loadingSeances ? (
+              <ActivityIndicator color={colors.primary} style={styles.loader} />
+            ) : availableSeances.length === 0 ? (
+              <Text style={styles.emptyText}>لا توجد حصص نشطة متاحة</Text>
+            ) : (
+              <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
+                {availableSeances.map((s) => {
+                  const active = s.id === seanceId;
+                  const schedule = formatSeanceScheduleLabel(s);
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.seanceOption, active && styles.seanceOptionActive]}
+                      onPress={() => applySeanceChange(s)}
+                      disabled={savingSeance}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.seanceOptionTextWrap}>
+                        <Text
+                          style={[
+                            styles.seanceOptionTitle,
+                            active && styles.seanceOptionTitleActive,
+                          ]}
+                        >
+                          {s.nom}
+                        </Text>
+                        {schedule ? (
+                          <Text
+                            style={[
+                              styles.seanceOptionSub,
+                              active && styles.seanceOptionSubActive,
+                            ]}
+                          >
+                            {schedule}
+                          </Text>
+                        ) : null}
+                      </View>
+                      {active ? (
+                        <Ionicons name="checkmark-circle" size={22} color="#fff" />
+                      ) : (
+                        <Ionicons
+                          name="ellipse-outline"
+                          size={22}
+                          color={colors.border}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+            {savingSeance ? (
+              <View style={styles.modalSaving}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={styles.modalSavingText}>جاري النقل…</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setSeanceModalVisible(false)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.modalCloseBtnText}>إلغاء</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  containerAdmin: { backgroundColor: "#F5F5F5" },
   content: { padding: 16, paddingBottom: 32 },
 
   header: {
@@ -466,13 +659,22 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     backgroundColor: colors.primary,
   },
+  headerAdmin: {
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0E0E0",
+  },
   backBtn: { padding: 2 },
   headerTitle: {
     flex: 1,
     color: "white",
-    fontSize: 18,
+    fontSize: 16,
     fontFamily: fonts.bold,
     ...rtlTextBold,
+  },
+  headerTitleAdmin: {
+    color: "#333333",
+    fontSize: 16,
   },
   headerRemoveBtn: {
     padding: 4,
@@ -502,6 +704,14 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: 16,
   },
+  cardAdmin: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E0E0E0",
+    shadowOpacity: 0,
+    elevation: 0,
+  },
   cardSpacing: { marginTop: 14 },
   cardTitle: {
     fontFamily: fonts.bold,
@@ -509,6 +719,119 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: 8,
     ...rtlTextBold,
+  },
+  cardTitleInline: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: colors.text,
+    ...rtlTextBold,
+  },
+  seanceHeader: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  editSeanceBtn: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primarySoft,
+  },
+  editSeanceBtnText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    padding: 20,
+    maxHeight: "75%",
+  },
+  modalTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 17,
+    color: colors.text,
+    marginBottom: 4,
+    ...rtlTextBold,
+  },
+  modalHint: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 14,
+    ...rtlText,
+  },
+  modalList: {
+    maxHeight: 360,
+  },
+  seanceOption: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 8,
+    backgroundColor: colors.bg,
+  },
+  seanceOptionActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  seanceOptionTextWrap: { flex: 1 },
+  seanceOptionTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 15,
+    color: colors.text,
+    ...rtlText,
+  },
+  seanceOptionTitleActive: { color: "#fff" },
+  seanceOptionSub: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+    ...rtlText,
+  },
+  seanceOptionSubActive: { color: "rgba(255,255,255,0.85)" },
+  modalSaving: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+  },
+  modalSavingText: {
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  modalCloseBtn: {
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: radii.md,
+    backgroundColor: colors.card,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: "center",
+  },
+  modalCloseBtnText: {
+    color: colors.text,
+    fontFamily: fonts.semiBold,
+    fontSize: 16,
+    ...rtlText,
   },
   monthNavBar: {
     flexDirection: "row",

@@ -871,9 +871,11 @@ export default function MemberDashboardScreen({ navigation }) {
                 size={16}
                 color={colors.muted}
               />
-              <Text style={styles.changePasswordLinkText}>
-                تغيير كلمة المرور
-              </Text>
+              <View>
+                <Text style={styles.changePasswordLinkText}>
+                  تغيير كلمة المرور
+                </Text>
+              </View>
             </TouchableOpacity>
           </View>
         )}
@@ -1315,16 +1317,19 @@ const styles = StyleSheet.create({
   changePasswordLink: {
     flexDirection: row,
     alignItems: "center",
-    justifyContent: "center",
+    alignSelf: "center",
     gap: 6,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     marginTop: 4,
   },
   changePasswordLinkText: {
     color: colors.muted,
     fontSize: 13,
     fontFamily: fonts.regular,
-    ...rtlText,
+    writingDirection: "rtl",
+    textAlign: "center",
+    flexShrink: 0,
   },
 
   bottomWrap: {},

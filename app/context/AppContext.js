@@ -48,6 +48,7 @@ import {
   syncSeasonsWithSupabase,
   upsertSaison,
 } from "../lib/saisonsApi";
+import { snapshotSeasonsBeforeClose } from "../lib/seasonStatsApi";
 import { getActiveRegularSeason } from "../lib/seasonScope";
 
 /** ISO YYYY-MM-DD pour colonnes Postgres `date`. Accepte aussi YYYY/MM/DD (placeholders admin). Pas de parse JJ/MM/AAAA. */
@@ -693,6 +694,7 @@ export function AppProvider({ children }) {
       return [...closed, season];
     });
 
+    await snapshotSeasonsBeforeClose(previousRegularIds).catch(() => {});
     await archiveSeancesForSaisonIds(previousRegularIds).catch(() => {});
     await closeRegularSaisons(previousRegularIds).catch(() => {});
     await upsertSaison(season).catch(() => {});

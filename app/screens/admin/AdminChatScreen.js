@@ -21,7 +21,7 @@ import { initials } from "../supervisor/supervisorHelpers";
 
 export default function AdminChatScreen({ navigation }) {
   const { currentUser, stats } = useApp();
-  const { openSidebar, sidebar, threads, threadsLoading } = useAdminSidebar(
+  const { openSidebar, sidebar, messagesFab, threads, threadsLoading } = useAdminSidebar(
     navigation,
     "chat"
   );
@@ -136,6 +136,7 @@ export default function AdminChatScreen({ navigation }) {
           ))}
         </ScrollView>
       )}
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );

@@ -17,6 +17,7 @@ import { rtlText, row } from "../../constants/rtl";
 import {
   getMemberProfiles,
   getAllAcceptedInscriptions,
+  formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
 import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
 import {
@@ -42,7 +43,7 @@ function levelColor(level) {
 }
 
 export default function AdminMembersScreen({ navigation }) {
-  const { openSidebar, sidebar } = useAdminSidebar(navigation, "members");
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "members");
   const { stats, currentUser, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
 
@@ -90,17 +91,44 @@ export default function AdminMembersScreen({ navigation }) {
         const pct = computeProgressMetrics(latest)?.globalPct ?? 0;
         const level = deriveLevel(pct);
         const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+        const seance = inscription?.seance || null;
         return {
           id: p.id,
           name,
           firstName: p.first_name || "",
+          lastName: p.last_name || "",
+          email: p.email || "",
           level,
           pct,
-          session: inscription?.seance?.nom || "بدون حصة",
+          session: seance?.nom || "بدون حصة",
+          seanceId: inscription?.seance_id || seance?.id || null,
+          saisonId:
+            inscription?.saison_id ||
+            seance?.saison_id ||
+            activeSeason?.id ||
+            null,
+          groupSchedule: formatSeanceScheduleLabel(seance),
+          registrationDate: inscription?.date_inscription || null,
           active: !!inscription,
         };
       });
-  }, [profiles, inscriptions, progressions]);
+  }, [profiles, inscriptions, progressions, activeSeason?.id]);
+
+  const openMemberProfile = (member) => {
+    navigation.navigate("MemberProfile", {
+      memberId: member.id,
+      seanceId: member.seanceId,
+      saisonId: member.saisonId,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      email: member.email,
+      groupName: member.session !== "بدون حصة" ? member.session : null,
+      groupSchedule: member.groupSchedule || null,
+      registrationDate: member.registrationDate,
+      canEditSeance: true,
+      adminTheme: true,
+    });
+  };
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -193,19 +221,30 @@ export default function AdminMembersScreen({ navigation }) {
           </Text>
         ) : (
           members.map((member) => (
-            <MemberCard key={member.id} member={member} />
+            <MemberCard
+              key={member.id}
+              member={member}
+              onPress={() => openMemberProfile(member)}
+            />
           ))
         )}
       </ScrollView>
+      {messagesFab}
       {sidebar}
     </SafeAreaView>
   );
 }
 
-function MemberCard({ member }) {
+function MemberCard({ member, onPress }) {
   const color = levelColor(member.level);
   return (
-    <View style={styles.card}>
+    <TouchableOpacity
+      style={styles.card}
+      onPress={onPress}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={`ملف ${member.name || "العضو"}`}
+    >
       <View style={styles.cardTop}>
         <View style={styles.cardAvatar}>
           <Text style={styles.cardAvatarText}>
@@ -254,7 +293,7 @@ function MemberCard({ member }) {
         </View>
         <Text style={styles.progressPct}>{member.pct}%</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 

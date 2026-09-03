@@ -158,6 +158,13 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="AdminSeanceDetail"
+          getComponent={() =>
+            require("./app/screens/admin/AdminSeanceDetailScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="AdminSummerSchool"
           getComponent={() =>
             require("./app/screens/admin/AdminSummerSchoolScreen").default

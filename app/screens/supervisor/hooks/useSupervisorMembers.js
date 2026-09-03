@@ -36,7 +36,8 @@ function buildGroupFromSeance(seance, seanceMembers = []) {
     id: seance.id,
     name: seance.nom,
     seasonId: seance.saison_id,
-    saisonDateDebut: seance.saisons?.start_date || null,
+    saisonDateDebut:
+      seance.saisons?.date_debut || seance.saisons?.start_date || null,
     createdAt: seance.created_at || null,
     supervisorId: seance.superviseur_id,
     memberIds: seanceMembers.map((m) => m.userId),
