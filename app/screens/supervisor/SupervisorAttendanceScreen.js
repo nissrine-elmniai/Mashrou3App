@@ -96,6 +96,16 @@ export default function SupervisorAttendanceScreen({
       return;
     }
 
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(activeGroup.saisonDateDebut).trim())) {
+      setHistoryState({
+        loading: false,
+        rows: [],
+        error: "تاريخ بداية الموسم غير صالح — تعذر عرض سجل الحضور",
+      });
+      setMarkingContext(null);
+      return;
+    }
+
     setHistoryState((s) => ({ ...s, loading: true, error: null }));
 
     const res = await buildSeanceAttendanceHistory(
@@ -265,16 +275,15 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     backgroundColor: colors.primary,
     borderRadius: radii.lg,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     marginBottom: 14,
   },
   summaryText: {
-    fontFamily: fonts.medium,
-    fontSize: 13,
+    fontSize: 16,
     color: "#FFFFFF",
+    ...rtlText,
     textAlign: "center",
-    writingDirection: "rtl",
   },
   summaryDot: {
     fontFamily: fonts.medium,

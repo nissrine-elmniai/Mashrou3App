@@ -371,13 +371,13 @@ export function initials(name = "") {
   return name.trim().charAt(0) || "؟";
 }
 
-/** Libellé arabe du nombre de membres (carte séance superviseur). */
+/** Libellé arabe du nombre de membres (0 → chaîne vide, rien à afficher). */
 export function formatMemberCount(count) {
   const n = Number(count) || 0;
-  if (n === 0) return "لا يوجد اعضاء";
+  if (n <= 0) return "";
   if (n === 1) return "عضو واحد";
   if (n === 2) return "عضوين";
-  return `${n} اعضاء`;
+  return `${n} أعضاء`;
 }
 
 /** Libellé bannière : alertes admin non acquittées (RG9). */

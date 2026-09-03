@@ -15,7 +15,7 @@ import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getSupervisorProfiles, getMemberProfiles } from "../../lib/seancesApi";
+import { getSupervisorProfiles } from "../../lib/seancesApi";
 import { mergeInboxRows } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { initials } from "../supervisor/supervisorHelpers";
@@ -38,10 +38,7 @@ export default function AdminChatScreen({ navigation }) {
     let cancelled = false;
     (async () => {
       setContactsLoading(true);
-      const [sRes, mRes] = await Promise.all([
-        getSupervisorProfiles(),
-        getMemberProfiles(),
-      ]);
+      const sRes = await getSupervisorProfiles();
       if (cancelled) return;
       const list = [];
       if (sRes.ok) {
@@ -55,18 +52,6 @@ export default function AdminChatScreen({ navigation }) {
           });
         }
       }
-      if (mRes.ok) {
-        for (const p of mRes.members || []) {
-          if (p.account_status === "invited") continue;
-          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
-          list.push({
-            id: p.id,
-            name: name || p.email,
-            role: "member",
-            avatarLetter: initials(p.first_name || name || p.email),
-          });
-        }
-      }
       setContacts(list);
       setContactsLoading(false);
     })();
@@ -75,10 +60,10 @@ export default function AdminChatScreen({ navigation }) {
     };
   }, []);
 
-  const rows = useMemo(
-    () => mergeInboxRows(contacts, threads, seenAt),
-    [contacts, threads, seenAt]
-  );
+  const rows = useMemo(() => {
+    const merged = mergeInboxRows(contacts, threads, seenAt);
+    return merged.filter((r) => r.role !== "member");
+  }, [contacts, threads, seenAt]);
 
   const loading = contactsLoading || threadsLoading;
 
@@ -88,6 +73,7 @@ export default function AdminChatScreen({ navigation }) {
       contactId: row.id,
       contactName: row.name,
       contactAvatarLetter: row.avatarLetter,
+      contactRole: row.role || "supervisor",
     });
   };
 
@@ -134,7 +120,7 @@ export default function AdminChatScreen({ navigation }) {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : rows.length === 0 ? (
-        <EmptyState text="لا يوجد أعضاء أو مشرفون بعد" />
+        <EmptyState text="لا يوجد مشرفون بعد" />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {rows.map((row) => (

@@ -91,6 +91,15 @@ async function fetchSaisonStartDates(saisonIds) {
     return first.data;
   }
 
+  // Log obligatoire : un select sur une colonne inexistante était avalé ici,
+  // et l'écran Présence affichait un fallback sans aucune trace PostgREST.
+  if (first.error) {
+    console.warn(
+      "[membersApi] lecture saisons.start_date échouée — tentative date_debut:",
+      first.error.message || first.error
+    );
+  }
+
   if (isMissingColumnOrRelationship(first.error)) {
     const fallback = await withTimeout(
       supabase.from("saisons").select("id, date_debut").in("id", saisonIds),
@@ -99,6 +108,12 @@ async function fetchSaisonStartDates(saisonIds) {
     );
     if (!fallback.error && fallback.data) {
       return fallback.data;
+    }
+    if (fallback.error) {
+      console.warn(
+        "[membersApi] lecture saisons.date_debut échouée — historique présence sans date de saison:",
+        fallback.error.message || fallback.error
+      );
     }
   }
 
@@ -147,6 +162,12 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
     let error = withSaison.error;
 
     if (error && isMissingColumnOrRelationship(error)) {
+      // Pas de FK seances → saisons : PostgREST refuse l'embed.
+      // On relit les séances sans dates, puis attachSaisonDatesToSeances.
+      console.warn(
+        "[membersApi] embed saisons(start_date) indisponible — repli select(*) sans dates de saison:",
+        error.message || error
+      );
       const fallback = await querySupervisorActiveSeances(supervisorAuthId, "*");
       rows = fallback.data || [];
       error = fallback.error;

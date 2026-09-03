@@ -1,15 +1,18 @@
 import React, { useMemo, useState } from "react";
-import { View, StyleSheet, TextInput, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TextInput, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { colors, radii } from "../../constants/theme";
-import { rtlText, row, textAlignStart } from "../../constants/rtl";
+import { rtlText, row, textAlignStart, fonts } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { MemberRow } from "./components/SupervisorWidgets";
-import { initials } from "./supervisorHelpers";
+import { initials, formatMemberCount } from "./supervisorHelpers";
 
 /** Liste membres — données fournies par SupervisorDashboard (un seul fetch). */
-export default function SupervisorMembersScreen({ membersWithStatus = [] }) {
+export default function SupervisorMembersScreen({
+  membersWithStatus = [],
+  activeGroup = null,
+}) {
   const navigation = useNavigation();
   const [search, setSearch] = useState("");
 
@@ -52,6 +55,22 @@ export default function SupervisorMembersScreen({ membersWithStatus = [] }) {
   return (
     <View style={styles.flexFill}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {activeGroup ? (
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryText} numberOfLines={1}>
+              {activeGroup.name}
+            </Text>
+            {membersWithStatus.length > 0 ? (
+              <>
+                <Text style={styles.summaryDot}> · </Text>
+                <Text style={styles.summaryText}>
+                  {formatMemberCount(membersWithStatus.length)}
+                </Text>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={styles.searchWrapper}>
           <Ionicons name="search-outline" size={20} color={colors.placeholder} />
           <TextInput
@@ -84,6 +103,29 @@ export default function SupervisorMembersScreen({ membersWithStatus = [] }) {
 const styles = StyleSheet.create({
   flexFill: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 24 },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    backgroundColor: colors.primary,
+    borderRadius: radii.lg,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  summaryText: {
+    fontSize: 16,
+    color: "#FFFFFF",
+    ...rtlText,
+    textAlign: "center",
+  },
+  summaryDot: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.75)",
+    marginHorizontal: 6,
+  },
   searchWrapper: {
     flexDirection: row,
     alignItems: "center",

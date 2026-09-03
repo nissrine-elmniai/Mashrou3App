@@ -563,7 +563,7 @@ async function buildTheoreticalOccurrencesForSeance(
 }
 
 /**
- * Historique agrégé par occurrence de séance (depuis date_debut saison).
+ * Historique agrégé par occurrence de séance (depuis saisons.start_date).
  * getLatestSeanceOccurrenceStatus reste inchangé pour les pastilles / occurrence courante.
  */
 export async function buildSeanceAttendanceHistory(
