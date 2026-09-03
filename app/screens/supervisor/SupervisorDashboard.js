@@ -198,7 +198,10 @@ export default function SupervisorDashboard({ navigation }) {
               />
             )}
             {tab === "members" && (
-              <SupervisorMembersScreen membersWithStatus={membersWithStatus} />
+              <SupervisorMembersScreen
+                membersWithStatus={membersWithStatus}
+                activeGroup={activeGroup}
+              />
             )}
             {tab === "attendance" && (
               <SupervisorAttendanceScreen
@@ -211,10 +214,17 @@ export default function SupervisorDashboard({ navigation }) {
               />
             )}
             {tab === "progress" && (
-              <SupervisorProgressScreen members={members} />
+              <SupervisorProgressScreen
+                members={members}
+                activeGroup={activeGroup}
+              />
             )}
             {tab === "messages" && (
-              <SupervisorMessagesScreen navigation={navigation} />
+              <SupervisorMessagesScreen
+                navigation={navigation}
+                members={members}
+                activeGroup={activeGroup}
+              />
             )}
           </>
         )}

@@ -15,7 +15,10 @@ import { LegendDot } from "./components/SupervisorWidgets";
 import { TOTAL_QURAN_PAGES, JUZ_STATUS_DEMO, WEEKLY_PROGRESS_DEMO } from "./supervisorHelpers";
 
 /** Données membres fournies par SupervisorDashboard (un seul fetch). */
-export default function SupervisorProgressScreen({ members = [] }) {
+export default function SupervisorProgressScreen({
+  members = [],
+  activeGroup = null,
+}) {
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -58,6 +61,16 @@ export default function SupervisorProgressScreen({ members = [] }) {
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      {activeGroup ? (
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryText} numberOfLines={1}>
+            {activeGroup.name}
+          </Text>
+          <Text style={styles.summaryDot}> · </Text>
+          <Text style={styles.summaryText}>التقدم</Text>
+        </View>
+      ) : null}
+
       {members.length === 0 ? (
         <EmptyState text="لا يوجد أعضاء لعرض تقدمهم" />
       ) : (
@@ -177,6 +190,29 @@ export default function SupervisorProgressScreen({ members = [] }) {
 
 const styles = StyleSheet.create({
   scrollContent: { padding: 16, paddingBottom: 24 },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    backgroundColor: colors.primary,
+    borderRadius: radii.lg,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  summaryText: {
+    fontSize: 16,
+    color: "#FFFFFF",
+    ...rtlText,
+    textAlign: "center",
+  },
+  summaryDot: {
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.75)",
+    marginHorizontal: 6,
+  },
 
   dropdownWrap: { marginBottom: 14 },
   comboBox: {

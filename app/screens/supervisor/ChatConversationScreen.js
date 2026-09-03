@@ -44,9 +44,9 @@ function normalizeMessage(m, myAuthId) {
 }
 
 export default function ChatConversationScreen({ navigation, route }) {
-  const { contactId, contactName, contactAvatarLetter } = route.params || {};
+  const { contactId, contactName, contactAvatarLetter, contactRole } = route.params || {};
   const { currentUser, supabaseSession } = useApp();
-  const isAdmin = contactId === "admin";
+  const isAdmin = contactId === "admin" || contactRole === "admin";
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -72,13 +72,8 @@ export default function ChatConversationScreen({ navigation, route }) {
 
         if (isMember) {
           if (isAdmin) {
-            // Chat membre <-> administration (plus le superviseur).
-            const res = await resolveAdminProfile();
-            if (res?.ok && res.admin) {
-              otherId = res.admin.id;
-            } else {
-              failReason = res?.error || "لم يتم العثور على حساب الإدارة";
-            }
+            failReason =
+              "لا يمكن التواصل مع الإدارة مباشرة. يُرجى مراسلة مشرف الحصة.";
           } else {
             // Chat membre <-> son superviseur : contactId = UUID du superviseur
             const mySeance = await getMySeance();
@@ -90,16 +85,25 @@ export default function ChatConversationScreen({ navigation, route }) {
             }
           }
         } else if (isAdmin && isSupervisor) {
-          // Chat superviseur <-> admin : résoudre l'UUID réel du compte admin.
-          const res = await resolveAdminProfile();
-          if (res?.ok && res.admin) {
-            otherId = res.admin.id;
+          // Chat superviseur <-> admin : UUID réel, ou repli sur le compte admin racine.
+          if (contactId && contactId !== "admin") {
+            otherId = contactId;
           } else {
-            failReason = res?.error || "لم يتم العثور على حساب الإدارة";
+            const res = await resolveAdminProfile();
+            if (res?.ok && res.admin) {
+              otherId = res.admin.id;
+            } else {
+              failReason = res?.error || "لم يتم العثور على حساب الإدارة";
+            }
           }
         } else if (role === ROLES.ADMIN) {
-          // Chat admin <-> membre ou superviseur : contactId est l'UUID réel.
-          otherId = contactId;
+          // Admin <-> superviseur uniquement (RG6). contactRole est passé par
+          // AdminChatScreen ; sans "supervisor" on refuse (porte dérobée membre).
+          if (contactRole !== ROLES.SUPERVISOR) {
+            failReason = "الدردشة متاحة مع المشرفين فقط.";
+          } else {
+            otherId = contactId;
+          }
         } else if (isSupervisor) {
           // Chat superviseur <-> membre : séance active du superviseur
           const seanceRes = await getSupervisorActiveSeance(authId);
@@ -114,6 +118,7 @@ export default function ChatConversationScreen({ navigation, route }) {
           if (failReason) {
             Alert.alert("تعذر فتح المحادثة", failReason);
           }
+          navigation.goBack();
           return;
         }
 
@@ -130,7 +135,7 @@ export default function ChatConversationScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [authId, contactId, isAdmin, isSupervisor, isMember]);
+  }, [authId, contactId, contactRole, isAdmin, isSupervisor, isMember, navigation]);
 
   // Abonnement Realtime aux nouveaux messages du binôme
   useEffect(() => {
