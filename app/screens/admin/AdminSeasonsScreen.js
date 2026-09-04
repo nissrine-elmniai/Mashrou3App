@@ -30,6 +30,7 @@ import {
   getSupervisorProfiles,
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
+  normalizePgTime,
 } from "../../lib/seancesApi";
 import { GENDER_OPTIONS } from "../../constants/roles";
 
@@ -51,30 +52,31 @@ const EMPTY_FORM = {
   superviseurId: null,
   jour: null,
   genre: null,
-  dateDebut: "",
-  dateFin: "",
+  heureDebut: "",
+  heureFin: "",
 };
 
-function dateToStorage(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function timeToStorage(date) {
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
 }
 
-function storageToDate(str) {
-  const raw = String(str || "").trim().replace(/\//g, "-");
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+function storageToTime(str) {
+  const normalized = normalizePgTime(str);
+  const date = new Date();
+  if (!normalized) {
+    date.setHours(18, 0, 0, 0);
+    return date;
+  }
+  const [h, m] = normalized.split(":").map((n) => Number(n) || 0);
+  date.setHours(h, m, 0, 0);
+  return date;
 }
 
-function formatDateDisplay(str) {
-  if (!str) return "";
-  const date = storageToDate(str);
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
+function formatTimeDisplay(str) {
+  const normalized = normalizePgTime(str);
+  return normalized ? normalized.slice(0, 5) : "";
 }
 
 function seasonDateToStorage(value) {
@@ -97,7 +99,7 @@ export default function AdminSeasonsScreen({ navigation }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [datePickerField, setDatePickerField] = useState(null);
+  const [timePickerField, setTimePickerField] = useState(null);
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -150,12 +152,8 @@ export default function AdminSeasonsScreen({ navigation }) {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm({
-      ...EMPTY_FORM,
-      dateDebut: seasonDateToStorage(activeSeason?.startDate),
-      dateFin: seasonDateToStorage(activeSeason?.endDate),
-    });
-    setDatePickerField(null);
+    setForm({ ...EMPTY_FORM });
+    setTimePickerField(null);
     setModalVisible(true);
   };
 
@@ -166,18 +164,18 @@ export default function AdminSeasonsScreen({ navigation }) {
       superviseurId: seance.superviseur_id || null,
       jour: JOUR_SEMAINE_VALUES.includes(seance.jour) ? seance.jour : null,
       genre: seance.genre || null,
-      dateDebut: seasonDateToStorage(seance.date_debut),
-      dateFin: seasonDateToStorage(seance.date_fin),
+      heureDebut: formatTimeDisplay(seance.heure_debut),
+      heureFin: formatTimeDisplay(seance.heure_fin),
     });
-    setDatePickerField(null);
+    setTimePickerField(null);
     setModalVisible(true);
   };
 
-  const onDateChange = (event, selected) => {
-    if (Platform.OS !== "ios") setDatePickerField(null);
+  const onTimeChange = (event, selected) => {
+    if (Platform.OS !== "ios") setTimePickerField(null);
     if (event.type === "dismissed") return;
-    if (selected && datePickerField) {
-      setField(datePickerField, dateToStorage(selected));
+    if (selected && timePickerField) {
+      setField(timePickerField, timeToStorage(selected));
     }
   };
 
@@ -199,16 +197,16 @@ export default function AdminSeasonsScreen({ navigation }) {
       Alert.alert("تنبيه", "اختر جنس الحصة (ذكر أو أنثى)");
       return;
     }
-    if (!form.dateDebut) {
-      Alert.alert("تنبيه", "أدخل تاريخ بداية الحصة");
+    if (!form.heureDebut) {
+      Alert.alert("تنبيه", "أدخل ساعة بداية الحصة");
       return;
     }
-    if (!form.dateFin) {
-      Alert.alert("تنبيه", "أدخل تاريخ نهاية الحصة");
+    if (!form.heureFin) {
+      Alert.alert("تنبيه", "أدخل ساعة نهاية الحصة");
       return;
     }
-    if (form.dateFin < form.dateDebut) {
-      Alert.alert("تنبيه", "تاريخ النهاية يجب أن يكون بعد تاريخ البداية");
+    if (form.heureFin <= form.heureDebut) {
+      Alert.alert("تنبيه", "ساعة النهاية يجب أن تكون بعد ساعة البداية");
       return;
     }
     if (!activeSeason?.id) {
@@ -216,6 +214,8 @@ export default function AdminSeasonsScreen({ navigation }) {
       return;
     }
     setSaving(true);
+    const seasonStart = seasonDateToStorage(activeSeason?.startDate) || null;
+    const seasonEnd = seasonDateToStorage(activeSeason?.endDate) || null;
     let result;
     if (editingId) {
       result = await updateSeance({
@@ -225,8 +225,8 @@ export default function AdminSeasonsScreen({ navigation }) {
           superviseur_id: form.superviseurId,
           jour: form.jour,
           genre: form.genre,
-          date_debut: form.dateDebut,
-          date_fin: form.dateFin,
+          heure_debut: form.heureDebut,
+          heure_fin: form.heureFin,
         },
       });
     } else {
@@ -236,8 +236,10 @@ export default function AdminSeasonsScreen({ navigation }) {
         jour: form.jour,
         genre: form.genre,
         saisonId: activeSeason.id,
-        dateDebut: form.dateDebut,
-        dateFin: form.dateFin,
+        heureDebut: form.heureDebut,
+        heureFin: form.heureFin,
+        dateDebut: seasonStart,
+        dateFin: seasonEnd,
       });
     }
     setSaving(false);
@@ -380,14 +382,14 @@ export default function AdminSeasonsScreen({ navigation }) {
                 {seance.jour ? (
                   <Text style={styles.cardSup}>اليوم: {seance.jour}</Text>
                 ) : null}
+                {seance.heure_debut || seance.heure_fin ? (
+                  <Text style={styles.cardSup}>
+                    الوقت: {formatTimeDisplay(seance.heure_debut) || "—"} –{" "}
+                    {formatTimeDisplay(seance.heure_fin) || "—"}
+                  </Text>
+                ) : null}
                 {seance.genre ? (
                   <Text style={styles.cardSup}>الجنس: {seance.genre}</Text>
-                ) : null}
-                {seance.date_debut || seance.date_fin ? (
-                  <Text style={styles.cardSup}>
-                    الفترة: {formatDateDisplay(seance.date_debut) || "—"} —{" "}
-                    {formatDateDisplay(seance.date_fin) || "—"}
-                  </Text>
                 ) : null}
 
                 <View style={styles.badgesRow}>
@@ -521,56 +523,55 @@ export default function AdminSeasonsScreen({ navigation }) {
               })}
             </View>
 
-            <Text style={styles.modalLabel}>تاريخ البداية</Text>
+            <Text style={styles.modalLabel}>ساعة البداية</Text>
             <TouchableOpacity
               style={styles.dateBtn}
-              onPress={() => setDatePickerField("dateDebut")}
+              onPress={() => setTimePickerField("heureDebut")}
               activeOpacity={0.8}
             >
               <Text
                 style={[
                   styles.dateBtnText,
-                  !form.dateDebut && styles.dateBtnPlaceholder,
+                  !form.heureDebut && styles.dateBtnPlaceholder,
                 ]}
               >
-                {form.dateDebut
-                  ? formatDateDisplay(form.dateDebut)
-                  : "اختر تاريخ البداية"}
+                {form.heureDebut
+                  ? formatTimeDisplay(form.heureDebut)
+                  : "اختر ساعة البداية"}
               </Text>
             </TouchableOpacity>
 
-            <Text style={styles.modalLabel}>تاريخ النهاية</Text>
+            <Text style={styles.modalLabel}>ساعة النهاية</Text>
             <TouchableOpacity
               style={styles.dateBtn}
-              onPress={() => setDatePickerField("dateFin")}
+              onPress={() => setTimePickerField("heureFin")}
               activeOpacity={0.8}
             >
               <Text
                 style={[
                   styles.dateBtnText,
-                  !form.dateFin && styles.dateBtnPlaceholder,
+                  !form.heureFin && styles.dateBtnPlaceholder,
                 ]}
               >
-                {form.dateFin
-                  ? formatDateDisplay(form.dateFin)
-                  : "اختر تاريخ النهاية"}
+                {form.heureFin
+                  ? formatTimeDisplay(form.heureFin)
+                  : "اختر ساعة النهاية"}
               </Text>
             </TouchableOpacity>
 
-            {datePickerField ? (
+            {timePickerField ? (
               <DateTimePicker
-                value={storageToDate(
-                  form[datePickerField] || dateToStorage(new Date())
-                )}
-                mode="date"
+                value={storageToTime(form[timePickerField])}
+                mode="time"
+                is24Hour
                 display={Platform.OS === "ios" ? "spinner" : "default"}
-                onChange={onDateChange}
+                onChange={onTimeChange}
               />
             ) : null}
-            {Platform.OS === "ios" && datePickerField ? (
+            {Platform.OS === "ios" && timePickerField ? (
               <TouchableOpacity
                 style={styles.dateDoneBtn}
-                onPress={() => setDatePickerField(null)}
+                onPress={() => setTimePickerField(null)}
               >
                 <Text style={styles.dateDoneBtnText}>تم</Text>
               </TouchableOpacity>

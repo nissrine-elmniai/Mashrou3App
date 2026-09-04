@@ -184,24 +184,28 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
 
           <InfoRow icon="calendar-outline" label="اليوم" value={seance.jour} />
           <InfoRow icon="time-outline" label="التوقيت" value={schedule} />
+          <InfoRow
+            icon="play-outline"
+            label="ساعة البداية"
+            value={
+              seance.heure_debut
+                ? String(seance.heure_debut).slice(0, 5)
+                : null
+            }
+          />
+          <InfoRow
+            icon="flag-outline"
+            label="ساعة النهاية"
+            value={
+              seance.heure_fin ? String(seance.heure_fin).slice(0, 5) : null
+            }
+          />
           <InfoRow icon="male-female-outline" label="الجنس" value={seance.genre} />
           <InfoRow icon="person-outline" label="المشرف" value={supervisorName} />
           <InfoRow
             icon="people-outline"
             label="عدد الأعضاء"
             value={String(memberCount)}
-          />
-          <InfoRow
-            icon="play-outline"
-            label="تاريخ البداية"
-            value={
-              seance.date_debut ? formatDateDisplay(seance.date_debut) : null
-            }
-          />
-          <InfoRow
-            icon="flag-outline"
-            label="تاريخ النهاية"
-            value={seance.date_fin ? formatDateDisplay(seance.date_fin) : null}
           />
         </View>
 

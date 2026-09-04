@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,10 @@ import {
   TextInput,
   Modal,
   ActivityIndicator,
+  Keyboard,
+  Platform,
+  Pressable,
+  KeyboardAvoidingView,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -52,6 +56,26 @@ export default function AdminSettingsScreen({ navigation }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  const anyModalOpen = emailModal || passwordModal;
+
+  useEffect(() => {
+    if (!anyModalOpen) {
+      setKeyboardHeight(0);
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [anyModalOpen]);
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -82,6 +106,16 @@ export default function AdminSettingsScreen({ navigation }) {
     setNewPassword("");
     setConfirmPassword("");
     setPasswordModal(true);
+  };
+
+  const closeEmailModal = () => {
+    Keyboard.dismiss();
+    setEmailModal(false);
+  };
+
+  const closePasswordModal = () => {
+    Keyboard.dismiss();
+    setPasswordModal(false);
   };
 
   const saveEmail = async () => {
@@ -172,6 +206,8 @@ export default function AdminSettingsScreen({ navigation }) {
       setSaving(false);
     }
   };
+
+  const modalBottomPad = keyboardHeight > 0 ? keyboardHeight : bottomGap;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -300,90 +336,114 @@ export default function AdminSettingsScreen({ navigation }) {
         visible={emailModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setEmailModal(false)}
+        onRequestClose={closeEmailModal}
       >
-        <View style={[styles.modalOverlay, { paddingBottom: bottomGap }]}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>تغيير البريد</Text>
-              <TouchableOpacity onPress={() => setEmailModal(false)} hitSlop={10}>
-                <X size={22} color={palette.textSecondary} />
-              </TouchableOpacity>
+        <KeyboardAvoidingView
+          style={styles.modalFlex}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={[styles.modalOverlay, { paddingBottom: modalBottomPad }]}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={closeEmailModal} />
+            <View style={styles.modalCard}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+              >
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>تغيير البريد</Text>
+                  <TouchableOpacity onPress={closeEmailModal} hitSlop={10}>
+                    <X size={22} color={palette.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.modalLabel}>البريد الجديد</Text>
+                <TextInput
+                  style={styles.input}
+                  value={newEmail}
+                  onChangeText={setNewEmail}
+                  placeholder="email@example.com"
+                  placeholderTextColor={palette.placeholder}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  textAlign={textAlignStart}
+                />
+                <TouchableOpacity
+                  style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+                  onPress={saving ? undefined : saveEmail}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>حفظ</Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
             </View>
-            <Text style={styles.modalLabel}>البريد الجديد</Text>
-            <TextInput
-              style={styles.input}
-              value={newEmail}
-              onChangeText={setNewEmail}
-              placeholder="email@example.com"
-              placeholderTextColor={palette.placeholder}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              textAlign={textAlignStart}
-            />
-            <TouchableOpacity
-              style={[styles.saveBtn, saving && { opacity: 0.6 }]}
-              onPress={saving ? undefined : saveEmail}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.saveBtnText}>حفظ</Text>
-              )}
-            </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
         visible={passwordModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setPasswordModal(false)}
+        onRequestClose={closePasswordModal}
       >
-        <View style={[styles.modalOverlay, { paddingBottom: bottomGap }]}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>تغيير كلمة المرور</Text>
-              <TouchableOpacity
-                onPress={() => setPasswordModal(false)}
-                hitSlop={10}
+        <KeyboardAvoidingView
+          style={styles.modalFlex}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={[styles.modalOverlay, { paddingBottom: modalBottomPad }]}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closePasswordModal}
+            />
+            <View style={styles.modalCard}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                bounces={false}
               >
-                <X size={22} color={palette.textSecondary} />
-              </TouchableOpacity>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>تغيير كلمة المرور</Text>
+                  <TouchableOpacity onPress={closePasswordModal} hitSlop={10}>
+                    <X size={22} color={palette.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.modalLabel}>كلمة المرور الجديدة</Text>
+                <TextInput
+                  style={styles.input}
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor={palette.placeholder}
+                  secureTextEntry
+                  textAlign={textAlignStart}
+                />
+                <Text style={styles.modalLabel}>تأكيد كلمة المرور</Text>
+                <TextInput
+                  style={styles.input}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor={palette.placeholder}
+                  secureTextEntry
+                  textAlign={textAlignStart}
+                />
+                <TouchableOpacity
+                  style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+                  onPress={saving ? undefined : savePassword}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>حفظ</Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
             </View>
-            <Text style={styles.modalLabel}>كلمة المرور الجديدة</Text>
-            <TextInput
-              style={styles.input}
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="••••••••"
-              placeholderTextColor={palette.placeholder}
-              secureTextEntry
-              textAlign={textAlignStart}
-            />
-            <Text style={styles.modalLabel}>تأكيد كلمة المرور</Text>
-            <TextInput
-              style={styles.input}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="••••••••"
-              placeholderTextColor={palette.placeholder}
-              secureTextEntry
-              textAlign={textAlignStart}
-            />
-            <TouchableOpacity
-              style={[styles.saveBtn, saving && { opacity: 0.6 }]}
-              onPress={saving ? undefined : savePassword}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.saveBtnText}>حفظ</Text>
-              )}
-            </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       {messagesFab}
       {sidebar}
@@ -576,6 +636,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     ...rtlText,
   },
+  modalFlex: { flex: 1 },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -586,6 +647,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
+    maxHeight: "85%",
   },
   modalHeader: {
     flexDirection: row,
