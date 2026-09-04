@@ -64,6 +64,7 @@ export default function SupervisorDashboard({ navigation }) {
     isMarkingWindowOpen,
     showPresenceReminder,
     loading,
+    progressLoading,
     fetchError,
     dataSource,
     refetch,
@@ -227,6 +228,7 @@ export default function SupervisorDashboard({ navigation }) {
               <SupervisorProgressScreen
                 members={members}
                 activeGroup={activeGroup}
+                progressLoading={progressLoading}
               />
             )}
             {tab === "messages" && (

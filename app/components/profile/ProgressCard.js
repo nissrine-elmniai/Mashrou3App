@@ -131,8 +131,8 @@ export default function ProgressCard({ progressState, onUpdate }) {
             activeOpacity={0.75}
             accessibilityLabel="تسجيل التقدم"
           >
-            <Text style={styles.editPillText}>تحديث</Text>
             <Ionicons name="create-outline" size={radii.lg} color={colors.primary} />
+            <Text style={styles.editPillText}>تحديث</Text>
           </TouchableOpacity>
         ) : null}
       </View>
