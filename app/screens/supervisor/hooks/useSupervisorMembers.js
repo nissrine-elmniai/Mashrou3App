@@ -11,6 +11,7 @@ import {
   getSeancePresenceForDate,
   getPresenceReminderForOccurrence,
 } from "../../../lib/presenceApi";
+import { getMemberProgressionSummary } from "../../../lib/progressApi";
 
 /** Message UI mode dégradé (mock après échec Supabase réel). */
 export const SUPERVISOR_FETCH_DEGRADED_MESSAGE =
@@ -62,10 +63,61 @@ function mapSeanceMembersToRows(seanceMembers, group) {
       gender: m.genre,
     },
     group,
+    // Rempli ensuite par fetchLatestProgressByMemberId (N × limit 1).
     prog: null,
     registrationStatus: m.statutInscription,
     registrationDate: m.dateInscription,
   }));
+}
+
+/**
+ * Dernière ligne progression par membre (limit 1), en parallèle.
+ * Un échec isolé laisse ce membre sans position ; les autres restent affichés.
+ */
+async function fetchLatestProgressByMemberId(membreIds) {
+  const ids = (membreIds || []).filter(Boolean);
+  const pairs = await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const res = await getMemberProgressionSummary(id);
+        if (!res.ok) {
+          console.warn(
+            "useSupervisorMembers: échec lecture progression —",
+            id,
+            res.error
+          );
+          return [id, null];
+        }
+        if (!res.hasData || !res.metrics) {
+          return [id, null];
+        }
+        return [id, { metrics: res.metrics, entry: res.entry || null }];
+      } catch (e) {
+        console.warn(
+          "useSupervisorMembers: échec lecture progression —",
+          id,
+          e?.message || e
+        );
+        return [id, null];
+      }
+    })
+  );
+  return Object.fromEntries(pairs);
+}
+
+function applyProgressToMembers(members, byId) {
+  return (members || []).map((m) => ({
+    ...m,
+    prog: byId[m.user?.id] || null,
+  }));
+}
+
+function memberGlobalPct(member) {
+  const raw = member?.prog?.metrics?.globalPct;
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, n));
 }
 
 /**
@@ -122,6 +174,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     occurrenceMeta: null,
     globalAttendancePct: null,
     showPresenceReminder: false,
+    progressLoaded: true,
   });
 
   useEffect(() => {
@@ -134,6 +187,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
         occurrenceMeta: null,
         globalAttendancePct: null,
         showPresenceReminder: false,
+        progressLoaded: true,
       });
       return;
     }
@@ -158,6 +212,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             occurrenceMeta: null,
             globalAttendancePct: null,
             showPresenceReminder: false,
+            progressLoaded: true,
           });
           setFetchState({
             loading: false,
@@ -176,6 +231,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             occurrenceMeta: null,
             globalAttendancePct: null,
             showPresenceReminder: false,
+            progressLoaded: true,
           });
           setFetchState({ loading: false, loaded: true, error: null });
           return;
@@ -199,6 +255,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             occurrenceMeta: null,
             globalAttendancePct: null,
             showPresenceReminder: false,
+            progressLoaded: true,
           });
           setFetchState({
             loading: false,
@@ -299,8 +356,20 @@ export function useSupervisorMembers(selectedGroupId = null) {
           occurrenceMeta,
           globalAttendancePct,
           showPresenceReminder,
+          progressLoaded: memberIds.length === 0,
         });
         setFetchState({ loading: false, loaded: true, error: null });
+
+        // Positions après le premier rendu : N × getMemberProgressionSummary en parallèle.
+        if (memberIds.length > 0) {
+          const byId = await fetchLatestProgressByMemberId(memberIds);
+          if (cancelled) return;
+          setSupabaseData((prev) => ({
+            ...prev,
+            members: applyProgressToMembers(prev.members, byId),
+            progressLoaded: true,
+          }));
+        }
       } catch (e) {
         console.warn(
           "useSupervisorMembers: erreur réseau/timeout, repli sur le mock —",
@@ -314,6 +383,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             occurrenceMeta: null,
             globalAttendancePct: null,
             showPresenceReminder: false,
+            progressLoaded: true,
           });
           setFetchState({
             loading: false,
@@ -364,17 +434,19 @@ export function useSupervisorMembers(selectedGroupId = null) {
   const membersWithStatus = useMemo(
     () =>
       members.map((m) => {
-        const pct = Math.min(
-          100,
-          Math.round(((m.prog?.hifzPages || 0) / (m.prog?.targetPages || 1)) * 100)
-        );
+        const pct = memberGlobalPct(m);
         const status = usingSupabase
           ? weeklyPresenceToMemberStatus(
               weeklyPresenceByMember[m.user.id],
               occurrenceMeta || {}
             )
           : "none";
-        return { ...m, pct, level: deriveLevel(pct), status };
+        return {
+          ...m,
+          pct,
+          level: pct != null ? deriveLevel(pct) : null,
+          status,
+        };
       }),
     [members, usingSupabase, weeklyPresenceByMember, occurrenceMeta]
   );
@@ -394,13 +466,17 @@ export function useSupervisorMembers(selectedGroupId = null) {
     usingSupabase && supabaseData.globalAttendancePct != null
       ? supabaseData.globalAttendancePct
       : weeklyFallbackPct;
-  const avgProgress = usingSupabase
-    ? 0
-    : membersWithStatus.length === 0
-    ? 0
-    : Math.round(
-        membersWithStatus.reduce((sum, m) => sum + m.pct, 0) / membersWithStatus.length
-      );
+
+  // Moyenne des globalPct des membres ayant une saisie — pas hifzPages, pas les sans position.
+  const avgProgress = useMemo(() => {
+    const pcts = membersWithStatus
+      .map((m) => m.pct)
+      .filter((p) => p != null && Number.isFinite(p));
+    if (pcts.length === 0) return null;
+    return Math.round(pcts.reduce((sum, p) => sum + p, 0) / pcts.length);
+  }, [membersWithStatus]);
+
+  const progressLoading = usingSupabase && supabaseData.progressLoaded === false;
 
   return {
     myGroups,
@@ -413,6 +489,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     isMarkingWindowOpen,
     showPresenceReminder,
     loading,
+    progressLoading,
     fetchError,
     dataSource: usingSupabase ? "supabase" : "mock",
     refetch,

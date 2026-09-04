@@ -78,6 +78,7 @@ import {
 } from "../lib/tumun";
 import {
   deleteMemberProgramRemote,
+  normalizeProgramType,
   syncMemberProgramsWithSupabase,
   upsertMemberProgram,
 } from "../lib/memberProgramsApi";
@@ -100,7 +101,11 @@ function migrateMemberPrograms(programs = []) {
         ? clampTumuns(p.completedTumuns, nbHizb)
         : percentToTumuns(p.progression, nbHizb);
     const { progression: _legacy, ...rest } = p;
-    return { ...rest, completedTumuns };
+    return {
+      ...rest,
+      completedTumuns,
+      type: normalizeProgramType(p.type),
+    };
   });
 }
 
@@ -1705,6 +1710,7 @@ export function AppProvider({ children }) {
       durationDays,
       startDate: String(program.startDate || todayStr()).trim() || todayStr(),
       completedTumuns,
+      type: normalizeProgramType(program.type ?? existing?.type),
     };
 
     setMemberPrograms((prev) => {

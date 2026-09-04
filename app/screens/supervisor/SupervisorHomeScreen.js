@@ -18,7 +18,7 @@ export default function SupervisorHomeScreen({
   activeGroup,
   members = [],
   attendancePct = 0,
-  avgProgress = 0,
+  avgProgress = null,
   isMarkingWindowOpen = false,
   showPresenceReminder = false,
   onChangeTab,
@@ -98,7 +98,11 @@ export default function SupervisorHomeScreen({
       <View style={styles.statsRow}>
         <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
         <MiniStat value={`${attendancePct}%`} label=" نسبة الحضور" color={colors.primary} />
-        <MiniStat value={`${avgProgress}%`} label="متوسط التقدم" color={colors.primary} />
+        <MiniStat
+          value={avgProgress == null ? "—" : `${avgProgress}%`}
+          label="متوسط التقدم"
+          color={colors.primary}
+        />
       </View>
 
       <QuickButton

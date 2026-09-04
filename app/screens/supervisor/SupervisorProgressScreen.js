@@ -6,29 +6,169 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
+import ProgressCard from "../../components/profile/ProgressCard";
 import { LegendDot } from "./components/SupervisorWidgets";
-import { TOTAL_QURAN_PAGES, JUZ_STATUS_DEMO, WEEKLY_PROGRESS_DEMO } from "./supervisorHelpers";
+import { useApp } from "../../context/AppContext";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import {
+  computeProgressMetrics,
+  computeProgressPace,
+  getMemberProgressEntries,
+} from "../../lib/progressApi";
+import { formatHizbTumunDelta, tumunStoredToUi } from "../../lib/tumun";
+import {
+  ACTIVITY_DAY_COUNT,
+  HISTORY_FETCH_LIMIT,
+  activityCellColor,
+  buildActivityDayCells,
+  historySinceIso,
+} from "./supervisorProgressHelpers";
+
+/** Lignes visibles — un superviseur ne parcourt pas des centaines de saisies. */
+const HISTORY_DISPLAY_LIMIT = 10;
+const GRID_COLUMNS = 15;
+
+function formatSupervisorDate(raw) {
+  const sliced = String(raw || "").slice(0, 10);
+  if (!sliced) return "—";
+  return sliced.replaceAll("-", "/");
+}
+
+function formatHizbTumunPosition(entry, metrics) {
+  const hizb = metrics?.nbHizbCompletes ?? 0;
+  return `${hizb} حزب · الثمن ${tumunStoredToUi(entry?.tumun_courant)}`;
+}
+
+function progressStateFromMember(member, progressLoading, pace) {
+  if (progressLoading) {
+    return {
+      loading: true,
+      error: null,
+      hasData: false,
+      metrics: null,
+      note: null,
+      objectif: null,
+      seasonDeltaTumuns: null,
+      weekDeltaTumuns: null,
+    };
+  }
+  const metrics = member?.prog?.metrics || null;
+  return {
+    loading: false,
+    error: null,
+    hasData: !!metrics,
+    metrics,
+    note: metrics?.notes || null,
+    objectif: null,
+    seasonDeltaTumuns: pace?.seasonDeltaTumuns ?? null,
+    weekDeltaTumuns: pace?.weekDeltaTumuns ?? null,
+  };
+}
+
+function HistoryEntryRow({ entry, olderEntry, isFirst }) {
+  const metrics = computeProgressMetrics(entry);
+  const currentTotal = metrics?.tumunTotal ?? 0;
+  const olderTotal =
+    olderEntry != null ? computeProgressMetrics(olderEntry)?.tumunTotal ?? 0 : null;
+  const stepDelta = olderTotal != null ? currentTotal - olderTotal : null;
+  const isRecul = stepDelta != null && stepDelta < 0;
+  const reculLabel = isRecul ? formatHizbTumunDelta(stepDelta) : null;
+  const when = formatSupervisorDate(
+    metrics?.dateSaisie || entry.date_saisie || entry.date
+  );
+
+  return (
+    <View style={[styles.historyRow, !isFirst && styles.historyRowBorder]}>
+      <Text style={styles.historyDate}>{when}</Text>
+      <Text style={[styles.historyPosition, isRecul && styles.historyRecul]}>
+        {formatHizbTumunPosition(entry, metrics)}
+      </Text>
+      {reculLabel ? (
+        <Text style={styles.historyRecul}>{reculLabel}</Text>
+      ) : null}
+      {metrics?.notes ? (
+        <Text style={styles.historyNote}>{metrics.notes}</Text>
+      ) : null}
+    </View>
+  );
+}
 
 /** Données membres fournies par SupervisorDashboard (un seul fetch). */
 export default function SupervisorProgressScreen({
   members = [],
   activeGroup = null,
+  progressLoading = false,
 }) {
+  const { seasons } = useApp();
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [history, setHistory] = useState({
+    memberId: null,
+    entries: [],
+    loading: false,
+  });
 
   useEffect(() => {
-    if (!selectedMemberId && members[0]) setSelectedMemberId(members[0].user.id);
+    if (members.length === 0) {
+      setSelectedMemberId(null);
+      return;
+    }
+    if (!members.some((m) => m.user.id === selectedMemberId)) {
+      setSelectedMemberId(members[0].user.id);
+    }
   }, [members, selectedMemberId]);
 
+  useEffect(() => {
+    if (!selectedMemberId) {
+      setHistory({ memberId: null, entries: [], loading: false });
+      return;
+    }
+
+    let cancelled = false;
+    setHistory((prev) => ({
+      memberId: selectedMemberId,
+      entries: prev.memberId === selectedMemberId ? prev.entries : [],
+      loading: true,
+    }));
+
+    (async () => {
+      const res = await getMemberProgressEntries(selectedMemberId, {
+        since: historySinceIso(),
+        limit: HISTORY_FETCH_LIMIT,
+      });
+      if (cancelled) return;
+      if (!res.ok) {
+        console.warn(
+          "SupervisorProgressScreen: échec lecture historique —",
+          res.error
+        );
+        setHistory({
+          memberId: selectedMemberId,
+          entries: [],
+          loading: false,
+        });
+        return;
+      }
+      setHistory({
+        memberId: selectedMemberId,
+        entries: res.entries || [],
+        loading: false,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMemberId]);
+
   const selectedMember = members.find((m) => m.user.id === selectedMemberId);
-  const selectedHifzPages = selectedMember?.prog?.hifzPages || 0;
   const confirmedName = selectedMember
     ? `${selectedMember.user.firstName} ${selectedMember.user.lastName}`
     : "";
@@ -45,6 +185,42 @@ export default function SupervisorProgressScreen({
     });
   }, [members, query]);
 
+  const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+  const historyReady =
+    history.memberId === selectedMemberId && !history.loading;
+  const pace = useMemo(() => {
+    if (!historyReady) {
+      return { seasonDeltaTumuns: null, weekDeltaTumuns: null };
+    }
+    return computeProgressPace(history.entries, saisonId);
+  }, [historyReady, history.entries, saisonId]);
+
+  const activityCells = useMemo(() => {
+    if (history.memberId !== selectedMemberId) return [];
+    return buildActivityDayCells(history.entries);
+  }, [history.memberId, selectedMemberId, history.entries]);
+
+  const progressState = progressStateFromMember(
+    selectedMember,
+    progressLoading,
+    pace
+  );
+
+  const currentPositionLabel = selectedMember?.prog?.metrics
+    ? formatHizbTumunPosition(
+        selectedMember.prog.entry,
+        selectedMember.prog.metrics
+      )
+    : null;
+
+  const visibleEntries = history.entries.slice(0, HISTORY_DISPLAY_LIMIT);
+  const hiddenCount = Math.max(
+    0,
+    history.entries.length - HISTORY_DISPLAY_LIMIT
+  );
+  const historyMayBeTruncated =
+    history.entries.length >= HISTORY_FETCH_LIMIT;
+
   const handleSelect = (id) => {
     setSelectedMemberId(id);
     setPickerOpen(false);
@@ -56,8 +232,6 @@ export default function SupervisorProgressScreen({
   };
 
   const togglePicker = () => (pickerOpen ? setPickerOpen(false) : openPicker());
-
-  const maxPages = Math.max(...WEEKLY_PROGRESS_DEMO.map((x) => x.pages));
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
@@ -133,57 +307,76 @@ export default function SupervisorProgressScreen({
         </View>
       )}
 
-      <View style={[styles.sectionBox, shadows.card]}>
-        <Text style={styles.sectionBoxTitle}>حالة الأجزاء</Text>
-        <View style={styles.juzGrid}>
-          {JUZ_STATUS_DEMO.map((status, index) => {
-            const bg =
-              status === "memorized"
-                ? colors.primarySoft
-                : status === "inProgress"
-                ? `${colors.gold}26`
-                : colors.bg;
-            return (
-              <View key={index} style={[styles.juzCell, { backgroundColor: bg }]}>
-                {status === "memorized" ? (
-                  <Ionicons name="checkmark" size={16} color={colors.primary} />
-                ) : status === "inProgress" ? (
-                  <Ionicons name="time-outline" size={16} color={colors.gold} />
-                ) : (
-                  <Text style={styles.juzCellText}>{index + 1}</Text>
-                )}
-              </View>
-            );
-          })}
-        </View>
-        <View style={styles.legendRow}>
-          <LegendDot color={colors.primarySoft} label="محفوظ" />
-          <LegendDot color={`${colors.gold}26`} label="قيد الحفظ" />
-          <LegendDot color={colors.bg} label="لم يبدأ" />
-        </View>
-      </View>
+      {members.length > 0 ? (
+        <>
+          <ProgressCard progressState={progressState} />
+          {currentPositionLabel && !progressLoading ? (
+            <Text style={styles.positionDetail}>{currentPositionLabel}</Text>
+          ) : null}
 
-      <Text style={styles.pagesCounter}>
-        تم حفظ <Text style={styles.pagesCounterStrong}>{selectedHifzPages}</Text> صفحة من أصل{" "}
-        <Text style={styles.pagesCounterBold}>{TOTAL_QURAN_PAGES}</Text>
-      </Text>
-
-      <View style={[styles.sectionBox, shadows.card]}>
-        <Text style={styles.sectionBoxTitle}>التقدم الأسبوعي</Text>
-        <View style={styles.barChart}>
-          {WEEKLY_PROGRESS_DEMO.map((d, index) => {
-            const h = Math.max(4, Math.round((d.pages / maxPages) * 100));
-            return (
-              <View key={index} style={styles.barCol}>
-                <View style={styles.barTrack}>
-                  <View style={[styles.barFill, { height: `${h}%` }]} />
+          <View style={[styles.historyCard, shadows.card]}>
+            <View style={styles.historyHeader}>
+              <Text style={styles.historyTitle}>آخر {ACTIVITY_DAY_COUNT} يوماً</Text>
+              {history.loading ? (
+                <ActivityIndicator color={colors.primary} size="small" />
+              ) : null}
+            </View>
+            {activityCells.length > 0 ? (
+              <>
+                <View style={styles.activityGrid}>
+                  {activityCells.map((cell) => (
+                    <View key={cell.key} style={styles.activityCellWrap}>
+                      <View
+                        style={[
+                          styles.activityCell,
+                          { backgroundColor: activityCellColor(cell.kind) },
+                        ]}
+                      />
+                    </View>
+                  ))}
                 </View>
-                <Text style={styles.barLabel}>{d.week}</Text>
-              </View>
-            );
-          })}
-        </View>
-      </View>
+                <View style={styles.activityLegend}>
+                  <LegendDot color={colors.inputBg} label="لا نشاط" />
+                  <LegendDot color={colors.primarySoft} label="1–2" />
+                  <LegendDot color={colors.borderGreen} label="3–5" />
+                  <LegendDot color={colors.primary} label="6+" />
+                  <LegendDot color={colors.goldSoft} label="تراجع" />
+                </View>
+              </>
+            ) : history.loading ? null : (
+              <Text style={styles.historyEmpty}>لا يوجد نشاط في هذه الفترة</Text>
+            )}
+          </View>
+
+          <View style={[styles.historyCard, shadows.card]}>
+            <View style={styles.historyHeader}>
+              <Text style={styles.historyTitle}>آخر التسجيلات</Text>
+              {history.loading ? (
+                <ActivityIndicator color={colors.primary} size="small" />
+              ) : null}
+            </View>
+            {!history.loading && visibleEntries.length === 0 ? (
+              <Text style={styles.historyEmpty}>لا يوجد سجل بعد</Text>
+            ) : (
+              visibleEntries.map((entry, idx) => (
+                <HistoryEntryRow
+                  key={entry.id || idx}
+                  entry={entry}
+                  olderEntry={history.entries[idx + 1] || null}
+                  isFirst={idx === 0}
+                />
+              ))
+            )}
+            {!history.loading && hiddenCount > 0 ? (
+              <Text style={styles.historyMore}>
+                {historyMayBeTruncated
+                  ? `عرض أحدث ${HISTORY_DISPLAY_LIMIT} — السجل أطول`
+                  : `عرض أحدث ${HISTORY_DISPLAY_LIMIT} من ${history.entries.length}`}
+              </Text>
+            ) : null}
+          </View>
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -262,29 +455,98 @@ const styles = StyleSheet.create({
   optionText: { flex: 1, fontFamily: fonts.regular, fontSize: 14, color: colors.text, ...rtlText },
   optionTextActive: { fontFamily: fonts.semiBold, color: colors.primary },
 
-  sectionBox: {
+  positionDetail: {
+    marginTop: 8,
+    fontSize: 13,
+    fontFamily: fonts.medium,
+    color: colors.muted,
+    ...rtlText,
+  },
+  activityGrid: {
+    flexDirection: row,
+    flexWrap: "wrap",
+  },
+  activityCellWrap: {
+    width: `${100 / GRID_COLUMNS}%`,
+    aspectRatio: 1,
+    padding: 1,
+  },
+  activityCell: {
+    flex: 1,
+    borderRadius: 2,
+  },
+  activityLegend: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 12,
+    marginTop: 12,
+  },
+  historyCard: {
     backgroundColor: colors.card,
     borderRadius: radii.lg,
     padding: 16,
-    marginBottom: 14,
+    marginTop: 14,
   },
-  sectionBoxTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.text, ...rtlTextBold, marginBottom: 10 },
-  juzGrid: { flexDirection: "row", flexWrap: "wrap" },
-  juzCell: {
-    width: "16.66%",
-    aspectRatio: 1,
-    justifyContent: "center",
+  historyHeader: {
+    flexDirection: row,
     alignItems: "center",
-    padding: 3,
+    justifyContent: "space-between",
+    marginBottom: 10,
+    gap: 8,
   },
-  juzCellText: { fontSize: 12, fontFamily: fonts.medium, color: colors.muted },
-  legendRow: { flexDirection: row, justifyContent: "center", gap: 16, marginTop: 12 },
-  pagesCounter: { textAlign: "center", color: colors.muted, marginBottom: 14, ...rtlText },
-  pagesCounterStrong: { color: colors.primary, fontFamily: fonts.bold },
-  pagesCounterBold: { fontFamily: fonts.bold, color: colors.text },
-  barChart: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", height: 110, gap: 8 },
-  barCol: { flex: 1, alignItems: "center", height: "100%", justifyContent: "flex-end", gap: 6 },
-  barTrack: { width: "100%", flex: 1, justifyContent: "flex-end" },
-  barFill: { width: "100%", backgroundColor: colors.primary, borderTopLeftRadius: 4, borderTopRightRadius: 4 },
-  barLabel: { fontSize: 9, color: colors.muted, textAlign: "center" },
+  historyTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 15,
+    color: colors.text,
+    ...rtlTextBold,
+  },
+  historyEmpty: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.muted,
+    paddingVertical: 8,
+    ...rtlText,
+  },
+  historyRow: {
+    paddingVertical: 10,
+  },
+  historyRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  historyDate: {
+    fontFamily: fonts.medium,
+    fontSize: 12,
+    color: colors.muted,
+    marginBottom: 4,
+    ...rtlText,
+  },
+  historyPosition: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+    ...rtlText,
+  },
+  historyRecul: {
+    marginTop: 4,
+    fontFamily: fonts.medium,
+    fontSize: 13,
+    color: colors.orange,
+    ...rtlText,
+  },
+  historyNote: {
+    marginTop: 4,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.muted,
+    ...rtlText,
+  },
+  historyMore: {
+    marginTop: 8,
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.muted,
+    ...rtlText,
+  },
 });
