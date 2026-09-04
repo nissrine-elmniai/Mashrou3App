@@ -39,8 +39,6 @@ import {
 } from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { getMemberProfileFields, removeMemberFromSeance, formatGenderLabel } from "../../lib/membersApi";
-import { initials, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
 import {
   getMemberProfileFields,
   removeMemberFromSeance,
@@ -51,7 +49,7 @@ import {
   getAllSeances,
   formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
-import { initials, deriveLevel, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
+import { initials, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
 import { groupMemberPresenceByMonth } from "./supervisorAttendanceHelpers";
 import ProgressCard from "../../components/profile/ProgressCard";
 
@@ -532,9 +530,6 @@ export default function MemberProfileScreen({ navigation, route }) {
 
         <View style={styles.cardSpacing}>
           <ProgressCard progressState={progressState} />
-        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
-          <Text style={styles.cardTitle}>التقدم</Text>
-          <ProgressSectionContent progressState={progressState} styles={styles} />
         </View>
 
         <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>

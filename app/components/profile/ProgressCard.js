@@ -75,7 +75,7 @@ function ProgressSectionContent({ progressState }) {
           <Text style={styles.hizbDenom}>/ {TOTAL_HIZB}</Text>
         </View>
         <View style={styles.pctRow}>
-          <Text style={styles.pctCaption}>النسية الكلية</Text>
+          <Text style={styles.pctCaption}>التقدم الكلي</Text>
           <Text style={styles.pctValue}>{pctLabel}</Text>
         </View>
       </View>
