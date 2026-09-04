@@ -199,7 +199,7 @@ export function SectionCard({
   );
 }
 
-export function QuickButton({ color = colors.primary, icon, label, onPress, badgeCount, textStyle }) {
+export function QuickButton({ color = colors.primary, icon, label, onPress, badgeCount, textStyle, style }) {
   const count = Number(badgeCount) || 0;
   const showBadge = count > 0;
 
@@ -209,7 +209,7 @@ export function QuickButton({ color = colors.primary, icon, label, onPress, badg
 
   return (
     <TouchableOpacity
-      style={[styles.quickBtn, { backgroundColor: color }]}
+      style={[styles.quickBtn, { backgroundColor: color }, style]}
       onPress={onPress}
       activeOpacity={0.85}
     >

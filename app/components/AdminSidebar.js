@@ -53,7 +53,7 @@ const MENU_ITEMS = [
   { id: "tests", label: "الاختبارات", icon: ClipboardList },
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
   { id: "notifications", label: "التنبيهات", icon: Bell },
-  { id: "chat", label: "الدردشة", icon: MessageSquare },
+  { id: "chat", label: "المحادثات", icon: MessageSquare },
   { id: "settings", label: "الإعدادات", icon: Settings },
 ];
 
@@ -242,7 +242,7 @@ export function AdminChatFab({ navigation, hidden = false }) {
       onPress={() => navigation.navigate("AdminChat")}
       activeOpacity={0.85}
       accessibilityRole="button"
-      accessibilityLabel="الدردشة"
+      accessibilityLabel="المحادثات"
     >
       <Ionicons
         name="chatbubble-ellipses"

@@ -229,6 +229,7 @@ export default function SupervisorDashboard({ navigation }) {
                 members={members}
                 activeGroup={activeGroup}
                 progressLoading={progressLoading}
+                avgProgress={avgProgress}
               />
             )}
             {tab === "messages" && (

@@ -212,13 +212,10 @@ export default function ChatConversationScreen({ navigation, route }) {
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
             <Ionicons name={arrowBack} size={22} color={colors.text} />
           </TouchableOpacity>
-          <View style={styles.avatarWrap}>
-            <View style={[styles.memberAvatar, isAdmin && { backgroundColor: colors.primary }]}>
-              <Text style={isAdmin ? styles.memberAvatarTextWhite : styles.memberAvatarText}>
-                {contactAvatarLetter}
-              </Text>
-            </View>
-            <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
+          <View style={[styles.memberAvatar, isAdmin && { backgroundColor: colors.primary }]}>
+            <Text style={isAdmin ? styles.memberAvatarTextWhite : styles.memberAvatarText}>
+              {contactAvatarLetter}
+            </Text>
           </View>
           <Text style={styles.contactName} numberOfLines={1}>
             {contactName}
@@ -233,9 +230,6 @@ export default function ChatConversationScreen({ navigation, route }) {
         />
 
         <View style={styles.inputBar}>
-          <TouchableOpacity style={styles.attachBtn} activeOpacity={0.7}>
-            <Ionicons name="attach-outline" size={22} color={colors.muted} />
-          </TouchableOpacity>
           <TextInput
             style={styles.input}
             value={inputText}
@@ -268,7 +262,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   backBtn: { padding: 2 },
-  avatarWrap: { position: "relative" },
   memberAvatar: {
     width: 42,
     height: 42,
@@ -279,16 +272,6 @@ const styles = StyleSheet.create({
   },
   memberAvatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
   memberAvatarTextWhite: { color: "white", fontFamily: fonts.bold, fontSize: 15 },
-  statusDot: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.card,
-  },
   contactName: { flex: 1, fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
 
   listContent: { paddingVertical: 12 },
@@ -318,7 +301,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
-  attachBtn: { padding: 6 },
   input: {
     flex: 1,
     backgroundColor: colors.bg,
