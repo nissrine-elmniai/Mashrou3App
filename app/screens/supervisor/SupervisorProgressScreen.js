@@ -104,6 +104,7 @@ export default function SupervisorProgressScreen({
   members = [],
   activeGroup = null,
   progressLoading = false,
+  avgProgress = null,
 }) {
   const { seasons } = useApp();
   const [selectedMemberId, setSelectedMemberId] = useState(null);
@@ -233,82 +234,99 @@ export default function SupervisorProgressScreen({
 
   const togglePicker = () => (pickerOpen ? setPickerOpen(false) : openPicker());
 
-  return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-      {activeGroup ? (
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryText} numberOfLines={1}>
-            {activeGroup.name}
-          </Text>
-          <Text style={styles.summaryDot}> · </Text>
-          <Text style={styles.summaryText}>التقدم</Text>
-        </View>
-      ) : null}
-
-      {members.length === 0 ? (
-        <EmptyState text="لا يوجد أعضاء لعرض تقدمهم" />
-      ) : (
-        <View style={styles.dropdownWrap}>
-          <View style={[styles.comboBox, pickerOpen && styles.comboBoxOpen]}>
-            <Ionicons name="search-outline" size={18} color={colors.placeholder} />
-            <TextInput
-              style={styles.comboInput}
-              textAlign={textAlignStart}
-              placeholder="ابحث أو اختر عضواً..."
-              placeholderTextColor={colors.placeholder}
-              value={query}
-              onFocus={openPicker}
-              onChangeText={(t) => {
-                setQuery(t);
-                if (!pickerOpen) setPickerOpen(true);
-              }}
+  const picker =
+    members.length === 0 ? (
+      <EmptyState text="لا يوجد أعضاء لعرض تقدمهم" />
+    ) : (
+      <View style={[styles.dropdownWrap, pickerOpen && styles.dropdownWrapOpen]}>
+        <View style={[styles.comboBox, pickerOpen && styles.comboBoxOpen]}>
+          <Ionicons name="search-outline" size={18} color={colors.placeholder} />
+          <TextInput
+            style={styles.comboInput}
+            textAlign={textAlignStart}
+            placeholder="ابحث أو اختر عضواً..."
+            placeholderTextColor={colors.placeholder}
+            value={query}
+            onFocus={openPicker}
+            onChangeText={(t) => {
+              setQuery(t);
+              if (!pickerOpen) setPickerOpen(true);
+            }}
+          />
+          <TouchableOpacity onPress={togglePicker} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons
+              name={pickerOpen ? "chevron-up" : "chevron-down"}
+              size={20}
+              color={colors.placeholder}
             />
-            <TouchableOpacity onPress={togglePicker} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons
-                name={pickerOpen ? "chevron-up" : "chevron-down"}
-                size={20}
-                color={colors.placeholder}
-              />
-            </TouchableOpacity>
-          </View>
-
-          {pickerOpen ? (
-            <View style={styles.dropdownPanel}>
-              <ScrollView
-                style={styles.optionsScroll}
-                nestedScrollEnabled
-                keyboardShouldPersistTaps="handled"
-              >
-                {filteredMembers.length === 0 ? (
-                  <EmptyState text="لا يوجد نتائج" />
-                ) : (
-                  filteredMembers.map((item) => {
-                    const name = `${item.user.firstName} ${item.user.lastName}`;
-                    const active = item.user.id === selectedMemberId;
-                    return (
-                      <TouchableOpacity
-                        key={item.user.id}
-                        style={[styles.optionRow, active && styles.optionRowActive]}
-                        onPress={() => handleSelect(item.user.id)}
-                      >
-                        <Text style={[styles.optionText, active && styles.optionTextActive]}>
-                          {name}
-                        </Text>
-                        {active ? (
-                          <Ionicons name="checkmark" size={18} color={colors.primary} />
-                        ) : null}
-                      </TouchableOpacity>
-                    );
-                  })
-                )}
-              </ScrollView>
-            </View>
-          ) : null}
+          </TouchableOpacity>
         </View>
-      )}
+
+        {pickerOpen ? (
+          <View style={styles.dropdownPanel}>
+            <ScrollView
+              style={styles.optionsScroll}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
+              {filteredMembers.length === 0 ? (
+                <EmptyState text="لا يوجد نتائج" />
+              ) : (
+                filteredMembers.map((item) => {
+                  const name = `${item.user.firstName} ${item.user.lastName}`;
+                  const active = item.user.id === selectedMemberId;
+                  return (
+                    <TouchableOpacity
+                      key={item.user.id}
+                      style={[styles.optionRow, active && styles.optionRowActive]}
+                      onPress={() => handleSelect(item.user.id)}
+                    >
+                      <Text style={[styles.optionText, active && styles.optionTextActive]}>
+                        {name}
+                      </Text>
+                      {active ? (
+                        <Ionicons name="checkmark" size={18} color={colors.primary} />
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        ) : null}
+      </View>
+    );
+
+  return (
+    <View style={styles.flexFill}>
+      <View style={styles.stickyTop}>
+        {activeGroup ? (
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryText} numberOfLines={1}>
+              {activeGroup.name}
+            </Text>
+            <Text style={styles.summaryDot}> · </Text>
+            <Text style={styles.summaryText}>التقدم</Text>
+            {!progressLoading && avgProgress != null ? (
+              <>
+                <Text style={styles.summaryDot}> · </Text>
+                <Text style={styles.summaryText}>{`${avgProgress}%`}</Text>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+        {picker}
+      </View>
 
       {members.length > 0 ? (
-        <>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={() => {
+            if (pickerOpen) setPickerOpen(false);
+          }}
+        >
           <ProgressCard progressState={progressState} />
           {currentPositionLabel && !progressLoading ? (
             <Text style={styles.positionDetail}>{currentPositionLabel}</Text>
@@ -375,14 +393,20 @@ export default function SupervisorProgressScreen({
               </Text>
             ) : null}
           </View>
-        </>
+        </ScrollView>
       ) : null}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { padding: 16, paddingBottom: 24 },
+  flexFill: { flex: 1 },
+  stickyTop: {
+    zIndex: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 },
   summaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -407,7 +431,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 6,
   },
 
-  dropdownWrap: { marginBottom: 14 },
+  dropdownWrap: {
+    marginBottom: 14,
+  },
+  dropdownWrapOpen: {
+    zIndex: 21,
+    elevation: 21,
+  },
   comboBox: {
     flexDirection: row,
     alignItems: "center",
@@ -433,6 +463,12 @@ const styles = StyleSheet.create({
   },
 
   dropdownPanel: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    zIndex: 22,
+    elevation: 24,
     borderWidth: 1.5,
     borderColor: colors.border,
     borderTopWidth: 0,
