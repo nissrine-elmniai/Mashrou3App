@@ -232,29 +232,35 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
                 </Text>
               </View>
             ) : (
-              overview.byDateRows.map((rowItem) => {
-                const total = rowItem.presentCount + rowItem.absentCount;
-                const pct =
-                  total > 0
-                    ? Math.round((rowItem.presentCount / total) * 100)
-                    : 0;
-                return (
-                  <View key={rowItem.sessionDate} style={styles.sessionRow}>
-                    <Text style={styles.sessionDate}>
-                      {formatDateDisplay(rowItem.sessionDate)}
-                    </Text>
-                    <View style={styles.sessionStats}>
-                      <Text style={styles.sessionPresent}>
-                        حضور {rowItem.presentCount}
+              <View style={styles.card}>
+                {overview.byDateRows.map((rowItem, idx) => {
+                  const total = rowItem.presentCount + rowItem.absentCount;
+                  const pct =
+                    total > 0
+                      ? Math.round((rowItem.presentCount / total) * 100)
+                      : 0;
+                  const isLast = idx === overview.byDateRows.length - 1;
+                  return (
+                    <View
+                      key={rowItem.sessionDate}
+                      style={[styles.sessionRow, isLast && styles.sessionRowLast]}
+                    >
+                      <Text style={styles.sessionDate}>
+                        {formatDateDisplay(rowItem.sessionDate)}
                       </Text>
-                      <Text style={styles.sessionAbsent}>
-                        غياب {rowItem.absentCount}
-                      </Text>
-                      <Text style={styles.sessionPct}>{pct}%</Text>
+                      <View style={styles.sessionStats}>
+                        <Text style={styles.sessionPresent}>
+                          حضور {rowItem.presentCount}
+                        </Text>
+                        <Text style={styles.sessionAbsent}>
+                          غياب {rowItem.absentCount}
+                        </Text>
+                        <Text style={styles.sessionPct}>{pct}%</Text>
+                      </View>
                     </View>
-                  </View>
-                );
-              })
+                  );
+                })}
+              </View>
             )}
           </>
         )}
@@ -384,16 +390,16 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   sessionRow: {
-    backgroundColor: palette.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: 14,
-    marginBottom: 8,
     flexDirection: row,
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border,
+  },
+  sessionRowLast: {
+    borderBottomWidth: 0,
   },
   sessionDate: {
     fontWeight: "600",

@@ -51,6 +51,8 @@ import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { TOTAL_HIZB, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import ProfileHero from "../../components/profile/ProfileHero";
+import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
@@ -661,11 +663,11 @@ export default function MemberDashboardScreen({ navigation }) {
                       ? "ملفي"
                       : "السلام عليكم"}
               </Text>
-              <Text style={styles.headerSubtitle}>
-                {tab === "home"
-                  ? currentUser?.firstName || fullName
-                  : fullName}
-              </Text>
+              {tab === "home" ? (
+                <Text style={styles.headerSubtitle}>
+                  {currentUser?.firstName || fullName}
+                </Text>
+              ) : null}
             </View>
             {tab === "programs" ? (
               <Ionicons name="book" size={22} color="white" />
@@ -826,7 +828,7 @@ export default function MemberDashboardScreen({ navigation }) {
         )}
 
         {tab === "profile" && (
-          <View style={styles.profileTab}>
+          <View>
             {sessionState.loading && !contactFields.phone ? (
               <ActivityIndicator
                 color={colors.primary}
@@ -834,49 +836,41 @@ export default function MemberDashboardScreen({ navigation }) {
               />
             ) : null}
 
-            <ProfileInfoCard
-              email={currentUser?.email || null}
-              gender={displayGenderFromUser(currentUser?.gender)}
-              phone={contactFields.phone}
-              school={contactFields.school}
-              level={contactFields.level}
-              hifzAmount={contactFields.hifzAmount}
-              onEdit={() => setEditInfoModal(true)}
+            <ProfileHero
+              firstName={currentUser?.firstName}
+              fullName={fullName}
             />
 
-            <SessionCard
-              groupName={sessionState.groupName}
-              jour={sessionState.jour}
-              heureDebut={sessionState.heureDebut}
-              registrationDate={sessionState.registrationDate}
-            />
-
-            <ProgressCard
-              progressState={profileProgressState}
-              onUpdate={openProgression}
-            />
-
-            <AttendanceCard
-              key={`${authId || ""}_${sessionState.seanceId || ""}`}
-              presenceState={presenceState}
-            />
-
-            <TouchableOpacity
-              style={styles.changePasswordLink}
-              onPress={() => setPasswordModal(true)}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name="lock-closed-outline"
-                size={16}
-                color={colors.muted}
+            <View style={styles.profileCards}>
+              <ProfileInfoCard
+                email={currentUser?.email || null}
+                gender={displayGenderFromUser(currentUser?.gender)}
+                phone={contactFields.phone}
+                school={contactFields.school}
+                level={contactFields.level}
+                hifzAmount={contactFields.hifzAmount}
+                onEdit={() => setEditInfoModal(true)}
               />
-              <View>
-                <Text style={styles.changePasswordLinkText}>
-                  تغيير كلمة المرور
-                </Text>
-              </View>
-            </TouchableOpacity>
+
+              <SessionCard
+                groupName={sessionState.groupName}
+                jour={sessionState.jour}
+                heureDebut={sessionState.heureDebut}
+                registrationDate={sessionState.registrationDate}
+              />
+
+              <ProgressCard
+                progressState={profileProgressState}
+                onUpdate={openProgression}
+              />
+
+              <AttendanceCard
+                key={`${authId || ""}_${sessionState.seanceId || ""}`}
+                presenceState={presenceState}
+              />
+
+              <ProfilePasswordCard onChange={() => setPasswordModal(true)} />
+            </View>
           </View>
         )}
       </ScrollView>
@@ -969,9 +963,9 @@ const styles = StyleSheet.create({
   header: {
     borderRadius: radii.lg,
     overflow: "hidden",
-    paddingTop: 14,
-    paddingBottom: 18,
-    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 22,
+    paddingHorizontal: 18,
   },
   headerRow: {
     flexDirection: row,
@@ -983,13 +977,13 @@ const styles = StyleSheet.create({
   },
   headerGreeting: {
     color: "white",
-    fontSize: 20,
+    fontSize: 19,
     fontFamily: fonts.bold,
     ...rtlText,
   },
   headerSubtitle: {
     color: "rgba(255,255,255,0.92)",
-    fontSize: 13,
+    fontSize: 12,
     marginTop: 4,
     fontFamily: fonts.regular,
     ...rtlText,
@@ -1310,27 +1304,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   notifBody: { ...rtlText, color: colors.muted, fontSize: 13 },
-  profileTab: {
-    gap: 16,
+  profileCards: {
+    gap: 14,
   },
   profileLoader: { marginVertical: 8 },
-  changePasswordLink: {
-    flexDirection: row,
-    alignItems: "center",
-    alignSelf: "center",
-    gap: 6,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginTop: 4,
-  },
-  changePasswordLinkText: {
-    color: colors.muted,
-    fontSize: 13,
-    fontFamily: fonts.regular,
-    writingDirection: "rtl",
-    textAlign: "center",
-    flexShrink: 0,
-  },
 
   bottomWrap: {},
   fab: {

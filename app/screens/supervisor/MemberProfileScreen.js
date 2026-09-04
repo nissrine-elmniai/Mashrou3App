@@ -93,7 +93,7 @@ function PresenceMiniRow({ date, status }) {
   const label = PRESENCE_LABELS[status] || status;
   const statusColor = STATUS_COLORS[status] || colors.muted;
   return (
-    <View style={[styles.presenceMiniRow, shadows.card]}>
+    <View style={styles.presenceMiniRow}>
       <Text style={styles.presenceMiniDate}>{date || "—"}</Text>
       <Text style={[styles.presenceMiniStatus, { color: statusColor }]}>{label}</Text>
     </View>
@@ -902,17 +902,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     ...rtlText,
   },
-  presenceList: { marginTop: 8, gap: 8 },
+  presenceList: { marginTop: 8 },
   presenceMiniRow: {
     flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
   presenceMiniDate: {
     fontSize: 13,

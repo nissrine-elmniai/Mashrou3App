@@ -1,10 +1,10 @@
 import React from "react";
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, row as rtlRow } from "../../constants/rtl";
 import { formatHizbTumunDelta, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileFieldRow from "./ProfileFieldRow";
+import ProfileCardHeader from "./ProfileCardHeader";
 
 /** Total des hizb du Coran — affichage uniquement, pas une constante API. */
 const TOTAL_HIZB = 60;
@@ -122,20 +122,11 @@ function ProgressSectionContent({ progressState }) {
 export default function ProgressCard({ progressState, onUpdate }) {
   return (
     <View style={[styles.card, shadows.card]}>
-      <View style={styles.headerRow}>
-        <Text style={styles.cardTitle}>التقدم</Text>
-        {onUpdate ? (
-          <TouchableOpacity
-            style={styles.editPill}
-            onPress={onUpdate}
-            activeOpacity={0.75}
-            accessibilityLabel="تسجيل التقدم"
-          >
-            <Ionicons name="create-outline" size={radii.lg} color={colors.primary} />
-            <Text style={styles.editPillText}>تحديث</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
+      <ProfileCardHeader
+        title="التقدم"
+        onAction={onUpdate}
+        accessibilityLabel="تسجيل التقدم"
+      />
       <ProgressSectionContent progressState={progressState} />
     </View>
   );
@@ -146,18 +137,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: radii.xl,
     padding: radii.lg,
-  },
-  cardTitle: {
-    fontFamily: fonts.bold,
-    fontSize: radii.lg,
-    color: colors.text,
-    flex: 1,
-    ...rtlTextBold,
-  },
-  headerRow: {
-    flexDirection: rtlRow,
-    alignItems: "center",
-    marginBottom: radii.md,
   },
   hizbBlock: {
     gap: radii.sm,
@@ -229,23 +208,6 @@ const styles = StyleSheet.create({
   },
   noteValue: {
     flexShrink: 1,
-  },
-  editPill: {
-    flexDirection: rtlRow,
-    alignItems: "center",
-    gap: radii.sm,
-    paddingHorizontal: radii.md,
-    paddingVertical: radii.sm,
-    borderRadius: radii.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.primary,
-    backgroundColor: colors.card,
-  },
-  editPillText: {
-    color: colors.primary,
-    fontFamily: fonts.semiBold,
-    fontSize: radii.md,
-    ...rtlText,
   },
   loader: { marginVertical: radii.lg },
   emptyText: {

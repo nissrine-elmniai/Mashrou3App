@@ -30,6 +30,7 @@ import {
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import ProfileHero from "../../components/profile/ProfileHero";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
@@ -272,31 +273,38 @@ export default function MemberProfileScreen({ navigation }) {
           <ActivityIndicator color={colors.primary} style={styles.pageLoader} />
         ) : null}
 
-        <ProfileInfoCard
-          email={currentUser?.email || null}
-          gender={displayGenderFromUser(currentUser?.gender)}
-          phone={contactFields.phone}
-          school={contactFields.school}
-          level={contactFields.level}
-          hifzAmount={contactFields.hifzAmount}
+        <ProfileHero
+          firstName={currentUser?.firstName}
+          fullName={`${currentUser?.firstName || ""} ${currentUser?.lastName || ""}`.trim()}
         />
 
-        <SessionCard
-          groupName={sessionState.groupName}
-          jour={sessionState.jour}
-          heureDebut={sessionState.heureDebut}
-          registrationDate={sessionState.registrationDate}
-        />
+        <View style={styles.cards}>
+          <ProfileInfoCard
+            email={currentUser?.email || null}
+            gender={displayGenderFromUser(currentUser?.gender)}
+            phone={contactFields.phone}
+            school={contactFields.school}
+            level={contactFields.level}
+            hifzAmount={contactFields.hifzAmount}
+          />
 
-        <ProgressCard
-          progressState={progressState}
-          onUpdate={() => navigation.navigate("MemberProgress")}
-        />
+          <SessionCard
+            groupName={sessionState.groupName}
+            jour={sessionState.jour}
+            heureDebut={sessionState.heureDebut}
+            registrationDate={sessionState.registrationDate}
+          />
 
-        <AttendanceCard
-          key={`${authId || ""}_${sessionState.seanceId || ""}`}
-          presenceState={presenceState}
-        />
+          <ProgressCard
+            progressState={progressState}
+            onUpdate={() => navigation.navigate("MemberProgress")}
+          />
+
+          <AttendanceCard
+            key={`${authId || ""}_${sessionState.seanceId || ""}`}
+            presenceState={presenceState}
+          />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -307,7 +315,9 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 32,
-    gap: 16,
+  },
+  cards: {
+    gap: 14,
   },
   header: {
     flexDirection: rtlRow,

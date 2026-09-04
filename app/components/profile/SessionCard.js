@@ -1,8 +1,8 @@
 import React, { useMemo } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlTextBold, fonts } from "../../constants/rtl";
 import ProfileFieldRow from "./ProfileFieldRow";
+import ProfileCardHeader from "./ProfileCardHeader";
 
 /**
  * Formate "الأربعاء 23:00" ou raw jour+heure → "الأربعاء — 23:00".
@@ -41,13 +41,14 @@ export default function SessionCard({
 
   return (
     <View style={[styles.card, shadows.card]}>
-      <Text style={styles.cardTitle}>الحصة</Text>
-      <ProfileFieldRow icon="people-outline" label="الحصة" value={groupName} />
-      <ProfileFieldRow icon="time-outline" label="التوقيت" value={scheduleLabel} />
+      <ProfileCardHeader title="الحصة" />
+      <ProfileFieldRow icon="people-outline" label="الحصة" value={groupName || "—"} />
+      <ProfileFieldRow icon="time-outline" label="التوقيت" value={scheduleLabel} hideIfEmpty />
       <ProfileFieldRow
         icon="calendar-clear-outline"
         label="تاريخ التسجيل"
         value={registrationDateOnly}
+        hideIfEmpty
       />
     </View>
   );
@@ -56,14 +57,7 @@ export default function SessionCard({
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: radii.xl,
+    borderRadius: radii.lg,
     padding: 16,
-  },
-  cardTitle: {
-    fontFamily: fonts.bold,
-    fontSize: 16,
-    color: colors.text,
-    marginBottom: 4,
-    ...rtlTextBold,
   },
 });
