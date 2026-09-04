@@ -35,7 +35,7 @@ export default function MemberChatInboxScreen({ navigation }) {
           id: res.seance.superviseur_id,
           name: name || "المشرف",
           role: "supervisor",
-          avatarLetter: initials(s.first_name || name || "م"),
+          avatarLetter: initials(s.first_name  || name || "م"),
         });
       }
       setSeanceLoading(false);

@@ -106,7 +106,7 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
             contentContainerStyle={styles.cardContent}
           >
             <View style={styles.header}>
-              <Text style={styles.title}>تغيير كلمة المرور</Text>
+              <Text style={styles.title}> تغيير كلمة المرور</Text>
               <TouchableOpacity onPress={handleClose} hitSlop={10}>
                 <Ionicons name="close" size={22} color={colors.muted} />
               </TouchableOpacity>

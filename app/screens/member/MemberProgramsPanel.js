@@ -13,7 +13,7 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
-import { colors, radii } from "../../constants/theme";
+import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import {
@@ -208,7 +208,7 @@ export default function MemberProgramsPanel({ navigation }) {
   return (
     <View>
       <TouchableOpacity style={styles.newBtn} onPress={openCreate} activeOpacity={0.85}>
-        <Ionicons name="add" size={20} color="white" />
+        <Ionicons name="add" size={20} color={colors.primary} />
         <Text style={styles.newBtnText}>برنامج جديد</Text>
       </TouchableOpacity>
 
@@ -338,10 +338,10 @@ function MemberProgramCard({
         </View>
         <View style={styles.cardActions}>
           <TouchableOpacity style={styles.iconBtn} onPress={onEdit} hitSlop={8}>
-            <Ionicons name="create-outline" size={20} color="#1976D2" />
+            <Ionicons name="create-outline" size={20} color={colors.primary} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={onDelete} hitSlop={8}>
-            <Ionicons name="trash-outline" size={20} color={colors.red} />
+            <Ionicons name="trash-outline" size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -574,15 +574,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.card,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
     borderRadius: radii.md,
     paddingVertical: 12,
     marginBottom: 16,
+    ...shadows.card,
+    elevation: 3,
   },
   newBtnText: {
-    color: "white",
+    color: colors.primary,
     fontWeight: "700",
-    fontSize: 15,
+    fontSize: 16,
     ...rtlText,
   },
   sectionTitle: {

@@ -14,9 +14,11 @@ export default function ProfileFieldRow({
   value,
   iconColor = colors.primary,
   valueStyle,
+  hideIfEmpty = false,
 }) {
-  const display =
-    value != null && String(value).trim() !== "" ? String(value) : "—";
+  const hasValue = value != null && String(value).trim() !== "";
+  if (hideIfEmpty && !hasValue) return null;
+  const display = hasValue ? String(value) : "—";
   return (
     <View style={styles.itemRow}>
       <View style={styles.rowIcon}>
