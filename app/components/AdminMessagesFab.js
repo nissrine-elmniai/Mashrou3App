@@ -29,7 +29,7 @@ export default function AdminMessagesFab({
       onPress={() => navigation.navigate("AdminChat")}
       activeOpacity={0.85}
       accessibilityRole="button"
-      accessibilityLabel="الدردشة"
+      accessibilityLabel="المحادثات"
     >
       <Ionicons name="chatbubble-ellipses" size={24} color="white" />
       {unreadTotal > 0 ? (

@@ -68,10 +68,11 @@ export default function SupervisorHomeScreen({
   };
 
   const quickBtnLabelStyle = {
-    fontSize: 16,
+    fontSize: 13,
     color: "white",
     ...rtlText,
     textAlign: "center",
+    flexShrink: 1,
   };
 
   return (
@@ -105,20 +106,24 @@ export default function SupervisorHomeScreen({
         />
       </View>
 
-      <QuickButton
-        label={isMarkingWindowOpen ? " تسجيل الحضور" : " سجل الحضور"}
-        icon="checkbox-outline"
-        color={colors.gold}
-        textStyle={quickBtnLabelStyle}
-        onPress={() => onChangeTab("attendance")}
-      />
-      <QuickButton
-        label="إرسال رسالة للجميع"
-        icon="chatbubble-ellipses-outline"
-        color={colors.primary}
-        textStyle={quickBtnLabelStyle}
-        onPress={openBroadcast}
-      />
+      <View style={styles.quickRow}>
+        <QuickButton
+          label={isMarkingWindowOpen ? " تسجيل الحضور" : " سجل الحضور"}
+          icon="checkbox-outline"
+          color={colors.gold}
+          textStyle={quickBtnLabelStyle}
+          style={styles.quickRowBtn}
+          onPress={() => onChangeTab("attendance")}
+        />
+        <QuickButton
+          label="إرسال رسالة للجميع"
+          icon="chatbubble-ellipses-outline"
+          color={colors.primary}
+          textStyle={quickBtnLabelStyle}
+          style={styles.quickRowBtn}
+          onPress={openBroadcast}
+        />
+      </View>
 
       {recentAlerts.length > 0 ? (
         <SectionCard title="الإشعارات" borderColor={colors.card}>
@@ -200,6 +205,15 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   statsRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  quickRow: {
+    flexDirection: row,
+    gap: 10,
+    marginBottom: 12,
+  },
+  quickRowBtn: {
+    flex: 1,
+    marginBottom: 0,
+  },
   activityRow: {
     flexDirection: row,
     alignItems: "center",
