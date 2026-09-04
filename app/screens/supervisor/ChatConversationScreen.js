@@ -230,9 +230,6 @@ export default function ChatConversationScreen({ navigation, route }) {
         />
 
         <View style={styles.inputBar}>
-          <TouchableOpacity style={styles.attachBtn} activeOpacity={0.7}>
-            <Ionicons name="attach-outline" size={22} color={colors.muted} />
-          </TouchableOpacity>
           <TextInput
             style={styles.input}
             value={inputText}
@@ -304,7 +301,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
-  attachBtn: { padding: 6 },
   input: {
     flex: 1,
     backgroundColor: colors.bg,
