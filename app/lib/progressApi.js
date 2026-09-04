@@ -66,9 +66,13 @@ async function currentAuthId() {
 
 /**
  * Progression d'un membre (historique, plus récentes d'abord via `date`).
+ * @param {string} membreId
+ * @param {{ limit?: number, since?: string }} [options]
+ *   limit — borne PostgREST après le tri `date`/`id`.
+ *   since — ISO : ne garder que `date` >= since (timestamptz, pas date_saisie).
  * @returns { ok, entries }
  */
-export async function getMemberProgressEntries(membreId) {
+export async function getMemberProgressEntries(membreId, options) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -76,9 +80,24 @@ export async function getMemberProgressEntries(membreId) {
     return { ok: false, error: "معرّف العضو مفقود" };
   }
 
+  const limit = Number(options?.limit);
+  const since = options?.since ? String(options.since) : "";
+
   try {
-    const { data, error } = await fetchProgressionOrdered(
-      () => supabase.from("progression").select("*").eq("membre_id", membreId),
+    let request = supabase
+      .from("progression")
+      .select("*")
+      .eq("membre_id", membreId);
+    if (since) {
+      request = request.gte("date", since);
+    }
+    request = applyProgressionOrder(request);
+    if (Number.isInteger(limit) && limit > 0) {
+      request = request.limit(limit);
+    }
+    const { data, error } = await withTimeout(
+      request,
+      SUPABASE_TIMEOUT_MS,
       "قراءة تقدم العضو"
     );
     if (error) {

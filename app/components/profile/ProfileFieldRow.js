@@ -5,7 +5,7 @@ import { colors } from "../../constants/theme";
 import { rtlText, fonts, row as rtlRow } from "../../constants/rtl";
 
 /**
- * Ligne profil RTL : label + valeur à droite, icône ronde à gauche.
+ * Ligne profil RTL : icône ronde au début (droite), label + valeur ensuite.
  * Valeur vide → "—".
  */
 export default function ProfileFieldRow({
@@ -19,12 +19,12 @@ export default function ProfileFieldRow({
     value != null && String(value).trim() !== "" ? String(value) : "—";
   return (
     <View style={styles.itemRow}>
+      <View style={styles.rowIcon}>
+        <Ionicons name={icon} size={18} color={iconColor} />
+      </View>
       <View style={styles.rowTextWrap}>
         <Text style={styles.rowLabel}>{label}</Text>
         <Text style={[styles.rowValue, valueStyle]}>{display}</Text>
-      </View>
-      <View style={styles.rowIcon}>
-        <Ionicons name={icon} size={18} color={iconColor} />
       </View>
     </View>
   );
