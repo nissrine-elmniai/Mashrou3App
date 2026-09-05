@@ -1,5 +1,6 @@
 import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
 import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
+import { formatGenderLabel } from "./membersApi";
 
 export { isSupabaseConfigured };
 
@@ -36,7 +37,10 @@ export function profileToAppUser(profile, fallback = {}) {
     firstName: profile.first_name || fallback.firstName || "",
     lastName: profile.last_name || fallback.lastName || "",
     birthDate: fallback.birthDate || "2000/01/01",
-    gender: fallback.gender || "غير محدد",
+    gender:
+      formatGenderLabel(profile?.genre) ||
+      formatGenderLabel(fallback.gender) ||
+      "غير محدد",
     role: roleFromProfile || roleFromFallback || ROLES.MEMBER,
     accountStatus:
       profile.account_status || fallback.accountStatus || ACCOUNT_STATUS.ACTIVE,
@@ -164,6 +168,101 @@ export async function signInWithEmailPassword(email, password) {
   };
 }
 
+/**
+ * Crée / active un compte invité via Edge Function (service role + email_confirm).
+ * Évite auth.signUp qui dépend du SMTP Auth (souvent en panne).
+ */
+export async function activateInvitedAuthAccount({
+  email,
+  password,
+  role,
+  firstName,
+  lastName,
+}) {
+  const mail = String(email || "").trim().toLowerCase();
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      "activate-invited-account",
+      {
+        body: {
+          email: mail,
+          password,
+          role,
+          firstName: firstName || "",
+          lastName: lastName || "",
+        },
+      }
+    );
+
+    // Corps JSON même si HTTP non-2xx (Supabase met souvent l'erreur dans error.context)
+    let payload = data;
+    if ((!payload || payload.ok === undefined) && error?.context) {
+      try {
+        const ctx = error.context;
+        if (typeof ctx.json === "function") {
+          payload = await ctx.json();
+        } else if (typeof ctx.text === "function") {
+          const text = await ctx.text();
+          payload = text ? JSON.parse(text) : null;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (payload && payload.ok === false) {
+      return { ok: false, error: payload.error || "تعذر إنشاء الحساب" };
+    }
+
+    if (payload?.ok === true && payload?.authUser?.id) {
+      return {
+        ok: true,
+        authUser: payload.authUser,
+        profile: payload.profile || null,
+        needsEmailConfirmation: false,
+      };
+    }
+
+    if (error) {
+      const msg = error.message || "";
+      const status = error.context?.status || error.status;
+      if (
+        status === 404 ||
+        /not found|FunctionsFetchError|Failed to send|relay error/i.test(msg)
+      ) {
+        // 404 HTTP peut aussi être « pas d'invitation » — message déjà extrait ci-dessus
+        if (/non-2xx|Edge Function/i.test(msg)) {
+          return {
+            ok: false,
+            error:
+              "تعذر إنشاء الحساب. تأكد أن الإدارة قبلت طلبك بهذا البريد ثم أعد المحاولة.",
+          };
+        }
+        return {
+          ok: false,
+          functionMissing: true,
+          error:
+            "دالة activate-invited-account غير منشورة — أعد نشرها من لوحة Supabase",
+        };
+      }
+      return {
+        ok: false,
+        error:
+          msg ||
+          "تعذر إنشاء الحساب. تحقق من نشر الدالة activate-invited-account.",
+      };
+    }
+
+    return { ok: false, error: "تعذر إنشاء الحساب" };
+  } catch (e) {
+    return {
+      ok: false,
+      functionMissing: true,
+      error: e?.message || "تعذر الاتصال بخدمة إنشاء الحساب",
+    };
+  }
+}
+
 export async function signUpWithProfile({
   email,
   password,
@@ -173,6 +272,22 @@ export async function signUpWithProfile({
   accountStatus = ACCOUNT_STATUS.ACTIVE,
   signOutAfter = true,
 }) {
+  // Activation d'invité : Edge Function (createUser + email_confirm) pour éviter
+  // l'échec SMTP de auth.signUp (« تعذر إرسال بريد التأكيد »).
+  if (role === ROLES.MEMBER || role === ROLES.SUPERVISOR) {
+    const invited = await activateInvitedAuthAccount({
+      email,
+      password,
+      role,
+      firstName,
+      lastName,
+    });
+    if (!invited.functionMissing) {
+      return invited;
+    }
+    // Fonction non déployée : repli temporaire sur signUp (nécessite SMTP OK)
+  }
+
   const mail = String(email || "").trim().toLowerCase();
   const { data, error } = await supabase.auth.signUp({
     email: mail,

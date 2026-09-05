@@ -41,33 +41,132 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+/** Id de l'utilisateur connecté via la session Supabase, ou null. */
+async function currentAuthId() {
+  const { data } = await supabase.auth.getUser();
+  return data?.user?.id || null;
+}
+
+/**
+ * Date/heure d'inscription du membre (notifications + dernières activités).
+ * Priorité : première inscription acceptée → profil.created_at.
+ * @returns { ok, sinceIso }
+ */
+export async function resolveMemberAlertCutoff(authId = null) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, sinceIso: null };
+  }
+  const membreId = authId || (await currentAuthId());
+  if (!membreId) {
+    return { ok: false, sinceIso: null };
+  }
+
+  try {
+    let inscRes = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select("date_inscription, created_at")
+        .eq("membre_id", membreId)
+        .eq("statut", "accepte")
+        .order("date_inscription", { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تاريخ التسجيل"
+    );
+
+    // Colonne date_inscription absente → repli created_at
+    if (
+      inscRes.error &&
+      /date_inscription|column.*does not exist/i.test(inscRes.error.message || "")
+    ) {
+      inscRes = await withTimeout(
+        supabase
+          .from("inscriptions")
+          .select("created_at")
+          .eq("membre_id", membreId)
+          .eq("statut", "accepte")
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة تاريخ التسجيل"
+      );
+    }
+
+    if (!inscRes.error && inscRes.data) {
+      const since =
+        inscRes.data.date_inscription || inscRes.data.created_at || null;
+      if (since) {
+        return { ok: true, sinceIso: since };
+      }
+    }
+
+    const { data: profile } = await withTimeout(
+      supabase
+        .from("profiles")
+        .select("created_at")
+        .eq("id", membreId)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة ملف العضو"
+    );
+    if (profile?.created_at) {
+      return { ok: true, sinceIso: profile.created_at };
+    }
+
+    return { ok: true, sinceIso: null };
+  } catch (e) {
+    return { ok: false, sinceIso: null, error: e?.message };
+  }
+}
+
+/** Alias explicite pour le filtrage des activités membre. */
+export const resolveMemberRegistrationCutoff = resolveMemberAlertCutoff;
+
+function filterAlertsSince(alerts, sinceIso) {
+  if (!sinceIso) return alerts || [];
+  const sinceMs = new Date(sinceIso).getTime();
+  if (!Number.isFinite(sinceMs)) return alerts || [];
+  return (alerts || []).filter((a) => {
+    const at = new Date(a.createdAt || a.created_at || 0).getTime();
+    return Number.isFinite(at) && at >= sinceMs;
+  });
+}
+
 /**
  * Alertes non encore acquittées par l'utilisateur connecté, dans l'ordre
  * FIFO (la plus ancienne d'abord — à afficher en premier par la passerelle
  * bloquante). La RLS n'expose que les alertes dont l'audience couvre le rôle
- * de l'appelant (0014). @returns { ok, alerts: [] }
+ * de l'appelant (0014).
+ * @param {{ sinceMemberRegistration?: boolean }} [options]
+ * @returns { ok, alerts: [] }
  */
-export async function getUnacknowledgedAlerts() {
+export async function getUnacknowledgedAlerts(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const [alertsRes, acksRes] = await Promise.all([
+    const sinceMemberRegistration = !!options.sinceMemberRegistration;
+    const cutoffPromise = sinceMemberRegistration
+      ? resolveMemberAlertCutoff()
+      : Promise.resolve({ ok: true, sinceIso: null });
+
+    const [alertsRes, acksRes, cutoff] = await Promise.all([
       withTimeout(
         supabase
           .from("alerts")
-        .select("id, message, title, body, created_at")
-        .order("created_at", { ascending: true }),
+          .select("id, message, title, body, created_at")
+          .order("created_at", { ascending: true }),
         SUPABASE_TIMEOUT_MS,
         "قراءة التنبيهات"
       ),
       withTimeout(
-        supabase
-          .from("alert_acknowledgments")
-          .select("alert_id"),
+        supabase.from("alert_acknowledgments").select("alert_id"),
         SUPABASE_TIMEOUT_MS,
         "قراءة الإقرارات"
       ),
+      cutoffPromise,
     ]);
 
     if (alertsRes.error || acksRes.error) {
@@ -78,15 +177,19 @@ export async function getUnacknowledgedAlerts() {
     }
 
     const acked = new Set((acksRes.data || []).map((a) => a.alert_id));
-    const pending = (alertsRes.data || []).filter((a) => !acked.has(a.id));
-    return {
-      ok: true,
-      alerts: pending.map((a) => ({
+    let pending = (alertsRes.data || [])
+      .filter((a) => !acked.has(a.id))
+      .map((a) => ({
         id: a.id,
         message: a.message || a.body || a.title || "",
         createdAt: a.created_at,
-      })),
-    };
+      }));
+
+    if (sinceMemberRegistration) {
+      pending = filterAlertsSince(pending, cutoff.sinceIso);
+    }
+
+    return { ok: true, alerts: pending };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -247,34 +350,47 @@ export async function getAllAlertsAdmin() {
 /**
  * Alertes visibles par le compte connecté (RLS filtre déjà l'audience).
  * Sert aux listes membre / superviseur.
+ * @param {{ sinceMemberRegistration?: boolean, limit?: number }} [options]
  * @returns { ok, alerts }
  */
-export async function getVisibleAlerts() {
+export async function getVisibleAlerts(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
+  const limit = Number(options.limit) > 0 ? Number(options.limit) : 20;
+  const sinceMemberRegistration = !!options.sinceMemberRegistration;
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("alerts")
-        .select("id, message, title, body, audience, created_at")
-        .order("created_at", { ascending: false })
-        .limit(20),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة التنبيهات"
-    );
+    const cutoffPromise = sinceMemberRegistration
+      ? resolveMemberAlertCutoff()
+      : Promise.resolve({ ok: true, sinceIso: null });
+
+    const [result, cutoff] = await Promise.all([
+      withTimeout(
+        supabase
+          .from("alerts")
+          .select("id, message, title, body, audience, created_at")
+          .order("created_at", { ascending: false })
+          .limit(Math.max(limit, 50)),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة التنبيهات"
+      ),
+      cutoffPromise,
+    ]);
+
+    const { data, error } = result;
     if (error) {
       return { ok: false, error: mapTableError(error, "alerts") };
     }
-    return {
-      ok: true,
-      alerts: (data || []).map((a) => ({
-        id: a.id,
-        message: a.message || a.body || a.title || "",
-        audience: a.audience,
-        createdAt: a.created_at,
-      })),
-    };
+    let alerts = (data || []).map((a) => ({
+      id: a.id,
+      message: a.message || a.body || a.title || "",
+      audience: a.audience,
+      createdAt: a.created_at,
+    }));
+    if (sinceMemberRegistration) {
+      alerts = filterAlertsSince(alerts, cutoff.sinceIso);
+    }
+    return { ok: true, alerts: alerts.slice(0, limit) };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -282,13 +398,19 @@ export async function getVisibleAlerts() {
 
 /**
  * Alertes visibles avec statut d'acquittement (alert_acknowledgments.alert_id).
+ * @param {{ sinceMemberRegistration?: boolean }} [options]
  * @returns { ok, alerts: [{ id, message, createdAt, senderName, acknowledged }] }
  */
-export async function getVisibleAlertsWithAckStatus() {
+export async function getVisibleAlertsWithAckStatus(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
+  const sinceMemberRegistration = !!options.sinceMemberRegistration;
   try {
+    const cutoffPromise = sinceMemberRegistration
+      ? resolveMemberAlertCutoff()
+      : Promise.resolve({ ok: true, sinceIso: null });
+
     let visibleRes = await withTimeout(
       supabase
         .from("alerts")
@@ -316,11 +438,14 @@ export async function getVisibleAlertsWithAckStatus() {
       );
     }
 
-    const acksRes = await withTimeout(
-      supabase.from("alert_acknowledgments").select("alert_id"),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة الإقرارات"
-    );
+    const [acksRes, cutoff] = await Promise.all([
+      withTimeout(
+        supabase.from("alert_acknowledgments").select("alert_id"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الإقرارات"
+      ),
+      cutoffPromise,
+    ]);
 
     if (visibleRes.error || acksRes.error) {
       return {
@@ -330,16 +455,17 @@ export async function getVisibleAlertsWithAckStatus() {
     }
 
     const acked = new Set((acksRes.data || []).map((a) => a.alert_id));
-    return {
-      ok: true,
-      alerts: (visibleRes.data || []).map((a) => ({
-        id: a.id,
-        message: a.message || a.body || a.title || "",
-        createdAt: a.created_at,
-        senderName: mapSenderName(a),
-        acknowledged: acked.has(a.id),
-      })),
-    };
+    let alerts = (visibleRes.data || []).map((a) => ({
+      id: a.id,
+      message: a.message || a.body || a.title || "",
+      createdAt: a.created_at,
+      senderName: mapSenderName(a),
+      acknowledged: acked.has(a.id),
+    }));
+    if (sinceMemberRegistration) {
+      alerts = filterAlertsSince(alerts, cutoff.sinceIso);
+    }
+    return { ok: true, alerts };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -366,10 +492,4 @@ export function subscribeToNewAlerts(onInsert) {
   return () => {
     supabase.removeChannel(channel);
   };
-}
-
-/** Id de l'utilisateur connecté via la session Supabase, ou null. */
-async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
 }

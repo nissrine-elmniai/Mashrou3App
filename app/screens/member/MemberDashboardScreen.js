@@ -14,7 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { Home, BookOpen, User, ClipboardList, Target } from "lucide-react-native";
+import { Home, BookOpen, User, ClipboardList } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import {
   getMyProgress,
@@ -41,6 +41,7 @@ import {
   getVisibleAlerts,
   getUnacknowledgedAlerts,
   subscribeToNewAlerts,
+  resolveMemberAlertCutoff,
 } from "../../lib/alertsApi";
 import {
   getMemberProfileFields,
@@ -97,12 +98,6 @@ function formatRingPercent(tumunTotal) {
     return { progress: 0, label: `${LRI}0%${PDI}` };
   }
   return { progress: one, label: `${LRI}${one.toFixed(1)}%${PDI}` };
-}
-
-function parseGoalJuzCount(raw) {
-  if (!raw) return null;
-  const num = parseInt(String(raw).replace(/[^\d]/g, ""), 10);
-  return Number.isFinite(num) && num > 0 ? num : null;
 }
 
 function parseActivityTimestamp(raw) {
@@ -164,11 +159,11 @@ export default function MemberDashboardScreen({ navigation }) {
   const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const [progressEntries, setProgressEntries] = useState([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
-  const [selectedTimes, setSelectedTimes] = useState([]);
-  const [summerTimes, setSummerTimes] = useState([]);
+  /** Timestamp ms — ne montrer que les activités >= date d'inscription */
+  const [activitySinceMs, setActivitySinceMs] = useState(null);
+  const [activityCutoffReady, setActivityCutoffReady] = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
   const [editInfoModal, setEditInfoModal] = useState(false);
-  const [seasonObjectif, setSeasonObjectif] = useState("");
   const [contactFields, setContactFields] = useState({
     phone: currentUser?.phone || null,
     school: currentUser?.school || null,
@@ -219,10 +214,10 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const loadAlerts = useCallback(async () => {
     const [visible, pending] = await Promise.all([
-      getVisibleAlerts(),
-      getUnacknowledgedAlerts(),
+      getVisibleAlerts({ sinceMemberRegistration: true, limit: 3 }),
+      getUnacknowledgedAlerts({ sinceMemberRegistration: true }),
     ]);
-    if (visible.ok) setAdminAlerts(visible.alerts.slice(0, 3));
+    if (visible.ok) setAdminAlerts(visible.alerts);
     if (pending.ok) setPendingAlertCount(pending.alerts.length);
   }, []);
 
@@ -237,6 +232,30 @@ export default function MemberDashboardScreen({ navigation }) {
     }, [loadAlerts])
   );
 
+  useEffect(() => {
+    if (!authId) {
+      setActivitySinceMs(null);
+      setActivityCutoffReady(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setActivityCutoffReady(false);
+    (async () => {
+      const res = await resolveMemberAlertCutoff(authId);
+      if (cancelled) return;
+      if (res.ok && res.sinceIso) {
+        const ms = new Date(res.sinceIso).getTime();
+        setActivitySinceMs(Number.isFinite(ms) ? ms : null);
+      } else {
+        setActivitySinceMs(null);
+      }
+      setActivityCutoffReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authId]);
+
   const openRegular = seasons.filter(
     (s) => s.registrationOpen && s.type === SEASON_TYPES.REGULAR
   );
@@ -244,7 +263,13 @@ export default function MemberDashboardScreen({ navigation }) {
     (s) => s.registrationOpen && s.type === SEASON_TYPES.SUMMER
   );
 
-  const myRegs = registrations.filter((r) => r.userId === currentUser?.id);
+  const myRegs = registrations.filter((r) => {
+    if (!currentUser) return false;
+    if (r.userId && r.userId === currentUser.id) return true;
+    const mail = String(r.email || "").trim().toLowerCase();
+    const mine = String(currentUser.email || "").trim().toLowerCase();
+    return !!(mail && mine && mail === mine);
+  });
 
   const activeRegular =
     seasons.find((s) => s.active && s.type === SEASON_TYPES.REGULAR) ||
@@ -475,19 +500,6 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const { memorizationPct, memorizationPctLabel, memorizedJuz } = homeProgress;
 
-  const goalRaw =
-    String(currentUser?.hifzAmount || "").trim() ||
-    String(seasonObjectif || "").trim();
-  const goalJuz = parseGoalJuzCount(goalRaw);
-  const goalLabel = goalJuz
-    ? `هدفي: حفظ ${goalJuz} أجزاء`
-    : goalRaw
-      ? `هدفي: ${goalRaw}`
-      : "هدفي: لم يُحدد بعد";
-  const goalPct = goalJuz
-    ? Math.min(100, Math.round((memorizedJuz / goalJuz) * 100))
-    : 0;
-
   const userNotifications = useMemo(
     () => getNotificationsForUser(currentUser),
     [currentUser, getNotificationsForUser]
@@ -495,7 +507,20 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const recentActivities = useMemo(() => {
     const items = [];
-    if (!currentUser?.id) return items;
+    if (!currentUser?.id || !activityCutoffReady) return items;
+
+    const sinceMs = (() => {
+      const fromCutoff = Number.isFinite(activitySinceMs) ? activitySinceMs : 0;
+      const fromInsc = parseActivityTimestamp(sessionState.registrationDate);
+      const candidates = [fromCutoff, fromInsc].filter((n) => n > 0);
+      return candidates.length ? Math.min(...candidates) : null;
+    })();
+
+    const isAfterRegistration = (at) => {
+      if (!at || at <= 0) return false;
+      if (sinceMs == null) return true;
+      return at >= sinceMs;
+    };
 
     progressEntries.forEach((entry, idx) => {
       const metrics = computeProgressMetrics(entry);
@@ -506,11 +531,13 @@ export default function MemberDashboardScreen({ navigation }) {
       if (metrics?.globalPct != null) {
         body += ` • ${metrics.globalPct}% من القرآن`;
       }
+      const at = parseActivityTimestamp(
+        entry.date || entry.date_saisie || entry.created_at
+      );
+      if (!isAfterRegistration(at)) return;
       items.push({
         id: `progress-${entry.id || idx}`,
-        at: parseActivityTimestamp(
-          entry.date || entry.date_saisie || entry.created_at
-        ),
+        at,
         title: "تحديث التقدم",
         body,
         icon: "book-outline",
@@ -523,24 +550,68 @@ export default function MemberDashboardScreen({ navigation }) {
       const season = seasons.find((s) => s.id === r.seasonId);
       const statusLabel =
         REGISTRATION_STATUS_LABELS[r.status] || r.status || "—";
+      const atAccepted = parseActivityTimestamp(r.acceptedAt);
+      const atCreated = parseActivityTimestamp(r.createdAt);
+      if (isAfterRegistration(atCreated)) {
+        items.push({
+          id: `reg-create-${r.id}`,
+          at: atCreated,
+          title: "طلب تسجيل",
+          body: `${season?.name || "موسم"} — تم إرسال الطلب`,
+          icon: "document-text-outline",
+          color: colors.orange,
+          action: "registration",
+        });
+      }
+      if (atAccepted > 0 && isAfterRegistration(atAccepted)) {
+        items.push({
+          id: `reg-accept-${r.id}`,
+          at: atAccepted,
+          title: "قبول التسجيل",
+          body: `${season?.name || "موسم"} — ${statusLabel}`,
+          icon: "checkmark-circle-outline",
+          color: colors.primary,
+          action: "registration",
+        });
+      }
+    });
+
+    if (sessionState.registrationDate && sessionState.groupName) {
+      const at = parseActivityTimestamp(sessionState.registrationDate);
+      if (isAfterRegistration(at)) {
+        items.push({
+          id: "seance-assign",
+          at,
+          title: "التعيين في الحصة",
+          body: sessionState.groupName,
+          icon: "people-outline",
+          color: colors.teal || colors.primary,
+          action: "profile",
+        });
+      }
+    }
+
+    (presenceState.records || []).slice(0, 12).forEach((r, idx) => {
+      const at = parseActivityTimestamp(r.date);
+      if (!isAfterRegistration(at)) return;
+      const present = r.status === "present";
       items.push({
-        id: `reg-${r.id}`,
-        at: Math.max(
-          parseActivityTimestamp(r.createdAt),
-          parseActivityTimestamp(r.acceptedAt)
-        ),
-        title: "طلب تسجيل",
-        body: `${season?.name || "موسم"} — ${statusLabel}`,
-        icon: "document-text-outline",
-        color: colors.orange,
-        action: "registration",
+        id: `presence-${r.date || idx}`,
+        at,
+        title: present ? "حضور الحصة" : "غياب عن الحصة",
+        body: present ? "تم تسجيل حضورك" : "تم تسجيل غيابك",
+        icon: present ? "checkmark-outline" : "close-outline",
+        color: present ? colors.primary : colors.orange,
+        action: "profile",
       });
     });
 
     myExams.forEach((e) => {
+      const at = parseActivityTimestamp(e.date);
+      if (!isAfterRegistration(at)) return;
       items.push({
         id: `exam-${e.id}`,
-        at: parseActivityTimestamp(e.date),
+        at,
         title: "نتيجة اختبار",
         body: `${e.level || e.title || "اختبار"} — الدرجة: ${e.score}`,
         icon: "school-outline",
@@ -552,9 +623,11 @@ export default function MemberDashboardScreen({ navigation }) {
     userNotifications
       .filter((n) => n.audience === "user" && n.userId === currentUser.id)
       .forEach((n) => {
+        const at = parseActivityTimestamp(n.createdAt);
+        if (!isAfterRegistration(at)) return;
         items.push({
           id: `notif-${n.id}`,
-          at: parseActivityTimestamp(n.createdAt),
+          at,
           title: n.title,
           body: n.body,
           icon: "notifications-outline",
@@ -563,17 +636,19 @@ export default function MemberDashboardScreen({ navigation }) {
         });
       });
 
-    return items
-      .filter((item) => item.at > 0)
-      .sort((a, b) => b.at - a.at)
-      .slice(0, 5);
+    return items.sort((a, b) => b.at - a.at).slice(0, 8);
   }, [
     currentUser?.id,
+    activityCutoffReady,
+    activitySinceMs,
+    sessionState.registrationDate,
+    sessionState.groupName,
     progressEntries,
     myRegs,
     myExams,
     seasons,
     userNotifications,
+    presenceState.records,
   ]);
 
   const fullName = currentUser
@@ -594,18 +669,14 @@ export default function MemberDashboardScreen({ navigation }) {
     ]);
   };
 
-  const handleRegister = (seasonId, times, resetFn) => {
-    if (times.length === 0) {
-      Alert.alert("تنبيه", "اختر أوقات فراغك");
-      return;
-    }
-    const result = submitSeasonRegistration({ seasonId, freeTimes: times });
+  const handleRegister = async (payload) => {
+    const result = submitSeasonRegistration(payload);
     if (!result.ok) {
       Alert.alert("تنبيه", result.error);
-      return;
+      return result;
     }
     Alert.alert("تم", "تم إرسال طلب التسجيل");
-    resetFn([]);
+    return result;
   };
 
   const openProgression = () => navigation.navigate("MemberProgress");
@@ -637,6 +708,10 @@ export default function MemberDashboardScreen({ navigation }) {
     }
     if (activity.action === "registration") {
       setTab("registration");
+      return;
+    }
+    if (activity.action === "profile") {
+      setTab("profile");
       return;
     }
     if (activity.action === "programs") {
@@ -736,26 +811,6 @@ export default function MemberDashboardScreen({ navigation }) {
               </Text>
             </TouchableOpacity>
 
-            <View style={styles.goalCard}>
-              <View style={styles.goalHeader}>
-                <Target
-                  size={20}
-                  color={colors.gold}
-                  strokeWidth={2.2}
-                  pointerEvents="none"
-                />
-                <Text style={styles.goalTitle}>{goalLabel}</Text>
-              </View>
-              {goalJuz ? (
-                <View style={styles.goalBarRow}>
-                  <Text style={styles.goalBarPct}>{goalPct}%</Text>
-                  <View style={styles.goalTrack}>
-                    <View style={[styles.goalFill, { width: `${goalPct}%` }]} />
-                  </View>
-                </View>
-              ) : null}
-            </View>
-
             <StatCard
               layout="inline"
               icon="folder-outline"
@@ -775,27 +830,30 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            {adminAlerts.length > 0 ? (
-              <SectionCard title="الإشعارات">
-                {adminAlerts.map((n) => (
+            <SectionCard title="الإشعارات">
+              {adminAlerts.length === 0 ? (
+                <EmptyState text="لا توجد إشعارات جديدة" />
+              ) : (
+                adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
                     <Text style={styles.notifTitle}>تنبيه من الإدارة</Text>
                     <Text style={styles.notifBody}>{n.message}</Text>
                   </View>
-                ))}
-              </SectionCard>
-            ) : null}
+                ))
+              )}
+            </SectionCard>
 
             <SectionCard
               title="آخر النشاطات"
-              subtitle="آخر ما قمت به في التطبيق"
+              subtitle="نشاطاتك منذ تاريخ تسجيلك"
             >
-              {activitiesLoading && recentActivities.length === 0 ? (
+              {(activitiesLoading || !activityCutoffReady) &&
+              recentActivities.length === 0 ? (
                 <View style={styles.activityLoading}>
                   <ActivityIndicator color={colors.primary} />
                 </View>
               ) : recentActivities.length === 0 ? (
-                <EmptyState text="لا يوجد نشاط بعد — حدّث تقدمك أو سجّل في موسم" />
+                <EmptyState text="لا توجد أنشطة حديثة" />
               ) : (
                 recentActivities.map((activity) => (
                   <ActivityCard
@@ -819,10 +877,7 @@ export default function MemberDashboardScreen({ navigation }) {
           <MemberRegistrationPanel
             openRegular={openRegular}
             openSummer={openSummer}
-            selectedTimes={selectedTimes}
-            setSelectedTimes={setSelectedTimes}
-            summerTimes={summerTimes}
-            setSummerTimes={setSummerTimes}
+            gender={displayGenderFromUser(currentUser?.gender)}
             onSubmit={handleRegister}
           />
         )}
@@ -1057,53 +1112,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     marginTop: 10,
     ...rtlText,
-  },
-  goalCard: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    marginBottom: 12,
-    ...shadows.card,
-  },
-  goalHeader: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-  },
-  goalTitle: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: fonts.bold,
-    color: colors.text,
-    ...rtlText,
-  },
-  goalBarRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 10,
-    marginTop: 12,
-  },
-  goalBarPct: {
-    minWidth: 36,
-    fontSize: 13,
-    color: colors.muted,
-    fontFamily: fonts.semiBold,
-    ...rtlText,
-  },
-  goalTrack: {
-    flex: 1,
-    height: 10,
-    backgroundColor: colors.border,
-    borderRadius: 8,
-    overflow: "hidden",
-  },
-  goalFill: {
-    height: "100%",
-    backgroundColor: colors.primary,
-    borderRadius: 8,
-    alignSelf: "flex-end",
   },
   heroLabel: {
     color: colors.muted,

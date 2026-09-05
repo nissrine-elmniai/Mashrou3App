@@ -414,16 +414,36 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                     <Text style={styles.meta}>المدرسة/الكلية: {reg.school}</Text>
                   ) : null}
                   {reg.level ? (
-                    <Text style={styles.meta}>مستوى الحفظ: {reg.level}</Text>
+                    <Text style={styles.meta}>طالب / خريج: {reg.level}</Text>
                   ) : null}
                   {reg.gender ? (
                     <Text style={styles.meta}>الجنس: {reg.gender}</Text>
+                  ) : null}
+                  {reg.formAnswers?.hasExperience ? (
+                    <Text style={styles.meta}>
+                      تجربة حفظ مؤطّرة: {reg.formAnswers.hasExperience}
+                    </Text>
                   ) : null}
                   {reg.seanceName ? (
                     <Text style={styles.meta}>الحصة: {reg.seanceName}</Text>
                   ) : null}
                   {reg.hifzAmount ? (
                     <Text style={styles.meta}>مقدار الحفظ: {reg.hifzAmount}</Text>
+                  ) : null}
+                  {reg.formAnswers?.seasonGoal ? (
+                    <Text style={styles.meta}>
+                      هدف الموسم: {reg.formAnswers.seasonGoal}
+                    </Text>
+                  ) : null}
+                  {reg.formAnswers?.difficulties ? (
+                    <Text style={styles.meta}>
+                      الصعوبات: {reg.formAnswers.difficulties}
+                    </Text>
+                  ) : null}
+                  {reg.formAnswers?.desiredActivities ? (
+                    <Text style={styles.meta}>
+                      برامج مقترحة: {reg.formAnswers.desiredActivities}
+                    </Text>
                   ) : null}
                 </View>
 

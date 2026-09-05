@@ -39,6 +39,7 @@ import {
   upsertMemberApplication,
   insertPendingMemberApplication,
   markMemberApplicationActivated,
+  listMemberApplications,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
 import { sendAlert } from "../lib/alertsApi";
@@ -197,6 +198,7 @@ export function AppProvider({ children }) {
   const [supabaseSession, setSupabaseSession] = useState(null);
   const skipNextSave = useRef(true);
   const programsSyncedRef = useRef(false);
+  const applicationsSyncedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -322,6 +324,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!supabaseSession?.user?.id) {
       programsSyncedRef.current = false;
+      applicationsSyncedRef.current = false;
     }
   }, [supabaseSession?.user?.id]);
 
@@ -351,6 +354,38 @@ export function AppProvider({ children }) {
       cancelled = true;
     };
   }, [hydrated, supabaseSession?.user?.id, currentUser?.id]);
+
+  // Admin : synchroniser les demandes d'intégration depuis Supabase (form_answers inclus)
+  useEffect(() => {
+    if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
+    if (!currentUser || !userHasRole(currentUser, ROLES.ADMIN)) return;
+    if (applicationsSyncedRef.current) return;
+
+    let cancelled = false;
+    applicationsSyncedRef.current = true;
+    (async () => {
+      const res = await listMemberApplications();
+      if (cancelled || !res.ok || res.skipped) return;
+      const remote = res.applications || [];
+      setRegistrations((prev) => {
+        const remoteById = new Map(remote.map((r) => [r.id, r]));
+        const renewals = prev.filter(
+          (r) => getRegistrationKind(r) === REGISTRATION_KIND.SEASON_RENEWAL
+        );
+        const localJoinOnly = prev.filter((r) => {
+          const kind = getRegistrationKind(r);
+          return (
+            kind !== REGISTRATION_KIND.SEASON_RENEWAL && !remoteById.has(r.id)
+          );
+        });
+        return [...renewals, ...localJoinOnly, ...remote];
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, supabaseSession?.user?.id, currentUser]);
 
   const login = async (email, password, options = {}) => {
     const mail = String(email || "").trim().toLowerCase();
@@ -486,7 +521,7 @@ export function AppProvider({ children }) {
   const submitMemberApplication = async ({
     fullName,
     school = "",
-    level,
+    level = "",
     phone,
     hifzAmount = "",
     seasonId,
@@ -494,6 +529,7 @@ export function AppProvider({ children }) {
     gender = "",
     seanceId = null,
     seanceName = "",
+    formAnswers = null,
   }) => {
     const name = String(fullName || "").trim();
     const phoneClean = String(phone || "").trim();
@@ -502,7 +538,9 @@ export function AppProvider({ children }) {
     const hifzClean = String(hifzAmount || "").trim();
     const emailClean = String(email || "").trim().toLowerCase();
     const genderClean = String(gender || "").trim();
-    if (!name || !schoolClean || !levelClean || !phoneClean || !emailClean) {
+    const answers =
+      formAnswers && typeof formAnswers === "object" ? formAnswers : {};
+    if (!name || !phoneClean || !emailClean || !schoolClean) {
       return { ok: false, error: "الرجاء ملء جميع الحقول المطلوبة" };
     }
     if (!genderClean || (genderClean !== "ذكر" && genderClean !== "أنثى")) {
@@ -513,6 +551,9 @@ export function AppProvider({ children }) {
     }
     if (!emailClean.includes("@")) {
       return { ok: false, error: "أدخل بريداً إلكترونياً صالحاً" };
+    }
+    if (!String(answers.seasonGoal || "").trim()) {
+      return { ok: false, error: "أدخل المقدار الذي تطمح لحفظه هذا الموسم" };
     }
     // Inscription membre toujours ouverte — rattachement optionnel au saison actif
     const resolvedSeasonId =
@@ -547,6 +588,7 @@ export function AppProvider({ children }) {
       gender: genderClean,
       seanceId,
       seanceName: String(seanceName || "").trim(),
+      formAnswers: answers,
       freeTimes: [],
       status: REGISTRATION_STATUS.PENDING,
       inviteToken: null,
@@ -770,7 +812,11 @@ export function AppProvider({ children }) {
 
   const submitSeasonRegistration = ({
     seasonId,
-    freeTimes,
+    freeTimes = [],
+    seanceId = null,
+    seanceName = "",
+    formAnswers = null,
+    hifzAmount = "",
     userId = currentUser?.id,
   }) => {
     if (!userId) return { ok: false, error: "يجب تسجيل الدخول" };
@@ -784,12 +830,32 @@ export function AppProvider({ children }) {
     if (!season?.registrationOpen) {
       return { ok: false, error: "باب التسجيل مغلق حالياً" };
     }
+    if (!seanceId) {
+      return { ok: false, error: "اختر الحصة المناسبة" };
+    }
+    const answers =
+      formAnswers && typeof formAnswers === "object" ? formAnswers : {};
+    if (!String(answers.seasonGoal || hifzAmount || "").trim()) {
+      return {
+        ok: false,
+        error: "أدخل المقدار الذي تطمح لحفظه هذا الموسم",
+      };
+    }
+    const member = users.find((u) => u.id === userId);
     const registration = {
       id: uid("r"),
       kind: REGISTRATION_KIND.SEASON_RENEWAL,
       userId,
       seasonId,
-      freeTimes,
+      freeTimes: Array.isArray(freeTimes) ? freeTimes : [],
+      seanceId,
+      seanceName: String(seanceName || "").trim(),
+      hifzAmount: String(hifzAmount || answers.seasonGoal || "").trim(),
+      formAnswers: answers,
+      fullName: member
+        ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
+        : "",
+      gender: member?.gender || "",
       status: REGISTRATION_STATUS.PENDING,
       createdAt: todayStr(),
     };

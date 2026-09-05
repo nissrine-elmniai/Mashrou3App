@@ -272,7 +272,9 @@ function RootNavigator() {
         />
         <Stack.Screen
           name="MemberAlerts"
-          component={SupervisorAlertsScreen}
+          getComponent={() =>
+            require("./app/screens/member/MemberAlertsScreen").default
+          }
           options={{ headerShown: false }}
         />
 

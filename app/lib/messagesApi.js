@@ -100,7 +100,7 @@ export async function getMyInscriptionDate(authId = null) {
     const { data, error } = await withTimeout(
       supabase
         .from("inscriptions")
-        .select("date_inscription")
+        .select("date_inscription, created_at")
         .eq("membre_id", membreId)
         .eq("statut", "accepte")
         .order("date_inscription", { ascending: false })
@@ -116,10 +116,10 @@ export async function getMyInscriptionDate(authId = null) {
         dateInscription: null,
       };
     }
-    const raw = data?.date_inscription || null;
+    const raw = data?.date_inscription || data?.created_at || null;
     return {
       ok: true,
-      dateInscription: raw ? String(raw).slice(0, 10) : null,
+      dateInscription: raw,
     };
   } catch (e) {
     return {
