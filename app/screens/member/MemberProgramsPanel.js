@@ -13,7 +13,7 @@ import {
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
-import { colors, radii, shadows } from "../../constants/theme";
+import { colors, radii } from "../../constants/theme";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import {
@@ -80,7 +80,6 @@ export default function MemberProgramsPanel({ navigation }) {
   const {
     getMemberPrograms,
     saveMemberProgram,
-    deleteMemberProgram,
     adjustMemberProgramTumuns,
     seasons,
   } = useApp();
@@ -144,24 +143,6 @@ export default function MemberProgramsPanel({ navigation }) {
     closeModal();
   };
 
-  const confirmDelete = (program) => {
-    Alert.alert(
-      "حذف البرنامج",
-      `هل تريد حذف «${program.title}»؟`,
-      [
-        { text: "إلغاء", style: "cancel" },
-        {
-          text: "حذف",
-          style: "destructive",
-          onPress: () => {
-            const result = deleteMemberProgram(program.id);
-            if (!result.ok) Alert.alert("خطأ", result.error);
-          },
-        },
-      ]
-    );
-  };
-
   const closeProgressModal = () => {
     flushMemberProgressDelta();
     setProgressModal(null);
@@ -222,7 +203,6 @@ export default function MemberProgramsPanel({ navigation }) {
             key={program.id}
             program={program}
             onEdit={() => openEdit(program)}
-            onDelete={() => confirmDelete(program)}
             onPress={() => openDetails(program)}
             onProgressPress={() => quickUpdateProgress(program)}
           />
@@ -254,17 +234,12 @@ export default function MemberProgramsPanel({ navigation }) {
             <Text style={styles.progressModalHint}>
               {progressProgram?.title}
             </Text>
-            {progressProgram && !isHifzProgram(progressProgram) ? (
-              <Text style={styles.progressModalHint}>
-                برنامج مراجعة — لا يغيّر موضعك في القرآن
-              </Text>
-            ) : null}
 
             {progressProgram ? (
               <>
                 <Text style={styles.tumunModalCount}>
                   {progressProgram.completedTumuns} / {progressProgram.totalTumuns}{" "}
-                  أثمان
+                  ثمن
                 </Text>
                 <Text style={styles.tumunModalPct}>
                   {progressProgram.progression}%
@@ -308,7 +283,7 @@ export default function MemberProgramsPanel({ navigation }) {
               style={styles.saveBtn}
               onPress={closeProgressModal}
             >
-              <Text style={styles.saveBtnText}>إغلاق</Text>
+              <Text style={styles.saveBtnText}>تأكيد</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -320,76 +295,41 @@ export default function MemberProgramsPanel({ navigation }) {
 function MemberProgramCard({
   program,
   onEdit,
-  onDelete,
   onPress,
   onProgressPress,
 }) {
-  const status = programStatus(program);
   const pct = Math.min(100, Math.max(0, Number(program.progression) || 0));
+  const typeLabel = isHifzProgram(program) ? "حفظ" : "مراجعة";
 
   return (
     <View style={styles.card}>
       <View style={styles.cardTitleRow}>
-        <View style={styles.cardTitleGroup}>
-          <Ionicons name="book-outline" size={18} color={colors.primary} />
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {program.title}
-          </Text>
-        </View>
-        <View style={styles.cardActions}>
-          <TouchableOpacity style={styles.iconBtn} onPress={onEdit} hitSlop={8}>
-            <Ionicons name="create-outline" size={20} color={colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={onDelete} hitSlop={8}>
-            <Ionicons name="trash-outline" size={20} color={colors.primary} />
-          </TouchableOpacity>
-        </View>
+        <Ionicons name="book-outline" size={18} color={colors.primary} />
+        <Text style={styles.cardTitle} numberOfLines={1}>
+          {program.title}
+        </Text>
+        <TouchableOpacity style={styles.iconBtn} onPress={onEdit} hitSlop={8}>
+          <Ionicons name="create-outline" size={20} color={colors.primary} />
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity style={styles.cardBody} onPress={onPress} activeOpacity={0.9}>
-
-          <View style={styles.badgeRow}>
-            <View
-              style={
-                isHifzProgram(program) ? styles.badgeGreen : styles.badgeGold
-              }
-            >
-              <Text
-                style={
-                  isHifzProgram(program)
-                    ? styles.badgeGreenText
-                    : styles.badgeGoldText
-                }
-              >
-                {isHifzProgram(program) ? "حفظ" : "مراجعة"}
-              </Text>
-            </View>
-            <View style={styles.badgeGreen}>
-              <Text style={styles.badgeGreenText}>{program.nbHizb} أحزاب</Text>
-            </View>
-            <View style={styles.badgeGold}>
-              <Text style={styles.badgeGoldText}>{program.durationDays} يوم</Text>
-            </View>
-          </View>
-
-        <View style={styles.metaRow}>
-          <Ionicons name="calendar-outline" size={14} color={colors.muted} />
-          <Text style={styles.metaText}>البداية: {program.startDate}</Text>
-        </View>
-        <View style={styles.metaRow}>
-          <Ionicons name="time-outline" size={14} color={colors.muted} />
-          <Text style={styles.metaText}>{status}</Text>
-        </View>
+        <Text style={styles.metaText}>
+          <Text style={styles.metaType}>{typeLabel}</Text>
+          {" · "}
+          {program.nbHizb} أحزاب · {program.durationDays} يوم
+        </Text>
 
         <TouchableOpacity onPress={onProgressPress} activeOpacity={0.85}>
-          <View style={styles.progressHead}>
-            <Text style={styles.pct}>
-              {program.completedTumuns}/{program.totalTumuns} أثمان · {pct}%
-            </Text>
-            <Text style={styles.progressLabel}>التقدم</Text>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${pct}%` }]} />
+          <Text style={styles.pct}>{pct}%</Text>
+          <View style={[styles.progressTrack, styles.progressTrackRtl]}>
+            <View
+              style={[
+                styles.progressFill,
+                styles.progressFillRtl,
+                { width: `${pct}%` },
+              ]}
+            />
           </View>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -574,14 +514,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: colors.card,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     borderRadius: radii.md,
     paddingVertical: 12,
     marginBottom: 16,
-    ...shadows.card,
-    elevation: 3,
   },
   newBtnText: {
     color: colors.primary,
@@ -610,21 +546,8 @@ const styles = StyleSheet.create({
   cardTitleRow: {
     flexDirection: row,
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 8,
-  },
-  cardTitleGroup: {
-    flex: 1,
-    flexDirection: row,
-    alignItems: "center",
     gap: 6,
-    minWidth: 0,
-  },
-  cardActions: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 4,
+    marginBottom: 8,
   },
   iconBtn: {
     padding: 4,
@@ -636,64 +559,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
     ...rtlText,
   },
-  badgeRow: {
-    flexDirection: row,
-    gap: 8,
-    marginBottom: 8,
-  },
-  badgeGreen: {
-    backgroundColor: colors.soft,
-    borderRadius: radii.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-  },
-  badgeGreenText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "600",
-    ...rtlText,
-  },
-  badgeGold: {
-    backgroundColor: "#FFF8E1",
-    borderRadius: radii.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: "#FFE082",
-  },
-  badgeGoldText: {
-    color: "#F57F17",
-    fontSize: 12,
-    fontWeight: "600",
-    ...rtlText,
-  },
-  metaRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
-  },
   metaText: {
     color: colors.muted,
     fontSize: 13,
+    marginBottom: 10,
     ...rtlText,
   },
-  progressHead: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    marginTop: 10,
-    marginBottom: 6,
+  metaType: {
+    color: colors.gold,
+    fontWeight: "600",
   },
   pct: {
     color: colors.primary,
     fontWeight: "bold",
-    ...rtlText,
-  },
-  progressLabel: {
-    color: colors.muted,
     fontSize: 13,
+    marginBottom: 6,
     ...rtlText,
   },
   progressTrack: {
@@ -702,11 +582,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
   },
+  progressTrackRtl: {
+    direction: "rtl",
+  },
   progressFill: {
     height: "100%",
     backgroundColor: colors.primary,
     borderRadius: 8,
     alignSelf: "flex-end",
+  },
+  progressFillRtl: {
+    alignSelf: "flex-start",
   },
   modalOverlay: {
     flex: 1,
@@ -827,7 +713,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: 14,
+    paddingVertical: 10,
     alignItems: "center",
     backgroundColor: colors.card,
   },
@@ -841,7 +727,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: 14,
+    paddingVertical: 10,
     alignItems: "center",
   },
   createBtnText: {
@@ -878,7 +764,7 @@ const styles = StyleSheet.create({
   saveBtn: {
     backgroundColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: 14,
+    paddingVertical: 10,
     alignItems: "center",
     marginTop: 6,
   },
