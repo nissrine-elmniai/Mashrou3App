@@ -1,3 +1,4 @@
+// app/screens/member/ProgrammeDetailScreen.js
 import React, { useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
@@ -7,9 +8,8 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
-import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import {
   flushMemberProgressDelta,
@@ -18,24 +18,11 @@ import {
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
 import { isHifzProgram } from "../../lib/memberProgramsApi";
-import { row as rtlRow, rtlText, fonts, arrowBack } from "../../constants/rtl";
-import { colors, radii } from "../../constants/theme";
-
-function StatRow({ icon, label, value }) {
-  return (
-    <View style={styles.statRow}>
-      <View style={styles.statIcon}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
-      </View>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>{value}</Text>
-    </View>
-  );
-}
+import { row as rtlRow, rtlText } from "../../constants/rtl";
+import { colors, radii, shadows } from "../../constants/theme";
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
   const routeProgram = route.params?.programme;
-  const insets = useSafeAreaInsets();
   const {
     getMemberPrograms,
     adjustMemberProgramTumuns,
@@ -141,8 +128,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     : 0;
   const joursRestants = Math.max(0, programData.duree - joursEcoules);
 
-  const formatDate = (dateString) => {
-    const date = new Date(String(dateString).replace(/\//g, "-"));
+  const formatDate = (date) => {
     const mois = [
       "يناير",
       "فبراير",
@@ -160,23 +146,18 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     return `${date.getDate()} ${mois[date.getMonth()]} ${date.getFullYear()}`;
   };
 
-  const dateDebutFormatted = dateIsValid ? formatDate(rawDate) : "غير محدد";
+  const dateDebutFormatted = dateDebut ? formatDate(dateDebut) : "تاريخ غير محدد";
 
   const dateFinObj = dateDebut ? new Date(dateDebut) : null;
   if (dateFinObj) {
     dateFinObj.setDate(dateFinObj.getDate() + programData.duree);
   }
   const dateFinFormatted = dateFinObj
-    ? formatDate(
-        `${dateFinObj.getFullYear()}-${String(dateFinObj.getMonth() + 1).padStart(2, "0")}-${String(dateFinObj.getDate()).padStart(2, "0")}`
-      )
-    : "غير محدد";
+    ? formatDate(dateFinObj)
+    : "تاريخ غير محدد";
 
   const atMin = programData.completedTumuns <= 0;
   const atMax = programData.completedTumuns >= programData.totalTumuns;
-  const daysPct = programData.duree
-    ? Math.min(100, Math.round((joursEcoules / programData.duree) * 100))
-    : 0;
 
   const handleDeleteProgramme = () => {
     Alert.alert(
@@ -202,7 +183,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
           return;
         }
       }
-      Alert.alert("تم الحذف", "تم حذف البرنامج بنجاح", [
+      Alert.alert("✅ تم الحذف", "تم حذف البرنامج بنجاح", [
         { text: "رجوع", onPress: () => navigation.goBack() },
       ]);
     } catch (error) {
@@ -213,402 +194,479 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-          accessibilityLabel="رجوع"
-        >
-          <Ionicons name={arrowBack} size={22} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {programData.nom || "تفاصيل البرنامج"}
-        </Text>
-        <View style={styles.headerSpacer} />
-      </View>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.content,
-          { paddingBottom: 28 + Math.max(insets.bottom, 16) },
-        ]}
-      >
-        <View style={styles.card}>
-          <View style={styles.heroRow}>
-            <View style={styles.heroIcon}>
-              <Ionicons name="book-outline" size={22} color={colors.primary} />
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={styles.content}>
+          <View style={[styles.card, styles.mainCard]}>
+            <View style={styles.titleContainer}>
+              <View style={styles.bookCol}>
+                <View style={styles.iconCircle}>
+                  <MaterialCommunityIcons
+                    name="book-open-variant"
+                    size={30}
+                    color="white"
+                  />
+                </View>
+              </View>
+              <Text style={styles.mainTitle}>{programData.nom}</Text>
             </View>
-            <View style={styles.heroTextWrap}>
-              <Text style={styles.heroTitle}>{programData.nom}</Text>
-              <View style={styles.badgeRow}>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>
-                    {isHifzProgram(programData) ? "حفظ" : "مراجعة"}
-                  </Text>
-                </View>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{programData.nbHizb} أحزاب</Text>
-                </View>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{programData.duree} يوم</Text>
-                </View>
+            <View style={styles.headerIcons}>
+              <View style={styles.badgeGreen}>
+                <Text style={styles.badgeTextGreen}>
+                  {isHifzProgram(programData) ? "حفظ" : "مراجعة"}
+                </Text>
+              </View>
+              <View style={styles.badgeYellow}>
+                <Text style={styles.badgeTextYellow}>
+                  {programData.nbHizb} أحزاب
+                </Text>
+              </View>
+              <View style={styles.badgeGreen}>
+                <Text style={styles.badgeTextGreen}>
+                  {programData.duree} يوم
+                </Text>
               </View>
             </View>
           </View>
-        </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>ملخص التقدم</Text>
-          <StatRow
-            icon="checkmark-circle-outline"
-            label="الأحزاب المكتملة"
-            value={hizbCompletes}
+          <StatCard
+            title="الأحزاب المكتملة"
+            value={hizbCompletes.toString()}
+            icon="check-circle"
+            color={colors.primary}
           />
-          <StatRow
-            icon="time-outline"
-            label="الأحزاب المتبقية"
-            value={hizbRestants}
+          <StatCard
+            title="الأحزاب المتبقية"
+            value={hizbRestants.toString()}
+            icon="clock-outline"
+            color={colors.gold}
           />
-          <StatRow
-            icon="calendar-outline"
-            label="الأيام المتبقية"
-            value={joursRestants}
+          <StatCard
+            title="الأيام المتبقية"
+            value={joursRestants.toString()}
+            icon="calendar-clock"
+            color={colors.primary}
           />
+
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>تفاصيل البرنامج</Text>
+
+            <View style={styles.datesRow}>
+              <View style={styles.dateItem}>
+                <Text style={styles.dateLabel}>تاريخ البداية</Text>
+                <View style={styles.dateValueRow}>
+                  <Ionicons
+                    name="calendar-outline"
+                    size={16}
+                    color={colors.primary}
+                    style={styles.dateIcon}
+                  />
+                  <Text style={styles.dateValue}>{dateDebutFormatted}</Text>
+                </View>
+              </View>
+              <View style={styles.dateItem}>
+                <Text style={styles.dateLabel}>تاريخ الانتهاء المتوقع</Text>
+                <View style={styles.dateValueRow}>
+                  <Ionicons
+                    name="calendar-outline"
+                    size={16}
+                    color={colors.gold}
+                    style={styles.dateIcon}
+                  />
+                  <Text style={styles.dateValue}>{dateFinFormatted}</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.progressContainer}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.progressTitle}>الأيام المنقضية</Text>
+                <Text style={styles.progressText}>
+                  {joursEcoules} من {programData.duree} يوم
+                </Text>
+              </View>
+              <View style={[styles.progressBarFull, styles.progressBarRtl]}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    styles.progressBarFillRtl,
+                    {
+                      width: `${
+                        programData.duree
+                          ? (joursRestants / programData.duree) * 100
+                          : 0
+                      }%`,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.sectionCard}>
+            <View style={styles.titleRight}>
+              <Text style={styles.sectionTitle}>إدارة التقدم</Text>
+              <Text style={styles.subTitle}>تحديث التقدم بالأثمان (ثمن)</Text>
+            </View>
+
+            <Text style={styles.currentProgressLabel}>التقدم الحالي</Text>
+            <Text style={styles.tumunCountText}>
+              {programData.completedTumuns} / {programData.totalTumuns} ثمن
+            </Text>
+            <Text style={styles.percentageText}>{programData.progression}%</Text>
+
+            <View style={styles.stepperRow}>
+              <TouchableOpacity
+                style={[styles.stepperBtn, atMin && styles.stepperBtnDisabled]}
+                onPress={() => handleAdjustTumuns(-1)}
+                disabled={atMin}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.stepperBtnText}>−</Text>
+              </TouchableOpacity>
+
+              <View style={styles.stepperValueWrap}>
+                <Text style={styles.stepperValue}>
+                  {programData.completedTumuns}
+                </Text>
+                <Text style={styles.stepperHint}>ثمن مكتمل</Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.stepperBtn, atMax && styles.stepperBtnDisabled]}
+                onPress={() => handleAdjustTumuns(1)}
+                disabled={atMax}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.stepperBtnText}>+</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.progressBarFull, styles.progressBarRtl]}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  styles.progressBarFillRtl,
+                  { width: `${programData.progression}%` },
+                ]}
+              />
+            </View>
+
+            {programData.progression < 100 && (
+              <View style={styles.noteBox}>
+                <Text style={styles.noteText}>
+                  ملاحظة: التقدم الفعلي ({programData.progression}%) أقل من
+                  المتوقع (100%) بناء على الأيام المنقضية.
+                </Text>
+              </View>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={handleDeleteProgramme}
+            activeOpacity={0.85}
+            accessibilityLabel="حذف البرنامج"
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.red} />
+            <Text style={styles.deleteButtonText}>حذف البرنامج</Text>
+          </TouchableOpacity>
+
+          <View style={styles.bottomPadding} />
         </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>تفاصيل البرنامج</Text>
-          <View style={styles.datesRow}>
-            <View style={styles.dateBox}>
-              <Text style={styles.dateLabel}>تاريخ البداية</Text>
-              <Text style={styles.dateValue}>{dateDebutFormatted}</Text>
-            </View>
-            <View style={styles.dateBox}>
-              <Text style={styles.dateLabel}>الانتهاء المتوقع</Text>
-              <Text style={styles.dateValue}>{dateFinFormatted}</Text>
-            </View>
-          </View>
-          <View style={styles.meterBlock}>
-            <View style={styles.meterHeader}>
-              <Text style={styles.meterLabel}>الأيام المنقضية</Text>
-              <Text style={styles.meterMeta}>
-                {joursEcoules} / {programData.duree}
-              </Text>
-            </View>
-            <View style={styles.meterTrack}>
-              <View style={[styles.meterFill, { width: `${daysPct}%` }]} />
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>إدارة التقدم</Text>
-          <Text style={styles.sectionHint}>تحديث التقدم بالأثمان (ثمن)</Text>
-
-          <Text style={styles.progressCount}>
-            {programData.completedTumuns} / {programData.totalTumuns} أثمان
-          </Text>
-          <Text style={styles.progressPct}>{programData.progression}%</Text>
-
-          <View style={styles.stepperRow}>
-            <TouchableOpacity
-              style={[styles.stepperBtn, atMin && styles.stepperBtnDisabled]}
-              onPress={() => handleAdjustTumuns(-1)}
-              disabled={atMin}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.stepperBtnText}>−</Text>
-            </TouchableOpacity>
-
-            <View style={styles.stepperValueWrap}>
-              <Text style={styles.stepperValue}>
-                {programData.completedTumuns}
-              </Text>
-              <Text style={styles.stepperHint}>ثمن مكتمل</Text>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.stepperBtn, atMax && styles.stepperBtnDisabled]}
-              onPress={() => handleAdjustTumuns(1)}
-              disabled={atMax}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.stepperBtnText}>+</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.meterTrack}>
-            <View
-              style={[
-                styles.meterFill,
-                { width: `${Math.min(100, programData.progression || 0)}%` },
-              ]}
-            />
-          </View>
-
-          {programData.progression < 100 ? (
-            <View style={styles.noteBox}>
-              <Text style={styles.noteText}>
-                ملاحظة: يمكنك تحديث تقدمك ثمنًا بثمن وفق ما أنجزته فعليًا.
-              </Text>
-            </View>
-          ) : null}
-        </View>
-
-        <TouchableOpacity
-          style={styles.deleteBtn}
-          onPress={handleDeleteProgramme}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="trash-outline" size={18} color={colors.red} />
-          <Text style={styles.deleteBtnText}>حذف البرنامج</Text>
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+const StatCard = ({ title, value, icon, color }) => (
+  <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
+    <View style={styles.rowBetween}>
+      <View style={styles.itemRow}>
+        <MaterialCommunityIcons
+          name={icon}
+          size={20}
+          color={colors.muted}
+          style={{ marginEnd: 8 }}
+        />
+        <Text style={[styles.statTitle, { ...rtlText }]}>{title}</Text>
+      </View>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
+    </View>
+  </View>
+);
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F5F5F5" },
-  header: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: rtlRow,
-    alignItems: "center",
-    gap: 10,
-  },
-  headerBtn: { padding: 2 },
-  headerTitle: {
+  container: {
     flex: 1,
-    color: "#fff",
-    fontSize: 16,
-    fontFamily: fonts.bold,
-    ...rtlText,
+    backgroundColor: colors.bg,
   },
-  headerSpacer: { width: 26 },
-  content: { padding: 16 },
+  content: {
+    padding: 16,
+  },
   card: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
+    backgroundColor: "white",
+    borderRadius: radii.lg,
     padding: 16,
     marginBottom: 12,
+    ...shadows.card,
   },
-  heroRow: {
+  mainCard: {
+    backgroundColor: colors.soft,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+  },
+  itemRow: {
     flexDirection: rtlRow,
     alignItems: "center",
-    gap: 12,
   },
-  heroIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.soft,
+  rowBetween: {
+    flexDirection: rtlRow,
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  titleContainer: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    marginBottom: 10,
+    gap: 10,
+  },
+  bookCol: {
+    width: 50,
+    alignItems: "center",
+  },
+  mainTitle: {
+    flex: 1,
+    fontSize: 22,
+    fontWeight: "bold",
+    color: colors.primary,
+    ...rtlText,
+  },
+  iconCircle: {
+    width: 50,
+    height: 50,
+    backgroundColor: colors.primary,
+    borderRadius: 25,
     alignItems: "center",
     justifyContent: "center",
   },
-  heroTextWrap: { flex: 1 },
-  heroTitle: {
-    fontSize: 17,
-    fontFamily: fonts.bold,
-    color: colors.text,
-    marginBottom: 8,
-    ...rtlText,
-  },
-  badgeRow: {
+  headerIcons: {
     flexDirection: rtlRow,
     flexWrap: "wrap",
     gap: 6,
+    paddingStart: 25,
   },
-  badge: {
-    backgroundColor: colors.soft,
-    borderRadius: radii.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  badgeGreen: {
+    borderColor: colors.primary,
     borderWidth: 1,
-    borderColor: colors.borderGreen,
+    borderRadius: radii.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
-  badgeText: {
+  badgeYellow: {
+    borderColor: colors.gold,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  badgeTextGreen: {
     color: colors.primary,
     fontSize: 12,
-    fontFamily: fonts.semiBold,
-    ...rtlText,
   },
-  sectionTitle: {
-    fontSize: 15,
-    fontFamily: fonts.bold,
-    color: colors.text,
-    marginBottom: 12,
-    ...rtlText,
-  },
-  sectionHint: {
+  badgeTextYellow: {
+    color: colors.gold,
     fontSize: 12,
+  },
+  statTitle: {
+    fontSize: 15,
     color: colors.muted,
-    marginTop: -6,
-    marginBottom: 12,
-    ...rtlText,
-  },
-  statRow: {
-    flexDirection: rtlRow,
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  statIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: colors.soft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  statLabel: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.muted,
-    ...rtlText,
   },
   statValue: {
+    fontSize: 22,
+    fontWeight: "bold",
+  },
+  sectionCard: {
+    backgroundColor: "white",
+    borderRadius: radii.lg,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.card,
+  },
+  sectionTitle: {
     fontSize: 18,
-    fontFamily: fonts.bold,
+    fontWeight: "bold",
     color: colors.primary,
+    ...rtlText,
+  },
+  titleRight: {
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  subTitle: {
+    fontSize: 12,
+    color: colors.placeholder,
     ...rtlText,
   },
   datesRow: {
     flexDirection: rtlRow,
-    gap: 10,
-    marginBottom: 14,
+    justifyContent: "space-between",
+    marginVertical: 20,
+    gap: 12,
   },
-  dateBox: {
+  dateItem: {
+    alignItems: "flex-start",
     flex: 1,
-    backgroundColor: colors.soft,
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
   },
   dateLabel: {
     fontSize: 12,
-    color: colors.muted,
-    marginBottom: 6,
+    color: colors.placeholder,
+    marginBottom: 5,
     ...rtlText,
   },
   dateValue: {
     fontSize: 13,
-    fontFamily: fonts.semiBold,
-    color: colors.text,
+    fontWeight: "bold",
+    color: colors.textSecondary,
     ...rtlText,
   },
-  meterBlock: { marginTop: 4 },
-  meterHeader: {
+  dateValueRow: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    gap: 5,
+  },
+  dateIcon: {},
+  progressContainer: {
+    backgroundColor: colors.soft,
+    padding: 12,
+    borderRadius: radii.sm,
+  },
+  progressHeader: {
     flexDirection: rtlRow,
     justifyContent: "space-between",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 10,
   },
-  meterLabel: {
-    fontSize: 13,
-    fontFamily: fonts.semiBold,
+  progressTitle: {
     color: colors.primary,
+    fontWeight: "bold",
     ...rtlText,
   },
-  meterMeta: {
-    fontSize: 13,
-    color: colors.muted,
+  progressText: {
+    color: colors.textSecondary,
     ...rtlText,
   },
-  meterTrack: {
+  progressBarFull: {
     height: 8,
-    borderRadius: 4,
     backgroundColor: colors.border,
+    borderRadius: 4,
     overflow: "hidden",
   },
-  meterFill: {
+  progressBarRtl: {
+    direction: "rtl",
+  },
+  progressBarFill: {
     height: "100%",
     backgroundColor: colors.primary,
-    borderRadius: 4,
+    alignSelf: "flex-end",
   },
-  progressCount: {
+  progressBarFillRtl: {
+    alignSelf: "flex-start",
+  },
+  currentProgressLabel: {
+    fontSize: 14,
+    color: colors.muted,
+    ...rtlText,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  tumunCountText: {
     fontSize: 24,
-    fontFamily: fonts.bold,
+    fontWeight: "bold",
     color: colors.primary,
+    marginVertical: 4,
     ...rtlText,
   },
-  progressPct: {
-    fontSize: 15,
-    color: colors.muted,
-    marginBottom: 14,
+  percentageText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.textSecondary,
+    marginBottom: 16,
     ...rtlText,
   },
   stepperRow: {
     flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    marginBottom: 16,
     gap: 12,
   },
   stepperBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.soft,
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-    alignItems: "center",
+    backgroundColor: colors.inputBg,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  stepperBtnDisabled: { opacity: 0.4 },
+  stepperBtnDisabled: {
+    opacity: 0.4,
+  },
   stepperBtnText: {
-    fontSize: 26,
-    fontFamily: fonts.bold,
+    fontSize: 25,
+    fontWeight: "bold",
     color: colors.primary,
   },
-  stepperValueWrap: { flex: 1, alignItems: "center" },
+  stepperValueWrap: {
+    flex: 1,
+    alignItems: "center",
+  },
   stepperValue: {
-    fontSize: 28,
-    fontFamily: fonts.bold,
+    fontSize: 32,
+    fontWeight: "bold",
     color: colors.primary,
   },
   stepperHint: {
     fontSize: 12,
     color: colors.muted,
-    marginTop: 2,
+    marginTop: 4,
     ...rtlText,
   },
   noteBox: {
-    marginTop: 14,
-    backgroundColor: colors.soft,
-    borderRadius: 12,
-    padding: 12,
+    backgroundColor: "#FFF8E7",
+    padding: 16,
+    borderRadius: radii.md,
+    marginTop: 16,
     borderWidth: 1,
-    borderColor: colors.borderGreen,
+    borderColor: "#FFE0B2",
   },
   noteText: {
+    color: "#B76E3C",
     fontSize: 13,
-    color: colors.muted,
+    ...rtlText,
     lineHeight: 20,
-    ...rtlText,
   },
-  deleteBtn: {
-    marginTop: 4,
+  deleteButton: {
+    backgroundColor: "#FEE2E2",
+    marginTop: 8,
+    marginBottom: 16,
+    paddingVertical: 12,
+    borderRadius: radii.md,
     flexDirection: rtlRow,
-    alignItems: "center",
     justifyContent: "center",
+    alignItems: "center",
     gap: 8,
-    backgroundColor: "#FFEBEE",
-    borderRadius: 14,
-    paddingVertical: 14,
   },
-  deleteBtnText: {
+  deleteButtonText: {
     color: colors.red,
-    fontSize: 15,
-    fontFamily: fonts.semiBold,
+    fontSize: 16,
+    fontWeight: "700",
     ...rtlText,
+  },
+  bottomPadding: {
+    height: 20,
   },
 });
