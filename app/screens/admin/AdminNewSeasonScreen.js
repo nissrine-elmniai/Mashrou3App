@@ -62,9 +62,15 @@ export default function AdminNewSeasonScreen({ navigation }) {
     setName("");
     setStartDate("");
     setVersion("");
+    const alertNote =
+      result.alertOk === false
+        ? `\n\nتنبيه: تعذر إرسال الإشعار للأعضاء${
+            result.alertError ? ` (${result.alertError})` : ""
+          }.`
+        : "\nتم إرسال تنبيه في «الإشعارات» لحث الأعضاء على تعبئة استمارة التسجيل.";
     Alert.alert(
       "انطلاق موسم جديد",
-      `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nابدأ بإعداد حصص ومشرفي هذا الموسم.`,
+      `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nابدأ بإعداد حصص ومشرفي هذا الموسم.${alertNote}`,
       [{ text: "حسناً", onPress: () => navigation.goBack() }]
     );
   };

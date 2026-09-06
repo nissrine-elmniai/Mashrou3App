@@ -42,7 +42,7 @@ import {
   listMemberApplications,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
-import { sendAlert } from "../lib/alertsApi";
+import { sendAlert as sendRemoteAlert } from "../lib/alertsApi";
 import { archiveSeancesForSaisonIds } from "../lib/seancesApi";
 import {
   closeRegularSaisons,
@@ -746,16 +746,28 @@ export function AppProvider({ children }) {
     await upsertSaison(season).catch(() => {});
 
     const alertMessage = registrationOpens
-      ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`
+      ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`
       : `انطلاق موسم جديد: «${seasonName}» — سيفتح باب التسجيل لاحقاً.`;
     pushNotification({
       title: "انطلاق موسم جديد",
       body: alertMessage,
       audience: "members",
     });
-    sendAlert(alertMessage, "members").catch(() => {});
 
-    return { ok: true, season };
+    let alertOk = true;
+    let alertError = null;
+    try {
+      const alertRes = await sendRemoteAlert(alertMessage, "members");
+      if (!alertRes?.ok) {
+        alertOk = false;
+        alertError = alertRes?.error || null;
+      }
+    } catch (e) {
+      alertOk = false;
+      alertError = e?.message || null;
+    }
+
+    return { ok: true, season, alertOk, alertError };
   };
 
   const announceRegistrationForm = (seasonId) => {
@@ -785,13 +797,13 @@ export function AppProvider({ children }) {
       })
     );
     upsertSaison(next).catch(() => {});
-    const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`;
+    const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
     pushNotification({
       title: "فتح باب التسجيل",
       body: alertMessage,
       audience: "members",
     });
-    sendAlert(alertMessage, "members").catch(() => {});
+    sendRemoteAlert(alertMessage, "members").catch(() => {});
     return { ok: true, season: next };
   };
 
@@ -822,13 +834,13 @@ export function AppProvider({ children }) {
     upsertSaison(next).catch(() => {});
 
     if (open) {
-      const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`;
+      const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
       pushNotification({
         title: "فتح باب التسجيل",
         body: alertMessage,
         audience: "members",
       });
-      sendAlert(alertMessage, "members").catch(() => {});
+      sendRemoteAlert(alertMessage, "members").catch(() => {});
     }
     return { ok: true, season: next };
   };
