@@ -8,12 +8,14 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  StatusBar,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, fonts, arrowBack } from "../../constants/rtl";
+import { rtlText, fonts, arrowBack, row } from "../../constants/rtl";
+import { EmptyState } from "../../components/ui";
 import {
   getVisibleAlertsWithAckStatus,
   acknowledgeAlert,
@@ -75,18 +77,30 @@ export default function MemberAlertsScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          hitSlop={8}
-        >
-          <Ionicons name={arrowBack} size={22} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>الإشعارات</Text>
-        <View style={styles.backBtn} />
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
+
+      <View style={styles.headerWrap}>
+        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => navigation.goBack()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="رجوع"
+            >
+              <Ionicons name={arrowBack} size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerTitle}>الإشعارات</Text>
+              <Text style={styles.headerSubtitle}>
+                تنبيهات الإدارة منذ تاريخ تسجيلك
+              </Text>
+            </View>
+            <View style={styles.headerBtn} />
+          </View>
+        </LinearGradient>
       </View>
 
       {loading ? (
@@ -96,37 +110,69 @@ export default function MemberAlertsScreen({ navigation }) {
       ) : (
         <ScrollView
           contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
           }
         >
           {alerts.length === 0 ? (
-            <View style={styles.emptyWrap}>
+            <View style={styles.emptyCard}>
               <Ionicons
                 name="notifications-off-outline"
-                size={40}
-                color={colors.muted}
+                size={36}
+                color={colors.primary}
               />
-              <Text style={styles.emptyText}>لا توجد إشعارات جديدة</Text>
+              <EmptyState text="لا توجد إشعارات جديدة" />
               <Text style={styles.emptyHint}>
                 تظهر هنا فقط التنبيهات المرسلة بعد تاريخ تسجيلك
               </Text>
             </View>
           ) : (
             alerts.map((item) => (
-              <View key={item.id} style={styles.card}>
+              <View
+                key={item.id}
+                style={[
+                  styles.card,
+                  item.acknowledged ? styles.cardAcked : styles.cardNew,
+                ]}
+              >
                 <View style={styles.cardTop}>
-                  <Text style={styles.sender}>{item.senderName || "الإدارة"}</Text>
+                  <View style={styles.senderRow}>
+                    <View style={styles.iconBadge}>
+                      <Ionicons
+                        name="notifications-outline"
+                        size={16}
+                        color={colors.primary}
+                      />
+                    </View>
+                    <Text style={styles.sender}>
+                      {item.senderName || "الإدارة"}
+                    </Text>
+                  </View>
                   <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
                 </View>
+                <View style={styles.goldLine} />
                 <Text style={styles.message}>{item.message}</Text>
                 {item.acknowledged ? (
-                  <Text style={styles.acked}>تم الاطلاع</Text>
+                  <View style={styles.ackedRow}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={16}
+                      color={colors.primary}
+                    />
+                    <Text style={styles.acked}>تم الاطلاع</Text>
+                  </View>
                 ) : (
                   <TouchableOpacity
                     style={styles.ackBtn}
                     onPress={() => handleAcknowledge(item.id)}
                     disabled={ackingId === item.id}
+                    activeOpacity={0.85}
                   >
                     <Text style={styles.ackBtnText}>
                       {ackingId === item.id ? "جاري..." : "تم الاطلاع"}
@@ -143,41 +189,63 @@ export default function MemberAlertsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  header: {
-    backgroundColor: colors.primary,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  safe: { flex: 1, backgroundColor: colors.bg },
+  headerWrap: {
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  backBtn: { width: 40, alignItems: "center" },
+  header: {
+    borderRadius: radii.lg,
+    overflow: "hidden",
+    paddingTop: 16,
+    paddingBottom: 18,
+    paddingHorizontal: 14,
+  },
+  headerRow: {
+    flexDirection: row,
+    alignItems: "center",
+  },
+  headerBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTextWrap: {
+    flex: 1,
+    alignItems: "center",
+  },
   headerTitle: {
     color: "#fff",
     fontSize: 18,
     fontFamily: fonts.bold,
-    ...rtlTextBold,
+    ...rtlText,
+  },
+  headerSubtitle: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 12,
+    marginTop: 4,
+    fontFamily: fonts.regular,
+    ...rtlText,
   },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   scroll: { padding: 16, paddingBottom: 40 },
-  emptyWrap: {
+  emptyCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    padding: 28,
     alignItems: "center",
-    paddingTop: 64,
-    paddingHorizontal: 24,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontFamily: fonts.semiBold,
-    color: colors.text,
-    marginTop: 8,
-    ...rtlText,
+    ...shadows.card,
   },
   emptyHint: {
     fontSize: 13,
     color: colors.muted,
     textAlign: "center",
+    marginTop: 4,
+    lineHeight: 20,
     ...rtlText,
   },
   card: {
@@ -186,45 +254,84 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: colors.border,
     ...shadows.card,
   },
+  cardNew: {
+    borderColor: colors.borderGreen,
+    backgroundColor: colors.soft,
+  },
+  cardAcked: {
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
   cardTop: {
-    flexDirection: "row",
+    flexDirection: row,
     justifyContent: "space-between",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  senderRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+  },
+  iconBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    alignItems: "center",
+    justifyContent: "center",
   },
   sender: {
     fontSize: 14,
     fontFamily: fonts.semiBold,
     color: colors.primary,
+    flexShrink: 1,
     ...rtlText,
   },
   time: { fontSize: 12, color: colors.muted, ...rtlText },
+  goldLine: {
+    height: 2,
+    backgroundColor: colors.gold,
+    borderRadius: 1,
+    marginBottom: 12,
+    opacity: 0.85,
+  },
   message: {
     fontSize: 15,
     color: colors.text,
     lineHeight: 22,
+    fontFamily: fonts.regular,
     ...rtlText,
   },
+  ackedRow: {
+    marginTop: 12,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 6,
+  },
   acked: {
-    marginTop: 10,
     fontSize: 12,
-    color: colors.muted,
+    color: colors.primary,
+    fontFamily: fonts.semiBold,
     ...rtlText,
   },
   ackBtn: {
-    marginTop: 12,
-    alignSelf: "flex-start",
-    backgroundColor: colors.soft,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: radii.sm,
+    marginTop: 14,
+    alignSelf: "stretch",
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    alignItems: "center",
   },
   ackBtnText: {
-    color: colors.primary,
+    color: "#fff",
     fontFamily: fonts.semiBold,
-    fontSize: 13,
+    fontSize: 14,
     ...rtlText,
   },
 });
