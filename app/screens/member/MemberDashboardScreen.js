@@ -50,7 +50,7 @@ import {
 import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { TOTAL_HIZB, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -70,20 +70,15 @@ function displayGenderFromUser(gender) {
 }
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
-const TOTAL_JUZ = 30;
-const QURAN_TUMUNS = TOTAL_HIZB * TUMUNS_PER_HIZB;
 const LRI = "\u2066";
 const PDI = "\u2069";
 
 /**
- * Pourcentage d'anneau depuis tumunTotal (480). Une décimale ;
+ * Pourcentage d'anneau (0–100). Une décimale ;
  * 0 % et 100 % sans décimale. Isolat LTR pour le point et « % ».
  */
-function formatRingPercent(tumunTotal) {
-  const raw = Math.min(
-    100,
-    Math.max(0, ((Number(tumunTotal) || 0) / QURAN_TUMUNS) * 100)
-  );
+function formatRingPercent(rawPct) {
+  const raw = Math.min(100, Math.max(0, Number(rawPct) || 0));
   if (raw <= 0) {
     return { progress: 0, label: `${LRI}0%${PDI}` };
   }
@@ -98,6 +93,23 @@ function formatRingPercent(tumunTotal) {
     return { progress: 0, label: `${LRI}0%${PDI}` };
   }
   return { progress: one, label: `${LRI}${one.toFixed(1)}%${PDI}` };
+}
+
+/** Progression globale = Σ thumuns complétés / Σ thumuns des programmes. */
+function globalProgramsProgressPct(programs = []) {
+  let completed = 0;
+  let total = 0;
+  programs.forEach((p) => {
+    const maxT =
+      Number(p.totalTumuns) > 0
+        ? Number(p.totalTumuns)
+        : (Number(p.nbHizb) || 0) * TUMUNS_PER_HIZB;
+    if (maxT <= 0) return;
+    total += maxT;
+    completed += Math.min(maxT, Number(p.completedTumuns) || 0);
+  });
+  if (total <= 0) return 0;
+  return (completed / total) * 100;
 }
 
 function parseActivityTimestamp(raw) {
@@ -482,23 +494,28 @@ export default function MemberDashboardScreen({ navigation }) {
   );
 
   const homeProgress = useMemo(() => {
-    if (memorizationMetrics) {
-      const ring = formatRingPercent(memorizationMetrics.tumunTotal);
-      return {
-        memorizationPct: ring.progress,
-        memorizationPctLabel: ring.label,
-        memorizedJuz: memorizationMetrics.juzeCourant ?? 0,
-      };
-    }
-    const ring = formatRingPercent(0);
+    const pct = globalProgramsProgressPct(myMemberPrograms);
+    const ring = formatRingPercent(pct);
+    const completedHizb = (myMemberPrograms || []).reduce(
+      (sum, p) => sum + (Number(p.hizbCompleted) || 0),
+      0
+    );
+    const targetHizb = (myMemberPrograms || []).reduce(
+      (sum, p) => sum + (Number(p.nbHizb) || 0),
+      0
+    );
     return {
-      memorizationPct: 0,
+      memorizationPct: ring.progress,
       memorizationPctLabel: ring.label,
-      memorizedJuz: 0,
+      programsHizbLabel:
+        targetHizb > 0
+          ? `${completedHizb} من ${targetHizb} حزب`
+          : null,
     };
-  }, [memorizationMetrics]);
+  }, [myMemberPrograms]);
 
-  const { memorizationPct, memorizationPctLabel, memorizedJuz } = homeProgress;
+  const { memorizationPct, memorizationPctLabel, programsHizbLabel } =
+    homeProgress;
 
   const userNotifications = useMemo(
     () => getNotificationsForUser(currentUser),
@@ -790,10 +807,10 @@ export default function MemberDashboardScreen({ navigation }) {
           <>
             <TouchableOpacity
               style={styles.heroCard}
-              onPress={openProgression}
+              onPress={() => setTab("programs")}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel="تسجيل موضعي في القرآن"
+              accessibilityLabel="البرامج ونسبة الحفظ الكلية"
             >
               <ProgressRing
                 progress={memorizationPct}
@@ -807,7 +824,10 @@ export default function MemberDashboardScreen({ navigation }) {
                 </View>
               </ProgressRing>
               <Text style={styles.juzCount}>
-                {memorizedJuz} من {TOTAL_JUZ} جزء
+                {programsHizbLabel ||
+                  (activePrograms === 0
+                    ? "لا توجد برامج بعد"
+                    : `${activePrograms} برنامج`)}
               </Text>
             </TouchableOpacity>
 
