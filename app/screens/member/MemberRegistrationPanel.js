@@ -241,10 +241,14 @@ export default function MemberRegistrationPanel({
     <View>
       <SectionCard
         title="التسجيل في الموسم"
-        subtitle="اختر الحصة وأجب عن الأسئلة ثم أرسل الطلب"
+        subtitle={
+          openRegular.length > 0
+            ? `الموسم النشط: ${openRegular[0].name}`
+            : "مرتبط بانطلاق موسم جديد من الإدارة"
+        }
       >
         {openRegular.length === 0 ? (
-          <EmptyState text="تسجيل الموسم العادي مغلق حالياً" />
+          <EmptyState text="باب التسجيل مغلق — يُفتح تلقائياً عند انطلاق موسم جديد من المشرف العام" />
         ) : (
           <RegistrationBlock
             seasons={openRegular}

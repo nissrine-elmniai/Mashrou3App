@@ -122,7 +122,8 @@ export default function AdminNewSeasonScreen({ navigation }) {
               <Text style={styles.formTitle}>إنشاء موسم جديد</Text>
             </View>
             <Text style={styles.formHint}>
-              يُغلق الموسم العادي السابق تلقائياً ويُفتح باب التسجيل للأعضاء
+              يُغلق الموسم العادي السابق وباب تسجيله تلقائياً، ويُفعَّل التسجيل
+              للأعضاء في الموسم الجديد فوراً
             </Text>
 
             <Text style={styles.fieldLabel}>اسم الموسم</Text>

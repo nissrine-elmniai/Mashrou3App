@@ -27,7 +27,7 @@ import {
   REGISTRATION_STATUS_LABELS,
   SEASON_TYPES,
 } from "../../constants/roles";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
 import {
@@ -268,12 +268,8 @@ export default function MemberDashboardScreen({ navigation }) {
     };
   }, [authId]);
 
-  const openRegular = seasons.filter(
-    (s) => s.registrationOpen && s.type === SEASON_TYPES.REGULAR
-  );
-  const openSummer = seasons.filter(
-    (s) => s.registrationOpen && s.type === SEASON_TYPES.SUMMER
-  );
+  const openRegular = getOpenRegistrationSeasons(seasons, SEASON_TYPES.REGULAR);
+  const openSummer = getOpenRegistrationSeasons(seasons, SEASON_TYPES.SUMMER);
 
   const myRegs = registrations.filter((r) => {
     if (!currentUser) return false;
