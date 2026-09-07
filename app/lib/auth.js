@@ -48,7 +48,10 @@ export function profileToAppUser(profile, fallback = {}) {
     password: null,
     firstName: profile.first_name || fallback.firstName || "",
     lastName: profile.last_name || fallback.lastName || "",
-    birthDate: fallback.birthDate || "2000/01/01",
+    birthDate:
+      toSlashDate(profile?.date_naissance) ||
+      fallback.birthDate ||
+      null,
     gender:
       formatGenderLabel(profile?.genre) ||
       formatGenderLabel(fallback.gender) ||
@@ -107,6 +110,150 @@ export async function fetchAppUserRow(userId) {
     return { ok: false, error: mapSupabaseAuthError(error) };
   }
   return { ok: true, user: data || null };
+}
+
+function pickProfileText(value) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})/;
+const SLASH_DATE_RE = /^(\d{4})\/(\d{2})\/(\d{2})$/;
+
+/** Normalise YYYY-MM-DD, YYYY/MM/DD ou timestamp ISO vers YYYY-MM-DD. */
+export function toIsoDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const slash = text.match(SLASH_DATE_RE);
+  if (slash) return `${slash[1]}-${slash[2]}-${slash[3]}`;
+  const iso = text.match(ISO_DATE_RE);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return null;
+}
+
+export function toSlashDate(value) {
+  const iso = toIsoDate(value);
+  return iso ? iso.replace(/-/g, "/") : null;
+}
+
+export function parseLocalDate(value) {
+  const iso = toIsoDate(value);
+  if (!iso) return null;
+  const [year, month, day] = iso.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatBirthDateLabel(value) {
+  const date = parseLocalDate(value);
+  if (!date) return null;
+  return date.toLocaleDateString("ar-MA", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+export function dateToIsoLocal(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function mapProfilesWriteError(error) {
+  const msg = error?.message || "";
+  if (/permission|row-level security|RLS|42501|violates row/i.test(msg)) {
+    return "لا صلاحية كافية لهذه العملية";
+  }
+  if (/column.*date_naissance.*does not exist/i.test(msg)) {
+    return "عمود تاريخ الميلاد مفقود — نفّذ supabase/migrations/0056_profiles_date_naissance.sql في SQL Editor";
+  }
+  if (/column.*does not exist/i.test(msg)) {
+    return "عمود مفقود في profiles — راجع migrations Supabase";
+  }
+  return mapSupabaseAuthError(error) || "تعذر حفظ التعديلات";
+}
+
+/**
+ * Mise à jour du profil par le titulaire (profiles_update_own).
+ * Colonnes : first_name, last_name, phone, genre, date_naissance — jamais email / role.
+ * Recopie best-effort vers public.users (legacy) si la table existe.
+ */
+export async function updateOwnProfile(userId, fields = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!userId) {
+    return { ok: false, error: "تعذر تحديد حسابك — أعد تسجيل الدخول" };
+  }
+
+  const firstName = pickProfileText(fields.firstName);
+  const lastName = pickProfileText(fields.lastName);
+  const phone = pickProfileText(fields.phone);
+  const genre = formatGenderLabel(fields.genre);
+  const birthDate = toIsoDate(fields.birthDate);
+
+  if (!firstName || !lastName) {
+    return { ok: false, error: "أدخل الاسم الأول والنسب" };
+  }
+  if (!phone) {
+    return { ok: false, error: "أدخل رقم الهاتف" };
+  }
+  if (!birthDate) {
+    return { ok: false, error: "أدخل تاريخ الميلاد" };
+  }
+
+  const payload = {
+    first_name: firstName,
+    last_name: lastName,
+    phone,
+    date_naissance: birthDate,
+    updated_at: new Date().toISOString(),
+  };
+  if (genre === "ذكر" || genre === "أنثى") {
+    payload.genre = genre;
+  }
+
+  const writeProfile = async (body) =>
+    supabase
+      .from("profiles")
+      .update(body)
+      .eq("id", userId)
+      .select("*")
+      .maybeSingle();
+
+  try {
+    let { data, error } = await writeProfile(payload);
+    if (error && payload.genre && /column.*genre.*does not exist/i.test(error.message || "")) {
+      const { genre: _ignored, ...withoutGenre } = payload;
+      ({ data, error } = await writeProfile(withoutGenre));
+    }
+    if (error) {
+      return { ok: false, error: mapProfilesWriteError(error) };
+    }
+    if (!data) {
+      return { ok: false, error: "لم يُعثر على ملف المستخدم" };
+    }
+
+    try {
+      await supabase
+        .from("users")
+        .update({
+          nom: lastName,
+          prenom: firstName,
+          telephone: phone,
+        })
+        .eq("id", userId);
+    } catch {
+      /* table users absente ou RLS — profiles reste la source de vérité */
+    }
+
+    return { ok: true, profile: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
 }
 
 export async function upsertProfile({

@@ -43,6 +43,8 @@ import SupervisorProfileScreen from "./app/screens/supervisor/SupervisorProfileS
 import SupervisorAlertsScreen from "./app/screens/supervisor/SupervisorAlertsScreen";
 import SupervisorAttendanceDetailScreen from "./app/screens/supervisor/SupervisorAttendanceDetailScreen";
 import SupervisorMessagesScreen from "./app/screens/supervisor/SupervisorMessagesScreen";
+import GroupChatScreen from "./app/screens/chat/GroupChatScreen";
+import GroupInfoScreen from "./app/screens/chat/GroupInfoScreen";
 
 const Stack = createStackNavigator();
 
@@ -294,6 +296,16 @@ function RootNavigator() {
         <Stack.Screen
           name="ChatConversation"
           component={ChatConversationScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="GroupChat"
+          component={GroupChatScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="GroupInfo"
+          component={GroupInfoScreen}
           options={{ headerShown: false }}
         />
         <Stack.Screen

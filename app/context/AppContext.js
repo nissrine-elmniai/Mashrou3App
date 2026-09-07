@@ -1834,6 +1834,25 @@ export function AppProvider({ children }) {
     );
   };
 
+  const updateCurrentUserProfile = (patch = {}) => {
+    if (!currentUser) return;
+    const next = {};
+    if (patch.firstName !== undefined) next.firstName = patch.firstName || "";
+    if (patch.lastName !== undefined) next.lastName = patch.lastName || "";
+    if (patch.phone !== undefined) next.phone = patch.phone || null;
+    if (patch.gender !== undefined) next.gender = patch.gender || "غير محدد";
+    if (patch.birthDate !== undefined) next.birthDate = patch.birthDate || null;
+    if (Object.keys(next).length === 0) return;
+    const patchUser = (user) => {
+      const isSelf =
+        (currentUser.authId && user.authId === currentUser.authId) ||
+        user.id === currentUser.id;
+      return isSelf ? { ...user, ...next } : user;
+    };
+    setUsers((prev) => prev.map(patchUser));
+    setCurrentUser((prev) => (prev ? { ...prev, ...next } : prev));
+  };
+
   const getMemberPrograms = (memberId = currentUser?.id) =>
     memberPrograms
       .filter((p) => p.userId === memberId)
@@ -2209,6 +2228,7 @@ export function AppProvider({ children }) {
     updateMemberProgress,
     updateMemberHifzGoal,
     updateCurrentUserAvatar,
+    updateCurrentUserProfile,
     getMemberPrograms,
     saveMemberProgram,
     deleteMemberProgram,

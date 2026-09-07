@@ -18,6 +18,7 @@ import { EmptyState } from "../../components/ui";
 import { getMySeance, mergeInboxRows } from "../../lib/messagesApi";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
 import { initials } from "../supervisor/supervisorHelpers";
 
 function supervisorContactFromSeance(seance) {
@@ -41,6 +42,7 @@ function supervisorContactFromSeance(seance) {
 
 export default function MemberChatInboxScreen({ navigation }) {
   const { threads, loading: threadsLoading } = useInboxThreads();
+  const { groups: chatGroups, loading: groupsLoading } = useChatGroups();
   const [supervisor, setSupervisor] = useState(null);
   const [seanceLoading, setSeanceLoading] = useState(true);
 
@@ -67,7 +69,7 @@ export default function MemberChatInboxScreen({ navigation }) {
     [supervisor]
   );
 
-  const rows = useMemo(() => {
+  const dmRows = useMemo(() => {
     // appendUnknown: le badge du FAB compte TOUS les non-lus ; la boîte doit
     // afficher les mêmes fils (ex. superviseur d'une saison précédente), sinon
     // le membre voit "3" sans aucune conversation.
@@ -86,6 +88,14 @@ export default function MemberChatInboxScreen({ navigation }) {
     });
   }, [contacts, threads]);
 
+  const openGroupChat = (group) => {
+    navigation.navigate("GroupChat", {
+      groupId: group.id,
+      groupName: group.name,
+      groupAvatarUrl: group.avatarUrl || null,
+    });
+  };
+
   const openThread = (row) => {
     navigation.navigate("ChatConversation", {
       contactId: row.id,
@@ -96,6 +106,10 @@ export default function MemberChatInboxScreen({ navigation }) {
       seanceId: row.seanceId || supervisor?.seanceId || null,
     });
   };
+
+  const loading = threadsLoading || seanceLoading || groupsLoading;
+  const isEmpty =
+    !loading && (chatGroups || []).length === 0 && dmRows.length === 0;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -111,11 +125,11 @@ export default function MemberChatInboxScreen({ navigation }) {
         <Text style={styles.title}>الرسائل</Text>
       </View>
 
-      {threadsLoading || seanceLoading ? (
+      {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      ) : rows.length === 0 ? (
+      ) : isEmpty ? (
         <EmptyState
           text={
             supervisor
@@ -125,7 +139,24 @@ export default function MemberChatInboxScreen({ navigation }) {
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
-          {rows.map((row) => (
+          {(chatGroups || []).map((group) => (
+            <ChatThreadRow
+              key={`group-${group.id}`}
+              name={group.name}
+              preview={group.lastMessage}
+              time={group.time}
+              userId={group.id}
+              avatarLetter={(group.name || "م").charAt(0)}
+              avatarUrl={group.avatarUrl}
+              avatarPrimary={!group.avatarUrl}
+              isGroup
+              highlighted={!!group.unread}
+              unread={group.unread}
+              unreadCount={group.unreadCount}
+              onPress={() => openGroupChat(group)}
+            />
+          ))}
+          {dmRows.map((row) => (
             <ChatThreadRow
               key={`${row.role}-${row.id}`}
               name={row.name}

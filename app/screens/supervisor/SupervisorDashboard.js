@@ -30,6 +30,7 @@ import {
   unregisterSupervisorAttendanceSaved,
 } from "./supervisorAttendanceBridge";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
 import { formatUnreadBadge } from "../../lib/messagesApi";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
@@ -69,10 +70,14 @@ export default function SupervisorDashboard({ navigation }) {
   } = useSupervisorMembers(selectedGroupId);
 
   const { threads } = useInboxThreads();
-  const messagesUnread = useMemo(
-    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
-    [threads]
-  );
+  const { totalUnread: groupsUnread } = useChatGroups();
+  const messagesUnread = useMemo(() => {
+    const dm = (threads || []).reduce(
+      (sum, t) => sum + (Number(t.unreadCount) || 0),
+      0
+    );
+    return dm + (Number(groupsUnread) || 0);
+  }, [threads, groupsUnread]);
 
   const fullName = currentUser?.firstName?.trim() || "";
 

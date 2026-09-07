@@ -20,6 +20,11 @@ import { initials } from "./supervisorHelpers";
 import { mergeInboxRows, listAdminProfiles } from "../../lib/messagesApi";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
+import {
+  ensureSeanceChatGroup,
+  getMyChatGroups,
+} from "../../lib/chatGroupsApi";
 import { useApp } from "../../context/AppContext";
 import { getSupervisorActiveSeance, getSeanceMembers } from "../../lib/membersApi";
 import { isSupabaseEntityId } from "./supervisorAttendanceHelpers";
@@ -36,6 +41,7 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
   const paramMembers = route?.params?.members;
   const paramGroupName = route?.params?.groupName || null;
   const { threads } = useInboxThreads();
+  const { groups: chatGroups, reload: reloadChatGroups } = useChatGroups();
   const [admins, setAdmins] = useState([]);
   const [search, setSearch] = useState("");
   const [members, setMembers] = useState(() =>
@@ -51,6 +57,7 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
   const [activeGroup, setActiveGroup] = useState(
     paramGroupName ? { id: seanceId, name: paramGroupName } : null
   );
+  const [seanceChatGroup, setSeanceChatGroup] = useState(null);
   const [loading, setLoading] = useState(!paramMembers);
 
   useEffect(() => {
@@ -103,12 +110,23 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
             }))
           );
         }
+        // Groupe de discussion de la séance (création auto + sync membres)
+        await ensureSeanceChatGroup(seance.id);
+        if (cancelled) return;
+        const groupsRes = await getMyChatGroups();
+        if (!cancelled && groupsRes.ok) {
+          const match =
+            (groupsRes.groups || []).find((g) => g.seanceId === seance.id) ||
+            null;
+          setSeanceChatGroup(match);
+          reloadChatGroups();
+        }
         setLoading(false);
       })();
       return () => {
         cancelled = true;
       };
-    }, [authId, seanceId, paramMembers])
+    }, [authId, seanceId, paramMembers, reloadChatGroups])
   );
 
   const adminContacts = useMemo(() => {
@@ -182,6 +200,23 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
     return memberRows.filter((row) => (row.name || "").includes(q));
   }, [memberRows, search]);
 
+  // Préférer les données live du hook (dernier message / non lus)
+  const pinnedGroup = useMemo(() => {
+    if (!activeGroup?.id) return seanceChatGroup;
+    const live =
+      (chatGroups || []).find((g) => g.seanceId === activeGroup.id) || null;
+    return live || seanceChatGroup;
+  }, [chatGroups, activeGroup, seanceChatGroup]);
+
+  const openGroupChat = (group) => {
+    if (!group?.id) return;
+    navigation.navigate("GroupChat", {
+      groupId: group.id,
+      groupName: group.name,
+      groupAvatarUrl: group.avatarUrl || null,
+    });
+  };
+
   const openThread = (row) => {
     navigation.navigate("ChatConversation", {
       contactId: row.id,
@@ -236,6 +271,28 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
               />
             </View>
           </View>
+
+          {pinnedGroup ? (
+            <>
+              <View style={styles.messagesDivider}>
+                <Text style={styles.messagesDividerText}>مجموعة الحصة</Text>
+              </View>
+              <ChatThreadRow
+                name={pinnedGroup.name}
+                preview={pinnedGroup.lastMessage}
+                time={pinnedGroup.time}
+                userId={pinnedGroup.id}
+                avatarLetter={(pinnedGroup.name || "م").charAt(0)}
+                avatarUrl={pinnedGroup.avatarUrl}
+                avatarPrimary={!pinnedGroup.avatarUrl}
+                isGroup
+                highlighted={!!pinnedGroup.unread}
+                unread={pinnedGroup.unread}
+                unreadCount={pinnedGroup.unreadCount}
+                onPress={() => openGroupChat(pinnedGroup)}
+              />
+            </>
+          ) : null}
 
           {adminRows.map((row) => (
             <ChatThreadRow

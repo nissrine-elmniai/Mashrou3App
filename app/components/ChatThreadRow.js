@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../constants/rtl";
 import { formatUnreadBadge } from "../lib/messagesApi";
@@ -18,6 +19,7 @@ export function ChatThreadRow({
   unread,
   unreadCount = 0,
   highlighted,
+  isGroup = false,
   onPress,
 }) {
   const badgeLabel = unread ? formatUnreadBadge(unreadCount) : "";
@@ -29,15 +31,30 @@ export function ChatThreadRow({
       onPress={onPress}
     >
       <View style={styles.avatarWrap}>
-        <ProfileAvatar
-          userId={userId}
-          avatarUrl={avatarUrl}
-          cacheKey={avatarUrl || userId}
-          fallbackLetter={avatarLetter}
-          size={AVATAR_SIZE}
-          softBackgroundColor={avatarPrimary ? colors.primary : colors.primarySoft}
-          letterColor={avatarPrimary ? "white" : colors.primary}
-        />
+        {isGroup && !avatarUrl ? (
+          <View
+            style={[
+              styles.groupAvatarFallback,
+              avatarPrimary && styles.groupAvatarPrimary,
+            ]}
+          >
+            <Ionicons
+              name="people"
+              size={22}
+              color={avatarPrimary ? "white" : colors.primary}
+            />
+          </View>
+        ) : (
+          <ProfileAvatar
+            userId={userId}
+            avatarUrl={avatarUrl}
+            cacheKey={avatarUrl || userId}
+            fallbackLetter={avatarLetter}
+            size={AVATAR_SIZE}
+            softBackgroundColor={avatarPrimary ? colors.primary : colors.primarySoft}
+            letterColor={avatarPrimary ? "white" : colors.primary}
+          />
+        )}
       </View>
       <View style={styles.info}>
         <Text style={styles.name} numberOfLines={1}>
@@ -71,6 +88,15 @@ const styles = StyleSheet.create({
   },
   rowHighlight: { backgroundColor: colors.primarySoft },
   avatarWrap: { position: "relative" },
+  groupAvatarFallback: {
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
+    backgroundColor: colors.primarySoft,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  groupAvatarPrimary: { backgroundColor: colors.primary },
   info: { flex: 1 },
   name: { fontFamily: fonts.bold, fontSize: 15, color: colors.text, ...rtlTextBold },
   preview: { color: colors.muted, fontSize: 13, marginTop: 3, ...rtlText },

@@ -49,6 +49,7 @@ import {
 } from "../../lib/membersApi";
 import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
@@ -163,10 +164,14 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const authId = currentUser?.authId || currentUser?.id || null;
   const { threads } = useInboxThreads();
-  const messagesUnread = useMemo(
-    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
-    [threads]
-  );
+  const { totalUnread: groupsUnread } = useChatGroups();
+  const messagesUnread = useMemo(() => {
+    const dm = (threads || []).reduce(
+      (sum, t) => sum + (Number(t.unreadCount) || 0),
+      0
+    );
+    return dm + (Number(groupsUnread) || 0);
+  }, [threads, groupsUnread]);
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);

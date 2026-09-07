@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
 import { fetchProfile, fetchAppUserRow } from "../../lib/auth";
+import { formatGenderLabel } from "../../lib/membersApi";
 import {
   getPushNotificationsToggleState,
   registerForPushNotifications,
@@ -26,6 +27,8 @@ import { rtlText, rtlTextBold, row as rtlRow, fonts, arrowBack, arrowForward } f
 import { initials } from "./supervisorHelpers";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditableAvatar from "../../components/EditableAvatar";
+import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
+import EditSupervisorProfileModal from "../../components/profile/EditSupervisorProfileModal";
 
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -57,10 +60,14 @@ function ProfileRow({ icon, label, value }) {
   );
 }
 
-function SectionCard({ title, subtitle, children }) {
+function SectionCard({ title, subtitle, onEdit, children }) {
   return (
     <View style={[styles.card, shadows.card]}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <ProfileCardHeader
+        title={title}
+        onAction={onEdit}
+        accessibilityLabel="تعديل المعلومات الشخصية"
+      />
       {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
       {children}
     </View>
@@ -69,7 +76,12 @@ function SectionCard({ title, subtitle, children }) {
 
 /** Profil superviseur — champs affichés : identité + users + profiles (dates). */
 export default function SupervisorProfileScreen({ navigation }) {
-  const { currentUser, supabaseSession, updateCurrentUserAvatar } = useApp();
+  const {
+    currentUser,
+    supabaseSession,
+    updateCurrentUserAvatar,
+    updateCurrentUserProfile,
+  } = useApp();
   const insets = useSafeAreaInsets();
   const [profileRow, setProfileRow] = useState(null);
   const [usersRow, setUsersRow] = useState(null);
@@ -78,6 +90,7 @@ export default function SupervisorProfileScreen({ navigation }) {
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [togglingNotifications, setTogglingNotifications] = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
+  const [editInfoModal, setEditInfoModal] = useState(false);
 
   const authId = currentUser?.authId || supabaseSession?.user?.id || null;
 
@@ -162,9 +175,40 @@ export default function SupervisorProfileScreen({ navigation }) {
   const fullName = `${firstName} ${lastName}`.trim();
   const roleKey = profileRow?.role || currentUser?.role;
   const phone =
-    usersRow?.telephone || profileRow?.phone || currentUser?.phone;
+    profileRow?.phone || usersRow?.telephone || currentUser?.phone;
   const email =
     usersRow?.email || profileRow?.email || currentUser?.email;
+  const gender =
+    formatGenderLabel(profileRow?.genre) ||
+    formatGenderLabel(currentUser?.gender);
+
+  const handleProfileSaved = useCallback(
+    (savedProfile) => {
+      if (savedProfile) {
+        setProfileRow(savedProfile);
+        setUsersRow((prev) =>
+          prev
+            ? {
+                ...prev,
+                prenom: savedProfile.first_name ?? prev.prenom,
+                nom: savedProfile.last_name ?? prev.nom,
+                telephone: savedProfile.phone ?? prev.telephone,
+              }
+            : prev
+        );
+      }
+      updateCurrentUserProfile({
+        firstName: savedProfile?.first_name ?? firstName,
+        lastName: savedProfile?.last_name ?? lastName,
+        phone: savedProfile?.phone ?? phone,
+        gender:
+          formatGenderLabel(savedProfile?.genre) ||
+          gender ||
+          "غير محدد",
+      });
+    },
+    [firstName, lastName, phone, gender, updateCurrentUserProfile]
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -200,7 +244,10 @@ export default function SupervisorProfileScreen({ navigation }) {
           <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
         ) : null}
 
-        <SectionCard title="المعلومات الشخصية">
+        <SectionCard
+          title="المعلومات الشخصية"
+          onEdit={() => setEditInfoModal(true)}
+        >
           <ProfileRow icon="id-card-outline" label="الاسم الكامل" value={fullName} />
           <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
           <ProfileRow icon="call-outline" label="رقم الهاتف" value={phone} />
@@ -209,7 +256,7 @@ export default function SupervisorProfileScreen({ navigation }) {
             label="تاريخ الميلاد"
             value={currentUser?.birthDate}
           />
-          <ProfileRow icon="male-female-outline" label="الجنس" value={currentUser?.gender} />
+          <ProfileRow icon="male-female-outline" label="الجنس" value={gender} />
           <ProfileRow
             icon="time-outline"
             label="تاريخ إنشاء الحساب"
@@ -220,6 +267,16 @@ export default function SupervisorProfileScreen({ navigation }) {
             label="آخر تحديث"
             value={formatDateTime(profileRow?.updated_at)}
           />
+          <TouchableOpacity
+            style={styles.editInfoBtn}
+            onPress={() => setEditInfoModal(true)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="تعديل المعلومات الشخصية"
+          >
+            <Ionicons name="create-outline" size={18} color="white" />
+            <Text style={styles.editInfoBtnText}>تعديل المعلومات</Text>
+          </TouchableOpacity>
         </SectionCard>
 
         <SectionCard title="الإشعارات" subtitle="استلام التنبيهات والتحديثات">
@@ -259,6 +316,18 @@ export default function SupervisorProfileScreen({ navigation }) {
       <ChangePasswordModal
         visible={passwordModal}
         onClose={() => setPasswordModal(false)}
+        bottomInset={Math.max(insets.bottom, 16)}
+      />
+      <EditSupervisorProfileModal
+        visible={editInfoModal}
+        onClose={() => setEditInfoModal(false)}
+        onSaved={handleProfileSaved}
+        authId={authId}
+        firstName={firstName}
+        lastName={lastName}
+        phone={phone}
+        gender={gender}
+        email={email}
         bottomInset={Math.max(insets.bottom, 16)}
       />
     </SafeAreaView>
@@ -365,5 +434,21 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 10,
     marginTop: 4,
+  },
+  editInfoBtn: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radii.md,
+    paddingVertical: 13,
+  },
+  editInfoBtnText: {
+    color: "white",
+    fontFamily: fonts.bold,
+    fontSize: 15,
+    ...rtlTextBold,
   },
 });
