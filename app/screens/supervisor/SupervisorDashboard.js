@@ -13,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
+import ProfileAvatar from "../../components/ProfileAvatar";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import {
@@ -187,8 +188,19 @@ export default function SupervisorDashboard({ navigation }) {
                 style={styles.profileBtn}
                 onPress={() => navigation.navigate("SupervisorProfile")}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="الملف الشخصي"
               >
-                <Ionicons name="person-circle-outline" size={24} color="white" />
+                <ProfileAvatar
+                  userId={currentUser?.authId || currentUser?.id || null}
+                  avatarUrl={currentUser?.avatarUrl}
+                  cacheKey={currentUser?.avatarUrl || currentUser?.authId}
+                  fallbackLetter={(fullName || "م").charAt(0)}
+                  size={32}
+                  softBackgroundColor="rgba(255,255,255,0.28)"
+                  letterColor="white"
+                  style={styles.profileAvatar}
+                />
               </TouchableOpacity>
             </View>
           </View>
@@ -366,6 +378,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
   },
   profileBtn: { padding: 2 },
+  profileAvatar: {
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
 
   bottomBar: {
     flexDirection: row,

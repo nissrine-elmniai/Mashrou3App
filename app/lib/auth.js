@@ -144,7 +144,13 @@ export function parseLocalDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+export function isPlaceholderBirthDate(value) {
+  const iso = toIsoDate(value);
+  return iso === "2000-01-01";
+}
+
 export function formatBirthDateLabel(value) {
+  if (isPlaceholderBirthDate(value)) return null;
   const date = parseLocalDate(value);
   if (!date) return null;
   return date.toLocaleDateString("ar-MA", {

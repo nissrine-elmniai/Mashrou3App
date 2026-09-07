@@ -13,16 +13,24 @@ import {
   Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, textAlignStart, fonts, row } from "../../constants/rtl";
 import { GENDER_OPTIONS } from "../../constants/roles";
-import { updateOwnProfile } from "../../lib/auth";
+import {
+  updateOwnProfile,
+  formatBirthDateLabel,
+  parseLocalDate,
+  dateToIsoLocal,
+} from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
+
+const DEFAULT_BIRTH = new Date(2000, 0, 1);
 
 /**
  * Édition des infos personnelles par le superviseur lui-même.
- * Colonnes écrites : profiles.first_name / last_name / phone / genre
+ * Colonnes écrites : profiles.first_name / last_name / phone / genre / date_naissance
  * (policy profiles_update_own). L'e-mail Auth reste en lecture seule.
  */
 export default function EditSupervisorProfileModal({
@@ -33,6 +41,7 @@ export default function EditSupervisorProfileModal({
   firstName,
   lastName,
   phone,
+  birthDate,
   gender,
   email,
   bottomInset = 16,
@@ -42,21 +51,27 @@ export default function EditSupervisorProfileModal({
     lastName: "",
     phone: "",
     genre: "",
+    birthDate: "",
   });
   const [saving, setSaving] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      setShowDatePicker(false);
+      return;
+    }
     const genre = formatGenderLabel(gender);
     setForm({
       firstName: firstName || "",
       lastName: lastName || "",
       phone: phone || "",
       genre: genre === "ذكر" || genre === "أنثى" ? genre : "",
+      birthDate: dateToIsoLocal(parseLocalDate(birthDate)) || "",
     });
-  }, [visible, firstName, lastName, phone, gender]);
+  }, [visible, firstName, lastName, phone, birthDate, gender]);
 
   useEffect(() => {
     if (!visible) {
@@ -77,12 +92,21 @@ export default function EditSupervisorProfileModal({
 
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
+  const pickerDate = parseLocalDate(form.birthDate) || DEFAULT_BIRTH;
+
+  const onDateChange = (event, selected) => {
+    if (Platform.OS !== "ios") setShowDatePicker(false);
+    if (event.type === "dismissed") return;
+    if (selected) setField("birthDate", dateToIsoLocal(selected));
+  };
+
   const handleSave = async () => {
     const firstClean = form.firstName.trim();
     const lastClean = form.lastName.trim();
     const phoneClean = form.phone.trim();
+    const birthClean = form.birthDate.trim();
 
-    if (!firstClean || !lastClean || !phoneClean) {
+    if (!firstClean || !lastClean || !phoneClean || !birthClean) {
       Alert.alert("تنبيه", "املأ جميع الحقول قبل الحفظ");
       return;
     }
@@ -98,6 +122,7 @@ export default function EditSupervisorProfileModal({
         lastName: lastClean,
         phone: phoneClean,
         genre: form.genre,
+        birthDate: birthClean,
       });
       if (!res.ok) {
         Alert.alert("خطأ", res.error || "تعذر حفظ التعديلات");
@@ -179,6 +204,43 @@ export default function EditSupervisorProfileModal({
               textAlign={textAlignStart}
               returnKeyType="done"
             />
+
+            <Text style={styles.label}>تاريخ الميلاد</Text>
+            <TouchableOpacity
+              style={styles.dateField}
+              onPress={() => setShowDatePicker(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="calendar-outline" size={20} color={colors.muted} />
+              <Text
+                style={[
+                  styles.dateFieldText,
+                  !form.birthDate && styles.datePlaceholder,
+                ]}
+              >
+                {form.birthDate
+                  ? formatBirthDateLabel(form.birthDate)
+                  : "اختر تاريخ الميلاد"}
+              </Text>
+            </TouchableOpacity>
+            {showDatePicker ? (
+              <DateTimePicker
+                value={pickerDate}
+                mode="date"
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                maximumDate={new Date()}
+                onChange={onDateChange}
+              />
+            ) : null}
+            {Platform.OS === "ios" && showDatePicker ? (
+              <TouchableOpacity
+                style={styles.dateDoneBtn}
+                onPress={() => setShowDatePicker(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.dateDoneText}>تم</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <Text style={styles.label}>الجنس</Text>
             <View style={styles.chipsRow}>
@@ -291,6 +353,42 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.inputBg,
     writingDirection: "rtl",
+  },
+  dateField: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+    backgroundColor: colors.inputBg,
+  },
+  dateFieldText: {
+    flex: 1,
+    fontSize: 15,
+    color: colors.text,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
+  },
+  datePlaceholder: {
+    color: colors.placeholder,
+    fontFamily: fonts.regular,
+  },
+  dateDoneBtn: {
+    alignSelf: "flex-end",
+    marginTop: -6,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  dateDoneText: {
+    color: colors.primary,
+    fontFamily: fonts.bold,
+    fontSize: 15,
+    ...rtlText,
   },
   chipsRow: {
     flexDirection: row,

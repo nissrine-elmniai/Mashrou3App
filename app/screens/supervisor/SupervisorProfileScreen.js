@@ -15,7 +15,7 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
-import { fetchProfile, fetchAppUserRow } from "../../lib/auth";
+import { fetchProfile, fetchAppUserRow, formatBirthDateLabel, toSlashDate, isPlaceholderBirthDate } from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
 import {
   getPushNotificationsToggleState,
@@ -181,6 +181,10 @@ export default function SupervisorProfileScreen({ navigation }) {
   const gender =
     formatGenderLabel(profileRow?.genre) ||
     formatGenderLabel(currentUser?.gender);
+  const birthDateRaw =
+    profileRow?.date_naissance || currentUser?.birthDate || null;
+  const birthDate = isPlaceholderBirthDate(birthDateRaw) ? null : birthDateRaw;
+  const birthDateLabel = formatBirthDateLabel(birthDate);
 
   const handleProfileSaved = useCallback(
     (savedProfile) => {
@@ -205,9 +209,13 @@ export default function SupervisorProfileScreen({ navigation }) {
           formatGenderLabel(savedProfile?.genre) ||
           gender ||
           "غير محدد",
+        birthDate:
+          toSlashDate(savedProfile?.date_naissance) ||
+          toSlashDate(birthDate) ||
+          null,
       });
     },
-    [firstName, lastName, phone, gender, updateCurrentUserProfile]
+    [firstName, lastName, phone, gender, birthDate, updateCurrentUserProfile]
   );
 
   return (
@@ -254,7 +262,7 @@ export default function SupervisorProfileScreen({ navigation }) {
           <ProfileRow
             icon="calendar-outline"
             label="تاريخ الميلاد"
-            value={currentUser?.birthDate}
+            value={birthDateLabel}
           />
           <ProfileRow icon="male-female-outline" label="الجنس" value={gender} />
           <ProfileRow
@@ -326,6 +334,7 @@ export default function SupervisorProfileScreen({ navigation }) {
         firstName={firstName}
         lastName={lastName}
         phone={phone}
+        birthDate={birthDate}
         gender={gender}
         email={email}
         bottomInset={Math.max(insets.bottom, 16)}
