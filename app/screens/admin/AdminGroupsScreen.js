@@ -18,7 +18,6 @@ import {
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, row } from "../../constants/rtl";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 
 function normalizeName(value) {
   return String(value || "")
@@ -166,10 +165,6 @@ export default function AdminGroupsScreen({ navigation }) {
       icon="people"
       onBack={() => navigation.goBack()}
     >
-      <ActiveSeasonBanner
-        season={activeSeason}
-        hint="المجموعات المعروضة خاصة بالموسم الحالي فقط"
-      />
       <SectionCard title="إضافة مجموعة" subtitle="اسم المجموعة واسم المشرف">
         <Text style={styles.label}>اسم المجموعة</Text>
         <FormInput

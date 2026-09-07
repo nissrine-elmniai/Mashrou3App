@@ -198,6 +198,13 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="AdminSupervisorDetail"
+          getComponent={() =>
+            require("./app/screens/admin/AdminSupervisorDetailScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="AdminStats"
           getComponent={() => require("./app/screens/admin/AdminStatsScreen").default}
           options={{ headerShown: false }}

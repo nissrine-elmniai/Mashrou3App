@@ -20,7 +20,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { Menu, Bell, Plus, X, SquarePen } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { getActiveRegularSeason, filterSeancesForSeason } from "../../lib/seasonScope";
 import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
 import {
@@ -303,10 +302,6 @@ export default function AdminSeasonsScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <ActiveSeasonBanner
-          season={activeSeason}
-          hint="الحصص والمشرفون والأعضاء المعروضون هنا خاصون بهذا الموسم فقط"
-        />
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />

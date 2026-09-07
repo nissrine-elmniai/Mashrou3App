@@ -598,15 +598,33 @@ export async function getMemberProfiles() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const { data, error } = await withTimeout(
+    const selectWithAvatar =
+      "id, first_name, last_name, email, phone, school, level, hifz_amount, account_status, created_at, avatar_url";
+    const selectWithoutAvatar =
+      "id, first_name, last_name, email, phone, school, level, hifz_amount, account_status, created_at";
+
+    let { data, error } = await withTimeout(
       supabase
         .from("profiles")
-        .select("id, first_name, last_name, email, phone, school, level, hifz_amount, account_status, created_at, avatar_url")
+        .select(selectWithAvatar)
         .eq("role", "member")
         .order("created_at", { ascending: true }),
       SUPABASE_TIMEOUT_MS,
       "قراءة الأعضاء"
     );
+
+    if (error && /column.*avatar_url|avatar_url.*does not exist/i.test(error.message || "")) {
+      ({ data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .select(selectWithoutAvatar)
+          .eq("role", "member")
+          .order("created_at", { ascending: true }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الأعضاء"
+      ));
+    }
+
     if (error) {
       return { ok: false, error: mapTableError(error, "profiles") };
     }
@@ -630,7 +648,7 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
       supabase
         .from("inscriptions")
         .select(
-          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin)"
+          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, avatar_url))"
         )
         .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,

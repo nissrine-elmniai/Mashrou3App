@@ -67,11 +67,27 @@ function buildPublicAvatarUrl(authId, cacheBust = Date.now()) {
   return `${base}?v=${cacheBust}`;
 }
 
-/** URL publique de l'avatar à partir de profiles.avatar_url ou du bucket avatars/{authId}.jpg */
+/**
+ * URL publique de l'avatar.
+ * Priorité au chemin conventionnel avatars/{authId}.jpg (bucket public) —
+ * plus fiable que profiles.avatar_url seul (souvent null ou URL obsolète).
+ * Si storedUrl porte un ?v=… (cache-bust après upload), on le réutilise.
+ */
 export function resolvePublicAvatarUrl(authId, storedUrl = null) {
-  if (storedUrl) return storedUrl;
-  if (!authId) return null;
-  return buildPublicAvatarUrl(authId, 1);
+  if (authId) {
+    let cacheBust = 1;
+    const stored = storedUrl ? String(storedUrl) : "";
+    const match = stored.match(/[?&]v=(\d+)/);
+    if (match) cacheBust = match[1];
+    // Si une URL http est déjà stockée et pointe vers le même objet, la garder
+    // (certains clients ont besoin du ?v= exact après upload).
+    if (/^https?:\/\//i.test(stored) && stored.includes(`/avatars/${authId}`)) {
+      return stored;
+    }
+    return buildPublicAvatarUrl(authId, cacheBust);
+  }
+  if (storedUrl) return String(storedUrl);
+  return null;
 }
 
 /**

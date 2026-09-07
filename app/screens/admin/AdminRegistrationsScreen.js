@@ -21,7 +21,6 @@ import {
   SEASON_TYPE_LABELS,
 } from "../../constants/roles";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { rtlText, row } from "../../constants/rtl";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
@@ -281,13 +280,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {!isSummer ? (
-          <ActiveSeasonBanner
-            season={activeSeason}
-            hint="طلبات هذا الموسم فقط — الموسم السابق لا يظهر هنا"
-          />
-        ) : null}
-
         {pendingCount > 0 ? (
           <View style={styles.hintBanner}>
             <Text style={styles.hintBannerText}>

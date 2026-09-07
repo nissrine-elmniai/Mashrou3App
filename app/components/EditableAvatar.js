@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import {
   View,
-  Text,
-  Image,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
@@ -10,9 +8,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../constants/theme";
-import { fonts } from "../constants/rtl";
 import { uploadOwnAvatar, removeOwnAvatar } from "../lib/avatarApi";
 import { pickAvatarImage } from "../lib/avatarPicker";
+import ProfileAvatar from "./ProfileAvatar";
 
 export default function EditableAvatar({
   authId,
@@ -24,9 +22,7 @@ export default function EditableAvatar({
   onChanged,
 }) {
   const [uploading, setUploading] = useState(false);
-  const letter = String(fallbackLetter || "؟").trim().charAt(0) || "؟";
   const radius = size / 2;
-  const fontSize = Math.round(size * 0.34);
   const badgeSize = Math.max(24, Math.round(size * 0.32));
 
   const handleUpload = async (uri) => {
@@ -104,28 +100,16 @@ export default function EditableAvatar({
       accessibilityRole="button"
       accessibilityLabel="تغيير صورة الملف الشخصي"
     >
-      <View
-        style={[
-          styles.circle,
-          {
-            width: size,
-            height: size,
-            borderRadius: radius,
-            backgroundColor: softBackgroundColor,
-          },
-        ]}
-      >
-        {avatarUrl ? (
-          <Image
-            source={{ uri: avatarUrl }}
-            style={{ width: size, height: size, borderRadius: radius }}
-            resizeMode="cover"
-          />
-        ) : (
-          <Text style={[styles.letter, { color: letterColor, fontSize }]}>
-            {letter}
-          </Text>
-        )}
+      <View style={{ width: size, height: size, borderRadius: radius }}>
+        <ProfileAvatar
+          userId={authId}
+          avatarUrl={avatarUrl}
+          cacheKey={avatarUrl || authId}
+          fallbackLetter={fallbackLetter}
+          size={size}
+          softBackgroundColor={softBackgroundColor}
+          letterColor={letterColor}
+        />
 
         {uploading ? (
           <View style={[styles.overlay, { borderRadius: radius }]}>
@@ -151,16 +135,6 @@ export default function EditableAvatar({
 }
 
 const styles = StyleSheet.create({
-  circle: {
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden",
-    position: "relative",
-  },
-  letter: {
-    fontFamily: fonts.bold,
-    textAlign: "center",
-  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.45)",

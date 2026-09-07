@@ -21,7 +21,6 @@ import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
 import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
 import { getActiveRegularSeason, supervisorIdsForSeason } from "../../lib/seasonScope";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { canonicalEmail } from "../../lib/authEmail";
 import {
@@ -260,6 +259,16 @@ export default function AdminSupervisorsScreen({ navigation }) {
     );
   };
 
+  const openSupervisorDetail = (supervisor) => {
+    navigation.navigate("AdminSupervisorDetail", {
+      supervisorId: supervisor.id,
+      firstName: supervisor.first_name || "",
+      lastName: supervisor.last_name || "",
+      email: supervisor.email || "",
+      avatarUrl: supervisor.avatar_url || null,
+    });
+  };
+
   const confirmRevoke = (invitation) => {
     const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
     Alert.alert(
@@ -334,11 +343,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
             textAlign="right"
           />
         </View>
-
-        <ActiveSeasonBanner
-          season={activeSeason}
-          hint="يُعرض هنا فقط المشرفون المعيّنون لحصص الموسم الحالي"
-        />
 
         <View style={styles.filterRow}>
           <TouchableOpacity
@@ -424,7 +428,14 @@ export default function AdminSupervisorsScreen({ navigation }) {
           filteredSupervisors.map((supervisor) => {
             const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
             return (
-              <View key={supervisor.id} style={styles.card}>
+              <TouchableOpacity
+                key={supervisor.id}
+                style={styles.card}
+                onPress={() => openSupervisorDetail(supervisor)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={`عرض ملف ${name || supervisor.email}`}
+              >
                 <ProfileAvatar
                   avatarUrl={supervisor.avatar_url}
                   fallbackLetter={name.charAt(0) || "؟"}
@@ -450,7 +461,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
                     <Trash2 size={18} color={palette.red} />
                   </TouchableOpacity>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}

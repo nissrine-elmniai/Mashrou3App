@@ -38,7 +38,6 @@ import {
 import {
   upsertMemberApplication,
   insertPendingMemberApplication,
-  markMemberApplicationActivated,
   listMemberApplications,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
@@ -1179,40 +1178,27 @@ export function AppProvider({ children }) {
       let needsEmailConfirmation = false;
 
       if (isSupabaseConfigured()) {
-        if (authId || existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE) {
-          const authResult = await signInWithEmailPassword(mail, password);
-          if (!authResult.ok) {
-            return {
-              ok: false,
-              error:
-                authResult.error ||
-                "كلمة المرور غير صحيحة للحساب الموجود بهذا البريد",
-            };
-          }
-          authId = authResult.authUser.id;
-          await markMemberApplicationActivated({
-            email: mail,
-            userId: authId,
-          });
-          await signOutAuth();
-        } else {
-          const authResult = await signUpWithProfile({
-            email: mail,
-            password,
-            role: existingUser.role || ROLES.MEMBER,
-            firstName:
-              existingUser.firstName ||
-              reg.firstName ||
-              splitFullName(reg.fullName).firstName,
-            lastName:
-              existingUser.lastName ||
-              reg.lastName ||
-              splitFullName(reg.fullName).lastName,
-          });
-          if (!authResult.ok) return authResult;
-          authId = authResult.authUser.id;
-          needsEmailConfirmation = !!authResult.needsEmailConfirmation;
-        }
+        // L'écran demande de choisir un nouveau mot de passe. Même si une fiche
+        // locale existe déjà, passer par l'activation distante afin de créer le
+        // compte Auth ou de mettre à jour son mot de passe. Une tentative de
+        // connexion ici interpréterait à tort le nouveau mot de passe comme
+        // l'ancien et retournerait « identifiants incorrects ».
+        const authResult = await signUpWithProfile({
+          email: mail,
+          password,
+          role: existingUser.role || ROLES.MEMBER,
+          firstName:
+            existingUser.firstName ||
+            reg.firstName ||
+            splitFullName(reg.fullName).firstName,
+          lastName:
+            existingUser.lastName ||
+            reg.lastName ||
+            splitFullName(reg.fullName).lastName,
+        });
+        if (!authResult.ok) return authResult;
+        authId = authResult.authUser.id;
+        needsEmailConfirmation = !!authResult.needsEmailConfirmation;
       } else if (
         existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE &&
         existingUser.password &&

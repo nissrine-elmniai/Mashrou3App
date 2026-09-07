@@ -11,7 +11,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Menu, Bell, Plus } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import {
@@ -410,12 +409,6 @@ export default function AdminDashboard({ navigation }) {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.bannerWrap}>
-          <ActiveSeasonBanner
-            season={activeSeason}
-            hint="الإحصائيات أدناه خاصة بهذا الموسم فقط"
-          />
-        </View>
         <DashboardHome
           navigation={navigation}
           stats={derivedStats}
@@ -439,10 +432,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 24,
-  },
-  bannerWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
   },
   topBar: {
     backgroundColor: "#fff",

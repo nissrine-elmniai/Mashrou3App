@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { resolvePublicAvatarUrl } from "./avatarApi";
 import { sortSeancesByJour } from "./seancesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
@@ -422,15 +423,21 @@ export async function getMemberProfileFields(membreId) {
   try {
     let profileData = null;
 
-    const profileRes = await withTimeout(
-      supabase
-        .from("profiles")
-        .select("phone, school, level, hifz_amount")
-        .eq("id", membreId)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة ملف العضو"
-    );
+    const readProfile = (columns) =>
+      withTimeout(
+        supabase.from("profiles").select(columns).eq("id", membreId).maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة ملف العضو"
+      );
+
+    // profiles.genre existe depuis la migration 0052 ; repli sans la colonne sinon.
+    let profileRes = await readProfile("phone, school, level, hifz_amount, genre, avatar_url");
+    if (
+      profileRes.error &&
+      /column.*does not exist/i.test(profileRes.error?.message || "")
+    ) {
+      profileRes = await readProfile("phone, school, level, hifz_amount");
+    }
 
     if (!profileRes.error && profileRes.data) {
       profileData = profileRes.data;
@@ -442,8 +449,14 @@ export async function getMemberProfileFields(membreId) {
     }
 
     const appsByUser = await fetchLatestMemberApplications([membreId]);
-    const merged = mergeContactFields(profileData, appsByUser[membreId]);
-    const genre = await fetchMembreGenre(membreId);
+    const application = appsByUser[membreId];
+    const merged = mergeContactFields(profileData, application);
+
+    // Genre : profiles.genre (saisi côté membre) → demande d'inscription → table membres (legacy).
+    const genre =
+      formatGenderLabel(profileData?.genre) ||
+      formatGenderLabel(application?.genre) ||
+      (await fetchMembreGenre(membreId));
 
     return {
       ok: true,
@@ -452,6 +465,7 @@ export async function getMemberProfileFields(membreId) {
       niveau: merged.niveau,
       quantiteHifz: merged.quantiteHifz,
       genre,
+      avatarUrl: resolvePublicAvatarUrl(membreId, profileData?.avatar_url),
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
@@ -527,7 +541,25 @@ export async function updateMemberInfo(memberId, fields = {}) {
 }
 
 /**
- * (Admin) Change la séance d'un membre inscrit (statut accepte).
+ * Écriture sur inscriptions : le trigger sync_inscription_saison_id copie
+ * seances.saison_id (texte « s_… ») dans inscriptions.saison_id ; si cette
+ * colonne est encore en uuid côté serveur, Postgres renvoie 22P02.
+ */
+function mapInscriptionWriteError(error) {
+  const msg = error?.message || "";
+  if (error?.code === "22P02" && /uuid/i.test(msg)) {
+    return "قاعدة البيانات غير محدّثة: عمود inscriptions.saison_id من نوع uuid — نفّذ supabase/migrations/0053_inscriptions_saison_id_text.sql في SQL Editor";
+  }
+  return mapTableError(error, "inscriptions");
+}
+
+/**
+ * (Admin) Change la séance d'un membre (statut accepte).
+ * - `saisonId` = musim de la séance cible : si le membre y a déjà une
+ *   inscription acceptée, elle est déplacée ; sinon, avec `createIfMissing`,
+ *   une nouvelle inscription est créée (les inscriptions des anciens musims
+ *   ne sont jamais touchées).
+ * - Sans saisonId (séance legacy), on déplace l'inscription de `currentSeanceId`.
  * Le trigger sync_inscription_saison_id met à jour saison_id automatiquement.
  */
 export async function updateMemberSeance({
@@ -535,6 +567,7 @@ export async function updateMemberSeance({
   currentSeanceId = null,
   newSeanceId,
   saisonId = null,
+  createIfMissing = false,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -547,41 +580,96 @@ export async function updateMemberSeance({
   }
 
   try {
-    let query = supabase
-      .from("inscriptions")
-      .update({ seance_id: newSeanceId })
-      .eq("membre_id", memberId)
-      .eq("statut", "accepte");
-
-    if (currentSeanceId) {
-      query = query.eq("seance_id", currentSeanceId);
-    } else if (saisonId) {
-      query = query.eq("saison_id", saisonId);
-    }
-
-    const { data, error } = await withTimeout(
-      query.select("id, seance_id, saison_id").maybeSingle(),
+    // Pas de filtre SQL sur inscriptions.saison_id : sur certaines bases la
+    // colonne est uuid (schéma historique) alors que les ids de musim sont du
+    // texte (s_…), et elle est souvent null. On passe par la séance jointe.
+    const { data: rows, error: existingError } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select(
+          "id, seance_id, saison_id, seance:seances!inscriptions_seance_id_fkey(id, saison_id)"
+        )
+        .eq("membre_id", memberId)
+        .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,
-      "تغيير حصة العضو"
+      "قراءة تسجيل العضو"
     );
-
-    if (error) {
-      logSupabaseError("updateMemberSeance", error);
-      return { ok: false, error: mapTableError(error, "inscriptions") };
+    if (existingError) {
+      logSupabaseError("updateMemberSeance lookup", existingError);
+      return { ok: false, error: mapTableError(existingError, "inscriptions") };
     }
 
-    if (!data?.id) {
+    const seasonOf = (r) => r?.saison_id || r?.seance?.saison_id || null;
+    const all = rows || [];
+    const existing = saisonId
+      ? all.find((r) => seasonOf(r) === saisonId) || null
+      : all.find((r) => currentSeanceId && r.seance_id === currentSeanceId) || null;
+
+    if (existing?.id) {
+      if (existing.seance_id === newSeanceId) {
+        return {
+          ok: true,
+          unchanged: true,
+          inscription: existing,
+          seanceId: existing.seance_id,
+          saisonId: seasonOf(existing),
+        };
+      }
+      const { data, error } = await withTimeout(
+        supabase
+          .from("inscriptions")
+          .update({ seance_id: newSeanceId })
+          .eq("id", existing.id)
+          .select("id, seance_id, saison_id")
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "تغيير حصة العضو"
+      );
+      if (error) {
+        logSupabaseError("updateMemberSeance", error);
+        return { ok: false, error: mapInscriptionWriteError(error) };
+      }
+      if (!data?.id) {
+        return { ok: false, error: "لم يتم العثور على تسجيل مقبول لهذا العضو" };
+      }
       return {
-        ok: false,
-        error: "لم يتم العثور على تسجيل مقبول لهذا العضو",
+        ok: true,
+        inscription: data,
+        seanceId: data.seance_id,
+        saisonId: data.saison_id || saisonId || null,
       };
     }
 
+    if (!createIfMissing) {
+      return { ok: false, error: "لم يتم العثور على تسجيل مقبول لهذا العضو" };
+    }
+
+    const { data, error } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .insert({
+          membre_id: memberId,
+          seance_id: newSeanceId,
+          statut: "accepte",
+        })
+        .select("id, seance_id, saison_id")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "تسجيل العضو في الحصة"
+    );
+    if (error) {
+      logSupabaseError("updateMemberSeance insert", error);
+      return { ok: false, error: mapInscriptionWriteError(error) };
+    }
+    if (!data?.id) {
+      return { ok: false, error: "تعذر إنشاء تسجيل العضو" };
+    }
     return {
       ok: true,
+      created: true,
       inscription: data,
       seanceId: data.seance_id,
-      saisonId: data.saison_id,
+      saisonId: data.saison_id || saisonId || null,
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

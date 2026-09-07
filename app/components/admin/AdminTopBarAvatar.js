@@ -23,6 +23,7 @@ export default function AdminTopBarAvatar({ currentUser, onPress, style, ...touc
       {...touchableProps}
     >
       <ProfileAvatar
+        userId={currentUser?.authId || currentUser?.id || null}
         avatarUrl={currentUser?.avatarUrl}
         fallbackLetter={letter}
         size={32}

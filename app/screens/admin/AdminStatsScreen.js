@@ -23,7 +23,6 @@ import {
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { SEASON_TYPES } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
@@ -279,11 +278,6 @@ export default function AdminStatsScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <ActiveSeasonBanner
-          season={activeSeason}
-          hint="الإحصائيات مرتبطة بالموسم المختار فقط"
-        />
-
         <Text style={styles.blockTitle}>الموسم</Text>
         <ScrollView
           horizontal
