@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { resolvePublicAvatarUrl } from "./avatarApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -149,7 +150,7 @@ export async function resolveAdminProfile() {
     const { data, error } = await withTimeout(
       supabase
         .from("profiles")
-        .select("id, first_name, last_name, email")
+        .select("id, first_name, last_name, email, avatar_url")
         .eq("role", "admin")
         .order("created_at", { ascending: true })
         .limit(1)
@@ -182,7 +183,7 @@ export async function listAdminProfiles() {
     const { data, error } = await withTimeout(
       supabase
         .from("profiles")
-        .select("id, first_name, last_name, email")
+        .select("id, first_name, last_name, email, avatar_url")
         .eq("role", "admin")
         .order("created_at", { ascending: true }),
       SUPABASE_TIMEOUT_MS,
@@ -477,7 +478,7 @@ export async function getInboxThreads() {
       supabase
         .from("messages")
         .select(
-          "id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, role), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, role)"
+          "id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, role, avatar_url), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, role, avatar_url)"
         )
         .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
         .order("created_at", { ascending: false })
@@ -510,6 +511,7 @@ export async function getInboxThreads() {
         lastName: p.last_name || "",
         email: p.email || "",
         role: p.role || "",
+        avatarUrl: resolvePublicAvatarUrl(other.id, p.avatar_url),
         lastMessage: m.contenu || "",
         lastAt: m.created_at,
         incoming: other.incoming,
@@ -575,6 +577,7 @@ export function mergeInboxRows(contacts, threads, options = {}) {
       name: c.name,
       role: c.role || t?.role || "",
       avatarLetter: c.avatarLetter,
+      avatarUrl: c.avatarUrl || t?.avatarUrl || null,
       avatarPrimary: !!c.avatarPrimary,
       highlighted: !!c.highlighted,
       lastMessage: t?.lastMessage || "لا توجد رسائل بعد",
@@ -595,6 +598,7 @@ export function mergeInboxRows(contacts, threads, options = {}) {
         name,
         role: t.role || "",
         avatarLetter: (t.firstName || name).trim().charAt(0) || "؟",
+        avatarUrl: t.avatarUrl || null,
         avatarPrimary: t.role === "admin",
         highlighted: t.role === "admin",
         lastMessage: t.lastMessage || "لا توجد رسائل بعد",

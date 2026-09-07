@@ -21,6 +21,7 @@ import {
   ACCOUNT_STATUS,
 } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -371,11 +372,6 @@ export default function AdminDashboard({ navigation }) {
     [registrations, exams, notifications, activeSeason]
   );
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
@@ -388,15 +384,10 @@ export default function AdminDashboard({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>لوحة التحكم</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="الملف الشخصي"
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}

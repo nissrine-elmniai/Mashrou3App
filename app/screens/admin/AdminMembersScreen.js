@@ -17,6 +17,7 @@ import { rtlText, row } from "../../constants/rtl";
 import {
   getMemberProfiles,
   getAllAcceptedInscriptions,
+  formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
 import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
 import {
@@ -24,6 +25,8 @@ import {
   deriveLevel,
   initials,
 } from "../supervisor/supervisorHelpers";
+import ProfileAvatar from "../../components/ProfileAvatar";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -89,23 +92,49 @@ export default function AdminMembersScreen({ navigation }) {
         const pct = computeProgressMetrics(latest)?.globalPct ?? 0;
         const level = deriveLevel(pct);
         const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+        const seance = inscription?.seance;
         return {
           id: p.id,
           name,
           firstName: p.first_name || "",
+          lastName: p.last_name || "",
+          avatarUrl: p.avatar_url || null,
+          email: p.email || null,
+          phone: p.phone || null,
+          school: p.school || null,
+          levelLabel: p.level || null,
+          hifzAmount: p.hifz_amount || null,
           level,
           pct,
-          session: inscription?.seance?.nom || "بدون حصة",
+          session: seance?.nom || inscription?.seance?.nom || "بدون حصة",
+          seanceId: inscription?.seance_id || seance?.id || null,
+          saisonId: inscription?.saison_id || seance?.saison_id || null,
+          groupSchedule: formatSeanceScheduleLabel(seance),
+          registrationDate: inscription?.date_inscription || null,
           active: !!inscription,
         };
       });
   }, [profiles, inscriptions, progressions]);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
+
+  const openMemberProfile = (member) => {
+    navigation.navigate("MemberProfile", {
+      memberId: member.id,
+      seanceId: member.seanceId,
+      saisonId: member.saisonId,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      email: member.email,
+      phone: member.phone,
+      school: member.school,
+      level: member.levelLabel,
+      hifzAmount: member.hifzAmount,
+      groupName: member.session,
+      groupSchedule: member.groupSchedule,
+      registrationDate: member.registrationDate,
+    });
+  };
 
   return (
     <SafeAreaView
@@ -122,13 +151,10 @@ export default function AdminMembersScreen({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الأعضاء</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
@@ -192,7 +218,11 @@ export default function AdminMembersScreen({ navigation }) {
           </Text>
         ) : (
           members.map((member) => (
-            <MemberCard key={member.id} member={member} />
+            <MemberCard
+              key={member.id}
+              member={member}
+              onPress={() => openMemberProfile(member)}
+            />
           ))
         )}
       </ScrollView>
@@ -202,16 +232,24 @@ export default function AdminMembersScreen({ navigation }) {
   );
 }
 
-function MemberCard({ member }) {
+function MemberCard({ member, onPress }) {
   const color = levelColor(member.level);
   return (
-    <View style={styles.card}>
+    <TouchableOpacity
+      style={styles.card}
+      onPress={onPress}
+      activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={`عرض ملف ${member.name || "عضو"}`}
+    >
       <View style={styles.cardTop}>
-        <View style={styles.cardAvatar}>
-          <Text style={styles.cardAvatarText}>
-            {initials(member.firstName || member.name)}
-          </Text>
-        </View>
+        <ProfileAvatar
+          avatarUrl={member.avatarUrl}
+          fallbackLetter={initials(member.firstName || member.name)}
+          size={44}
+          softBackgroundColor={palette.softGreen}
+          letterColor={palette.primary}
+        />
         <View style={styles.cardInfo}>
           <Text style={styles.cardName}>{member.name || "عضو"}</Text>
           <View style={styles.cardMeta}>
@@ -254,7 +292,7 @@ function MemberCard({ member }) {
         </View>
         <Text style={styles.progressPct}>{member.pct}%</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 

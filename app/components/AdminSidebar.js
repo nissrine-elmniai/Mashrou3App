@@ -29,6 +29,7 @@ import { rtlText, row, isRTL } from "../constants/rtl";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
 import AdminMessagesFab from "./AdminMessagesFab";
+import ProfileAvatar from "./ProfileAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -155,9 +156,13 @@ export function AdminSidebar({
           ]}
         >
           <View style={sbStyles.header}>
-            <View style={sbStyles.avatar}>
-              <Text style={sbStyles.avatarText}>{initial}</Text>
-            </View>
+            <ProfileAvatar
+              avatarUrl={currentUser?.avatarUrl}
+              fallbackLetter={initial}
+              size={40}
+              softBackgroundColor="#fff"
+              letterColor={palette.primary}
+            />
             <View style={{ flex: 1 }}>
               <Text style={sbStyles.role}>مشرف عام</Text>
               <Text style={sbStyles.name}>{displayName}</Text>

@@ -31,6 +31,7 @@ import {
   sortSeancesByJour,
 } from "../../lib/seancesApi";
 import { GENDER_OPTIONS } from "../../constants/roles";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -68,10 +69,6 @@ export default function AdminSeasonsScreen({ navigation }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
   const loadAll = useCallback(async () => {
@@ -235,15 +232,10 @@ export default function AdminSeasonsScreen({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الحصص</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="الملف الشخصي"
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}

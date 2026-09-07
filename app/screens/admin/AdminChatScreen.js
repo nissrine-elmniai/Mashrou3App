@@ -18,6 +18,7 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getSupervisorProfiles } from "../../lib/seancesApi";
 import { mergeInboxRows } from "../../lib/messagesApi";
 import { initials } from "../supervisor/supervisorHelpers";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 export default function AdminChatScreen({ navigation }) {
   const { currentUser, stats } = useApp();
@@ -28,10 +29,6 @@ export default function AdminChatScreen({ navigation }) {
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(true);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
   useEffect(() => {
@@ -49,6 +46,7 @@ export default function AdminChatScreen({ navigation }) {
             name: name || p.email,
             role: "supervisor",
             avatarLetter: initials(p.first_name || name || p.email),
+            avatarUrl: p.avatar_url || null,
           });
         }
       }
@@ -88,13 +86,10 @@ export default function AdminChatScreen({ navigation }) {
           <Menu size={24} color={colors.text} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الدردشة</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
@@ -129,6 +124,7 @@ export default function AdminChatScreen({ navigation }) {
               preview={row.lastMessage}
               time={row.time}
               avatarLetter={row.avatarLetter}
+              avatarUrl={row.avatarUrl}
               unread={row.unread}
               unreadCount={row.unreadCount}
               onPress={() => openThread(row)}

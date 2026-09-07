@@ -23,6 +23,7 @@ import {
   updateTestStatus,
   TEST_TYPE_LABELS,
 } from "../../lib/testsApi";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -118,10 +119,6 @@ export default function AdminTestsScreen({ navigation, route }) {
     if (next) setTab(next);
   }, [route?.params?.initialTab]);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
   const sortedTests = useMemo(() => {
@@ -297,13 +294,10 @@ export default function AdminTestsScreen({ navigation, route }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الاختبارات</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}

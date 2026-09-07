@@ -27,6 +27,8 @@ import { ROLE_LABELS } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../../lib/supabase";
 import { upsertProfile } from "../../lib/auth";
+import EditableAvatar from "../../components/EditableAvatar";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -42,7 +44,7 @@ const palette = {
 
 export default function AdminSettingsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "settings");
-  const { currentUser, stats, logout } = useApp();
+  const { currentUser, stats, logout, updateCurrentUserAvatar } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
@@ -185,13 +187,10 @@ export default function AdminSettingsScreen({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الإعدادات</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
@@ -216,9 +215,15 @@ export default function AdminSettingsScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initial}</Text>
-          </View>
+          <EditableAvatar
+            authId={currentUser?.authId}
+            avatarUrl={currentUser?.avatarUrl}
+            fallbackLetter={initial}
+            size={72}
+            softBackgroundColor={palette.softGreen}
+            letterColor={palette.primary}
+            onChanged={updateCurrentUserAvatar}
+          />
           <Text style={styles.userName}>{displayName || "المسؤول"}</Text>
           <View style={styles.badge}>
             <Text style={styles.badgeText}>

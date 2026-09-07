@@ -12,6 +12,8 @@ import { ArrowRight, LogOut, Mail, Shield, User, CheckCircle } from "lucide-reac
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
 import { rtlText, row, isRTL } from "../../constants/rtl";
+import EditableAvatar from "../../components/EditableAvatar";
+import ProfileAvatar from "../../components/ProfileAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -26,7 +28,7 @@ const palette = {
 };
 
 export default function AdminProfileScreen({ navigation }) {
-  const { currentUser, logout } = useApp();
+  const { currentUser, logout, updateCurrentUserAvatar } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
@@ -92,9 +94,13 @@ export default function AdminProfileScreen({ navigation }) {
           />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الملف الشخصي</Text>
-        <View style={styles.topBarAvatar}>
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </View>
+        <ProfileAvatar
+          avatarUrl={currentUser?.avatarUrl}
+          fallbackLetter={initial}
+          size={32}
+          softBackgroundColor={palette.softGreen}
+          letterColor={palette.primary}
+        />
       </View>
 
       <ScrollView
@@ -103,9 +109,15 @@ export default function AdminProfileScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initial}</Text>
-          </View>
+          <EditableAvatar
+            authId={currentUser?.authId}
+            avatarUrl={currentUser?.avatarUrl}
+            fallbackLetter={initial}
+            size={72}
+            softBackgroundColor={palette.softGreen}
+            letterColor={palette.primary}
+            onChanged={updateCurrentUserAvatar}
+          />
           <Text style={styles.userName}>{fullName || "المسؤول"}</Text>
           <View style={styles.badge}>
             <Text style={styles.badgeText}>

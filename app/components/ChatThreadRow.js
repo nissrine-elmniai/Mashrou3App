@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
 import { colors } from "../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../constants/rtl";
 import { formatUnreadBadge } from "../lib/messagesApi";
@@ -9,6 +9,7 @@ export function ChatThreadRow({
   preview,
   time,
   avatarLetter,
+  avatarUrl,
   avatarPrimary,
   unread,
   unreadCount = 0,
@@ -16,6 +17,13 @@ export function ChatThreadRow({
   onPress,
 }) {
   const badgeLabel = unread ? formatUnreadBadge(unreadCount) : "";
+  const letter = String(avatarLetter || "؟").trim().charAt(0) || "؟";
+  const [imageFailed, setImageFailed] = useState(false);
+  const showImage = Boolean(avatarUrl) && !imageFailed;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [avatarUrl]);
 
   return (
     <TouchableOpacity
@@ -27,12 +35,21 @@ export function ChatThreadRow({
         <View
           style={[
             styles.avatar,
-            avatarPrimary && { backgroundColor: colors.primary },
+            avatarPrimary && !showImage && { backgroundColor: colors.primary },
           ]}
         >
-          <Text style={avatarPrimary ? styles.avatarTextWhite : styles.avatarText}>
-            {avatarLetter}
-          </Text>
+          {showImage ? (
+            <Image
+              source={{ uri: avatarUrl }}
+              style={styles.avatarImage}
+              resizeMode="cover"
+              onError={() => setImageFailed(true)}
+            />
+          ) : (
+            <Text style={avatarPrimary ? styles.avatarTextWhite : styles.avatarText}>
+              {letter}
+            </Text>
+          )}
         </View>
       </View>
       <View style={styles.info}>
@@ -74,6 +91,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
   },
   avatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
   avatarTextWhite: { color: "white", fontFamily: fonts.bold, fontSize: 15 },

@@ -1,5 +1,6 @@
 import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
 import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
+import { canonicalEmail } from "./authEmail";
 
 export { isSupabaseConfigured };
 
@@ -45,6 +46,7 @@ export function profileToAppUser(profile, fallback = {}) {
     level: fallback.level,
     phone: fallback.phone || profile.phone,
     hifzAmount: profile.hifz_amount || fallback.hifzAmount || "",
+    avatarUrl: profile.avatar_url || fallback.avatarUrl || null,
   };
 }
 
@@ -183,6 +185,7 @@ export async function signUpWithProfile({
         first_name: firstName || "",
         last_name: lastName || "",
         account_status: accountStatus,
+        canonical_email: canonicalEmail(mail),
       },
     },
   });

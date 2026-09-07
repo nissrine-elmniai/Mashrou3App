@@ -53,6 +53,8 @@ import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
+import EditableAvatar from "../../components/EditableAvatar";
+import AlertSenderFace from "../../components/AlertSenderFace";
 import MemberProgramsPanel from "./MemberProgramsPanel";
 import MemberRegistrationPanel from "./MemberRegistrationPanel";
 
@@ -118,6 +120,7 @@ export default function MemberDashboardScreen({ navigation }) {
     submitSeasonRegistration,
     getNotificationsForUser,
     getMemberPrograms,
+    updateCurrentUserAvatar,
   } = useApp();
 
   const authId = currentUser?.authId || currentUser?.id || null;
@@ -733,7 +736,12 @@ export default function MemberDashboardScreen({ navigation }) {
               <SectionCard title="الإشعارات">
                 {adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
-                    <Text style={styles.notifTitle}>تنبيه من الإدارة</Text>
+                    <AlertSenderFace
+                      avatarUrl={n.senderAvatarUrl}
+                      fallbackLetter={n.senderInitial || "إ"}
+                      senderName={n.senderName}
+                      size={56}
+                    />
                     <Text style={styles.notifBody}>{n.message}</Text>
                   </View>
                 ))}
@@ -789,6 +797,17 @@ export default function MemberDashboardScreen({ navigation }) {
                 style={styles.profileLoader}
               />
             ) : null}
+
+            <View style={styles.avatarBlock}>
+              <EditableAvatar
+                authId={authId}
+                avatarUrl={currentUser?.avatarUrl}
+                fallbackLetter={(currentUser?.firstName || fullName || "م").charAt(0)}
+                size={76}
+                onChanged={updateCurrentUserAvatar}
+              />
+              <Text style={styles.profileName}>{fullName.trim() || "العضو"}</Text>
+            </View>
 
             <ProfileInfoCard
               email={currentUser?.email || null}
@@ -1255,16 +1274,22 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
+    alignItems: "center",
   },
-  notifTitle: {
-    ...rtlText,
-    fontWeight: "bold",
-    color: colors.primary,
-    marginBottom: 4,
-  },
-  notifBody: { ...rtlText, color: colors.muted, fontSize: 13 },
+  notifBody: { ...rtlText, color: colors.muted, fontSize: 13, textAlign: "center" },
   profileTab: {
     gap: 16,
+  },
+  avatarBlock: {
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  profileName: {
+    marginTop: 10,
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: colors.text,
+    ...rtlText,
   },
   profileLoader: { marginVertical: 8 },
   changePasswordLink: {

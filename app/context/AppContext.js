@@ -49,6 +49,8 @@ import {
   upsertSaison,
 } from "../lib/saisonsApi";
 import { getActiveRegularSeason } from "../lib/seasonScope";
+import { getPendingSupervisorInvitation } from "../lib/supervisorInvitationsApi";
+import { canonicalEmail } from "../lib/authEmail";
 
 /** ISO YYYY-MM-DD pour colonnes Postgres `date`. Accepte aussi YYYY/MM/DD (placeholders admin). Pas de parse JJ/MM/AAAA. */
 function toIsoDateOnly(value) {
@@ -118,13 +120,6 @@ function splitFullName(fullName) {
     firstName: parts.slice(0, -1).join(" "),
     lastName: parts[parts.length - 1],
   };
-}
-
-function normalizeName(value) {
-  return String(value || "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
 }
 
 /** Union des rôles Supabase (profiles.role) et mock locaux pour le routing multi-rôle. */
@@ -997,6 +992,16 @@ export function AppProvider({ children }) {
         r.status === REGISTRATION_STATUS.INVITED
     );
     if (!reg) {
+      if (isSupabaseConfigured()) {
+        const lookup = await getPendingSupervisorInvitation(mail);
+        if (lookup.ok && lookup.invitation) {
+          return activateSupervisorAccount({
+            email: mail,
+            password,
+            confirmPassword,
+          });
+        }
+      }
       return {
         ok: false,
         error: "لا توجد دعوة مقبولة لهذا البريد أو الحساب مفعّل مسبقاً",
@@ -1185,9 +1190,7 @@ export function AppProvider({ children }) {
     password,
     confirmPassword,
   }) => {
-    const name = String(fullName || "").trim();
-    const mail = String(email || "").trim().toLowerCase();
-    if (!name) return { ok: false, error: "أدخل الاسم الكامل" };
+    const mail = canonicalEmail(email);
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
     if (!password || password.length < 6) {
       return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
@@ -1196,30 +1199,34 @@ export function AppProvider({ children }) {
       return { ok: false, error: "كلمة المرور غير متطابقة" };
     }
 
+    let invitation = null;
+    if (isSupabaseConfigured()) {
+      const lookup = await getPendingSupervisorInvitation(mail);
+      if (!lookup.ok) return lookup;
+      invitation = lookup.invitation || null;
+    }
+
     const pendingUser = users.find(
       (u) =>
-        u.email.toLowerCase() === mail &&
+        canonicalEmail(u.email) === mail &&
         u.role === ROLES.SUPERVISOR &&
         u.accountStatus === ACCOUNT_STATUS.INVITED
     );
-    if (!pendingUser) {
+
+    if (!pendingUser && !invitation) {
       return {
         ok: false,
         error: "لا توجد دعوة مشرف لهذا البريد أو الحساب مفعّل مسبقاً",
       };
     }
 
-    const expectedName = normalizeName(
-      `${pendingUser.firstName} ${pendingUser.lastName}`
-    );
-    if (normalizeName(name) !== expectedName) {
-      return {
-        ok: false,
-        error: "الاسم الكامل لا يطابق البيانات المسجلة لدى الإدارة",
-      };
-    }
-
-    const { firstName, lastName } = splitFullName(name);
+    const typed = splitFullName(fullName);
+    const firstName = String(
+      invitation?.first_name || pendingUser?.firstName || typed.firstName || ""
+    ).trim();
+    const lastName = String(
+      invitation?.last_name || pendingUser?.lastName || typed.lastName || ""
+    ).trim();
 
     if (isSupabaseConfigured()) {
       const authResult = await signUpWithProfile({
@@ -1231,39 +1238,54 @@ export function AppProvider({ children }) {
       });
       if (!authResult.ok) return authResult;
 
+      const activatedUser = pendingUser
+        ? {
+            ...pendingUser,
+            firstName,
+            lastName,
+            password: null,
+            authId: authResult.authUser.id,
+            accountStatus: ACCOUNT_STATUS.ACTIVE,
+            inviteToken: null,
+          }
+        : {
+            id: uid("u"),
+            email: mail,
+            password: null,
+            firstName,
+            lastName,
+            birthDate: "2000/01/01",
+            gender: "غير محدد",
+            role: ROLES.SUPERVISOR,
+            roles: [ROLES.SUPERVISOR],
+            accountStatus: ACCOUNT_STATUS.ACTIVE,
+            authId: authResult.authUser.id,
+            inviteToken: null,
+          };
+
       setUsers((prev) =>
-        prev.map((u) =>
-          u.id === pendingUser.id
-            ? {
-                ...u,
-                firstName,
-                lastName,
-                password: null,
-                authId: authResult.authUser.id,
-                accountStatus: ACCOUNT_STATUS.ACTIVE,
-                inviteToken: null,
-              }
-            : u
-        )
+        pendingUser
+          ? prev.map((u) => (u.id === pendingUser.id ? activatedUser : u))
+          : [...prev, activatedUser]
       );
       pushNotification({
         title: "تم إنشاء الحساب",
-        body: `مرحباً ${pendingUser.firstName}، حسابك جاهز لتسجيل الدخول`,
+        body: `مرحباً ${firstName || mail}، حسابك جاهز لتسجيل الدخول`,
         audience: "user",
-        userId: pendingUser.id,
+        userId: activatedUser.id,
       });
       return {
         ok: true,
-        user: {
-          ...pendingUser,
-          firstName,
-          lastName,
-          password: null,
-          authId: authResult.authUser.id,
-          accountStatus: ACCOUNT_STATUS.ACTIVE,
-        },
+        user: activatedUser,
         role: ROLES.SUPERVISOR,
         needsEmailConfirmation: authResult.needsEmailConfirmation,
+      };
+    }
+
+    if (!pendingUser) {
+      return {
+        ok: false,
+        error: "لا توجد دعوة مشرف لهذا البريد أو الحساب مفعّل مسبقاً",
       };
     }
 
@@ -1664,6 +1686,20 @@ export function AppProvider({ children }) {
     return { ok: true, hifzAmount: clean };
   };
 
+  const updateCurrentUserAvatar = (avatarUrl) => {
+    if (!currentUser) return;
+    const patchUser = (user) => {
+      const isSelf =
+        (currentUser.authId && user.authId === currentUser.authId) ||
+        user.id === currentUser.id;
+      return isSelf ? { ...user, avatarUrl: avatarUrl || null } : user;
+    };
+    setUsers((prev) => prev.map(patchUser));
+    setCurrentUser((prev) =>
+      prev ? { ...prev, avatarUrl: avatarUrl || null } : prev
+    );
+  };
+
   const getMemberPrograms = (memberId = currentUser?.id) =>
     memberPrograms
       .filter((p) => p.userId === memberId)
@@ -2037,6 +2073,7 @@ export function AppProvider({ children }) {
     saveAttendance,
     updateMemberProgress,
     updateMemberHifzGoal,
+    updateCurrentUserAvatar,
     getMemberPrograms,
     saveMemberProgram,
     deleteMemberProgram,

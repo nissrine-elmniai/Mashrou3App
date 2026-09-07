@@ -25,6 +25,7 @@ import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, row as rtlRow, fonts, arrowBack, arrowForward } from "../../constants/rtl";
 import { initials } from "./supervisorHelpers";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
+import EditableAvatar from "../../components/EditableAvatar";
 
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -68,7 +69,7 @@ function SectionCard({ title, subtitle, children }) {
 
 /** Profil superviseur — champs affichés : identité + users + profiles (dates). */
 export default function SupervisorProfileScreen({ navigation }) {
-  const { currentUser, supabaseSession } = useApp();
+  const { currentUser, supabaseSession, updateCurrentUserAvatar } = useApp();
   const insets = useSafeAreaInsets();
   const [profileRow, setProfileRow] = useState(null);
   const [usersRow, setUsersRow] = useState(null);
@@ -184,9 +185,13 @@ export default function SupervisorProfileScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.avatarBlock}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials(firstName || fullName)}</Text>
-          </View>
+          <EditableAvatar
+            authId={authId}
+            avatarUrl={currentUser?.avatarUrl || profileRow?.avatar_url || null}
+            fallbackLetter={initials(firstName || fullName)}
+            size={76}
+            onChanged={updateCurrentUserAvatar}
+          />
           <Text style={styles.name}>{fullName || "المشرف"}</Text>
           <Text style={styles.roleBadge}>{ROLE_LABELS[roleKey] || "مشرف"}</Text>
         </View>

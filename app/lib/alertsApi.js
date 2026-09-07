@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { resolvePublicAvatarUrl } from "./avatarApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -18,6 +19,61 @@ function mapSenderName(row) {
   const p = row?.sender;
   const name = `${p?.first_name || ""} ${p?.last_name || ""}`.trim();
   return name || "الإدارة";
+}
+
+function mapSenderAvatar(row) {
+  return row?.sender?.avatar_url || null;
+}
+
+function mapSenderInitial(row) {
+  const p = row?.sender;
+  const name = `${p?.first_name || ""} ${p?.last_name || ""}`.trim();
+  return (name || "إ").charAt(0);
+}
+
+const ALERTS_SENDER_SELECT =
+  "id, message, title, body, audience, created_at, created_by, sender:profiles!created_by(first_name, last_name, avatar_url)";
+
+const ALERTS_SENDER_SELECT_FALLBACK =
+  "id, message, title, body, audience, created_at, created_by";
+
+async function fetchAlertsWithSender(queryBuilder) {
+  let res = await withTimeout(queryBuilder(ALERTS_SENDER_SELECT), SUPABASE_TIMEOUT_MS, "قراءة التنبيهات");
+  if (
+    res.error &&
+    /relationship|PGRST200|Could not find|avatar_url/i.test(res.error.message || "")
+  ) {
+    res = await withTimeout(
+      queryBuilder(ALERTS_SENDER_SELECT.replace(", avatar_url", "")),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+  }
+  if (
+    res.error &&
+    /relationship|PGRST200|Could not find/i.test(res.error.message || "")
+  ) {
+    res = await withTimeout(
+      queryBuilder(ALERTS_SENDER_SELECT_FALLBACK),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+  }
+  return res;
+}
+
+function mapAlertRow(a) {
+  const senderId = a.created_by || a.sender?.id || null;
+  return {
+    id: a.id,
+    message: a.message || a.body || a.title || "",
+    audience: a.audience,
+    createdAt: a.created_at,
+    senderId,
+    senderName: mapSenderName(a),
+    senderAvatarUrl: resolvePublicAvatarUrl(senderId, mapSenderAvatar(a)),
+    senderInitial: mapSenderInitial(a),
+  };
 }
 
 function mapTableError(error, tableLabel) {
@@ -52,23 +108,14 @@ export async function getUnacknowledgedAlerts() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const [alertsRes, acksRes] = await Promise.all([
-      withTimeout(
-        supabase
-          .from("alerts")
-        .select("id, message, title, body, created_at")
-        .order("created_at", { ascending: true }),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة التنبيهات"
-      ),
-      withTimeout(
-        supabase
-          .from("alert_acknowledgments")
-          .select("alert_id"),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة الإقرارات"
-      ),
-    ]);
+    const alertsRes = await fetchAlertsWithSender((selectClause) =>
+      supabase.from("alerts").select(selectClause).order("created_at", { ascending: true })
+    );
+    const acksRes = await withTimeout(
+      supabase.from("alert_acknowledgments").select("alert_id"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الإقرارات"
+    );
 
     if (alertsRes.error || acksRes.error) {
       return {
@@ -81,11 +128,7 @@ export async function getUnacknowledgedAlerts() {
     const pending = (alertsRes.data || []).filter((a) => !acked.has(a.id));
     return {
       ok: true,
-      alerts: pending.map((a) => ({
-        id: a.id,
-        message: a.message || a.body || a.title || "",
-        createdAt: a.created_at,
-      })),
+      alerts: pending.map(mapAlertRow),
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
@@ -254,26 +297,19 @@ export async function getVisibleAlerts() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const { data, error } = await withTimeout(
+    const { data, error } = await fetchAlertsWithSender((selectClause) =>
       supabase
         .from("alerts")
-        .select("id, message, title, body, audience, created_at")
+        .select(selectClause)
         .order("created_at", { ascending: false })
-        .limit(20),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة التنبيهات"
+        .limit(20)
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "alerts") };
     }
     return {
       ok: true,
-      alerts: (data || []).map((a) => ({
-        id: a.id,
-        message: a.message || a.body || a.title || "",
-        audience: a.audience,
-        createdAt: a.created_at,
-      })),
+      alerts: (data || []).map(mapAlertRow),
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
@@ -289,32 +325,13 @@ export async function getVisibleAlertsWithAckStatus() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    let visibleRes = await withTimeout(
+    const visibleRes = await fetchAlertsWithSender((selectClause) =>
       supabase
         .from("alerts")
-        .select(
-          "id, message, title, body, created_at, created_by, sender:profiles!alerts_created_by_fkey(first_name, last_name)"
-        )
+        .select(selectClause)
         .order("created_at", { ascending: false })
-        .limit(50),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة التنبيهات"
+        .limit(50)
     );
-
-    if (
-      visibleRes.error &&
-      /relationship|PGRST200|Could not find/i.test(visibleRes.error.message || "")
-    ) {
-      visibleRes = await withTimeout(
-        supabase
-          .from("alerts")
-          .select("id, message, title, body, created_at, created_by")
-          .order("created_at", { ascending: false })
-          .limit(50),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة التنبيهات"
-      );
-    }
 
     const acksRes = await withTimeout(
       supabase.from("alert_acknowledgments").select("alert_id"),
@@ -333,10 +350,7 @@ export async function getVisibleAlertsWithAckStatus() {
     return {
       ok: true,
       alerts: (visibleRes.data || []).map((a) => ({
-        id: a.id,
-        message: a.message || a.body || a.title || "",
-        createdAt: a.created_at,
-        senderName: mapSenderName(a),
+        ...mapAlertRow(a),
         acknowledged: acked.has(a.id),
       })),
     };

@@ -482,7 +482,7 @@ export async function getSupervisorProfiles() {
     const { data, error } = await withTimeout(
       supabase
         .from("profiles")
-        .select("id, first_name, last_name, email, account_status")
+        .select("id, first_name, last_name, email, account_status, avatar_url")
         .eq("role", "supervisor")
         .order("created_at", { ascending: true }),
       SUPABASE_TIMEOUT_MS,
@@ -510,7 +510,7 @@ export async function getMemberProfiles() {
     const { data, error } = await withTimeout(
       supabase
         .from("profiles")
-        .select("id, first_name, last_name, email, account_status, created_at")
+        .select("id, first_name, last_name, email, phone, school, level, hifz_amount, account_status, created_at, avatar_url")
         .eq("role", "member")
         .order("created_at", { ascending: true }),
       SUPABASE_TIMEOUT_MS,
@@ -539,7 +539,7 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
       supabase
         .from("inscriptions")
         .select(
-          "id, membre_id, seance_id, saison_id, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id)"
+          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin)"
         )
         .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,

@@ -7,6 +7,7 @@ import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { initials } from "./supervisorHelpers";
 import { mergeInboxRows, listAdminProfiles } from "../../lib/messagesApi";
+import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 
 function adminDisplayName(admin) {
   const name = `${admin.first_name || ""} ${admin.last_name || ""}`.trim();
@@ -41,6 +42,7 @@ export default function SupervisorMessagesScreen({
         name: adminDisplayName(a),
         role: "admin",
         avatarLetter: initials(a.first_name || a.email || "إ"),
+        avatarUrl: resolvePublicAvatarUrl(a.id, a.avatar_url),
         avatarPrimary: true,
         highlighted: true,
       }));
@@ -55,6 +57,7 @@ export default function SupervisorMessagesScreen({
           name,
           role: "admin",
           avatarLetter: initials(t.firstName || name),
+          avatarUrl: t.avatarUrl || resolvePublicAvatarUrl(t.otherId, null),
           avatarPrimary: true,
           highlighted: true,
         };
@@ -112,6 +115,7 @@ export default function SupervisorMessagesScreen({
       contactId: row.id,
       contactName: row.name,
       contactAvatarLetter: row.avatarLetter,
+      contactAvatarUrl: row.avatarUrl || null,
       contactRole: row.role,
     });
   };
@@ -151,7 +155,8 @@ export default function SupervisorMessagesScreen({
           preview={row.lastMessage}
           time={row.time}
           avatarLetter={row.avatarLetter}
-          avatarPrimary
+          avatarUrl={row.avatarUrl}
+          avatarPrimary={!row.avatarUrl}
           highlighted={!!row.unread}
           unread={row.unread}
           unreadCount={row.unreadCount}

@@ -27,6 +27,9 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
       "package": "com.clubaltruisme.mashrou3app",
       "googleServicesFile": "./google-services.json",
       "supportsRtl": true,
@@ -57,7 +60,15 @@
     "plugins": [
       "@react-native-community/datetimepicker",
       "expo-font",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "يحتاج التطبيق إلى الوصول إلى صورك لتعيين صورة الملف الشخصي.",
+          "cameraPermission": "يحتاج التطبيق إلى الوصول إلى الكاميرا لالتقاط صورة الملف الشخصي.",
+          "microphonePermission": false
+        }
+      ]
     ],
     "owner": "oumeyma_elaammari"
   }

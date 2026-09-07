@@ -27,6 +27,8 @@ import {
   sendMessage,
   subscribeConversation,
 } from "../../lib/messagesApi";
+import ProfileAvatar from "../../components/ProfileAvatar";
+import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 
 function formatTime(iso) {
   const d = iso ? new Date(iso) : new Date();
@@ -45,13 +47,15 @@ function normalizeMessage(m, myAuthId) {
 }
 
 export default function ChatConversationScreen({ navigation, route }) {
-  const { contactId, contactName, contactAvatarLetter, contactRole } = route.params || {};
+  const { contactId, contactName, contactAvatarLetter, contactAvatarUrl, contactRole } =
+    route.params || {};
   const { currentUser, supabaseSession } = useApp();
   const isAdmin = contactId === "admin" || contactRole === "admin";
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [conversation, setConversation] = useState({ otherId: null, seanceId: null });
+  const [headerAvatarUrl, setHeaderAvatarUrl] = useState(contactAvatarUrl || null);
 
   const authId = supabaseSession?.user?.id || currentUser?.authId || null;
   const role = currentUser?.role;
@@ -89,10 +93,16 @@ export default function ChatConversationScreen({ navigation, route }) {
           // Chat superviseur <-> admin : UUID réel, ou repli sur le compte admin racine.
           if (contactId && contactId !== "admin") {
             otherId = contactId;
+            if (!headerAvatarUrl) {
+              setHeaderAvatarUrl(resolvePublicAvatarUrl(contactId, null));
+            }
           } else {
             const res = await resolveAdminProfile();
             if (res?.ok && res.admin) {
               otherId = res.admin.id;
+              setHeaderAvatarUrl((prev) =>
+                prev || resolvePublicAvatarUrl(res.admin.id, res.admin.avatar_url)
+              );
             } else {
               failReason = res?.error || "لم يتم العثور على حساب الإدارة";
             }
@@ -213,11 +223,13 @@ export default function ChatConversationScreen({ navigation, route }) {
             <Ionicons name={arrowBack} size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.avatarWrap}>
-            <View style={[styles.memberAvatar, isAdmin && { backgroundColor: colors.primary }]}>
-              <Text style={isAdmin ? styles.memberAvatarTextWhite : styles.memberAvatarText}>
-                {contactAvatarLetter}
-              </Text>
-            </View>
+            <ProfileAvatar
+              avatarUrl={headerAvatarUrl}
+              fallbackLetter={contactAvatarLetter || "؟"}
+              size={42}
+              softBackgroundColor={isAdmin && !headerAvatarUrl ? colors.primary : colors.primarySoft}
+              letterColor={isAdmin && !headerAvatarUrl ? "#fff" : colors.primary}
+            />
             <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
           </View>
           <Text style={styles.contactName} numberOfLines={1}>
