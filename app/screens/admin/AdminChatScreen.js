@@ -120,6 +120,7 @@ export default function AdminChatScreen({ navigation }) {
               name={row.name}
               preview={row.lastMessage}
               time={row.time}
+              userId={row.id}
               avatarLetter={row.avatarLetter}
               avatarUrl={row.avatarUrl}
               unread={row.unread}

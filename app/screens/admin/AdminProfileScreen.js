@@ -95,7 +95,9 @@ export default function AdminProfileScreen({ navigation }) {
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الملف الشخصي</Text>
         <ProfileAvatar
+          userId={currentUser?.authId || currentUser?.id || null}
           avatarUrl={currentUser?.avatarUrl}
+          cacheKey={currentUser?.avatarUrl || currentUser?.authId}
           fallbackLetter={initial}
           size={32}
           softBackgroundColor={palette.softGreen}

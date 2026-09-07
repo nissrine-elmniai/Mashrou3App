@@ -104,6 +104,7 @@ export default function BlockingAlertGate() {
       <View style={styles.overlay} accessibilityViewIsModal>
         <View style={styles.card}>
           <AlertSenderFace
+            userId={active.senderId}
             avatarUrl={active.senderAvatarUrl}
             fallbackLetter={active.senderInitial || "إ"}
             senderName={active.senderName}

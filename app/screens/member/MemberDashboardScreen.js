@@ -857,6 +857,7 @@ export default function MemberDashboardScreen({ navigation }) {
                 adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
                     <AlertSenderFace
+                      userId={n.senderId}
                       avatarUrl={n.senderAvatarUrl}
                       fallbackLetter={n.senderInitial || "إ"}
                       senderName={n.senderName}
@@ -961,21 +962,21 @@ export default function MemberDashboardScreen({ navigation }) {
 
       <View style={styles.bottomWrap}>
         <MemberBottomTabBar tabs={TABS} activeKey={tab} onChange={setTab} />
-        <TouchableOpacity
-          style={[styles.fab, { bottom: 70 + Math.max(insets.bottom, 16) }]}
-          onPress={openChat}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="chatbubble-ellipses" size={24} color="white" />
-          {messagesUnread > 0 ? (
-            <View style={styles.fabBadge}>
-              <Text style={styles.fabBadgeText}>
-                {formatUnreadBadge(messagesUnread)}
-              </Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
       </View>
+      <TouchableOpacity
+        style={[styles.fab, { bottom: 68 + Math.max(insets.bottom, 16) }]}
+        onPress={openChat}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+        {messagesUnread > 0 ? (
+          <View style={styles.fabBadge}>
+            <Text style={styles.fabBadgeText}>
+              {formatUnreadBadge(messagesUnread)}
+            </Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
 
       <ChangePasswordModal
         visible={passwordModal}
@@ -1355,11 +1356,10 @@ const styles = StyleSheet.create({
   bottomWrap: {},
   fab: {
     position: "absolute",
-    end: 8,
-    bottom: 78,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    end: 16,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",

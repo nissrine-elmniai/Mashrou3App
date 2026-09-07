@@ -184,6 +184,8 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
                   key={m.id}
                   name={name}
                   initial={initials(m.firstName)}
+                  userId={m.id}
+                  avatarUrl={m.avatarUrl}
                   value={isPresent}
                   readOnly
                   unset={isUnset}
@@ -197,6 +199,8 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
                 key={m.id}
                 name={name}
                 initial={initials(m.firstName)}
+                userId={m.id}
+                avatarUrl={m.avatarUrl}
                 value={isPresent}
                 unset={false}
                 statusLabel={isPresent ? "حاضر" : "غائب"}

@@ -3,8 +3,12 @@ import { View, Text, Image, StyleSheet } from "react-native";
 import { fonts } from "../constants/rtl";
 import { SUPABASE_URL } from "../lib/supabase";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * URL candidates pour un avatar.
+ * Les fichiers du bucket sont nommés {auth_uuid}.jpg : un id non-UUID
+ * (mock local, pseudo-contact "admin") ne génère aucune requête storage.
  * @param {string|null} userId
  * @param {string|null} avatarUrl
  * @param {string|number|null} cacheKey — change pour forcer le rechargement (anti-cache 404 Android)
@@ -17,7 +21,7 @@ export function buildAvatarUrlCandidates(userId, avatarUrl, cacheKey = null) {
   }
   if (userId) {
     const id = String(userId).trim();
-    if (id) {
+    if (id && UUID_RE.test(id)) {
       const root = `${String(SUPABASE_URL).replace(/\/+$/, "")}/storage/v1/object/public/avatars/${id}.jpg`;
       let cacheBust = "1";
       const fromStored = stored.match(/[?&]v=(\d+)/);

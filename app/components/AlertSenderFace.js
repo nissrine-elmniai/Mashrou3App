@@ -8,6 +8,7 @@ import { rtlText, rtlTextBold, fonts } from "../constants/rtl";
  * En-tête d'alerte : photo de profil de l'expéditeur au centre (comme une notif personnelle).
  */
 export default function AlertSenderFace({
+  userId = null,
   avatarUrl,
   fallbackLetter = "؟",
   senderName,
@@ -17,7 +18,9 @@ export default function AlertSenderFace({
   return (
     <View style={styles.wrap}>
       <ProfileAvatar
+        userId={userId}
         avatarUrl={avatarUrl}
+        cacheKey={avatarUrl || userId}
         fallbackLetter={fallbackLetter}
         size={size}
         softBackgroundColor={colors.primarySoft}

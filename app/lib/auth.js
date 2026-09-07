@@ -27,6 +27,17 @@ export function normalizeAppRole(raw) {
   return ROLE_ALIASES[key] || null;
 }
 
+/**
+ * URL d'avatar du cache local, acceptée seulement si elle vise bien le
+ * fichier {authId}.jpg du compte courant. Un compte supprimé puis recréé
+ * (même e-mail, nouvel auth id) ne doit pas hériter de l'ancienne photo.
+ */
+function fallbackAvatarForAuthId(authId, fallbackUrl) {
+  if (!authId || !fallbackUrl) return null;
+  const url = String(fallbackUrl);
+  return url.includes(`/avatars/${authId}`) ? url : null;
+}
+
 export function profileToAppUser(profile, fallback = {}) {
   const roleFromProfile = normalizeAppRole(profile?.role);
   const roleFromFallback = normalizeAppRole(fallback?.role);
@@ -50,7 +61,10 @@ export function profileToAppUser(profile, fallback = {}) {
     level: fallback.level,
     phone: fallback.phone || profile.phone,
     hifzAmount: profile.hifz_amount || fallback.hifzAmount || "",
-    avatarUrl: profile.avatar_url || fallback.avatarUrl || null,
+    avatarUrl:
+      profile.avatar_url ||
+      fallbackAvatarForAuthId(profile.id, fallback.avatarUrl) ||
+      null,
   };
 }
 

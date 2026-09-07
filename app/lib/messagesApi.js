@@ -53,31 +53,104 @@ async function currentAuthId() {
   return data?.user?.id || null;
 }
 
+const MEMBER_SEANCE_SELECT =
+  "id, nom, saison_id, jour, heure_debut, heure_fin, statut, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, avatar_url)";
+
+function seancePreferenceScore(
+  seance,
+  { activeSaisonIds = null, preferSuperviseurId = null, preferSeanceId = null } = {}
+) {
+  if (!seance?.id) return -1;
+  let score = 0;
+  if (seance.superviseur_id) score += 100;
+  if (preferSuperviseurId && seance.superviseur_id === preferSuperviseurId) score += 200;
+  if (preferSeanceId && seance.id === preferSeanceId) score += 150;
+  if (seance.statut === "active") score += 50;
+  if (activeSaisonIds && seance.saison_id && activeSaisonIds.has(seance.saison_id)) {
+    score += 40;
+  }
+  return score;
+}
+
+function pickPreferredMemberSeance(seances, options = {}) {
+  const list = (seances || []).filter((s) => s?.id);
+  if (list.length === 0) return null;
+  return [...list].sort(
+    (a, b) => seancePreferenceScore(b, options) - seancePreferenceScore(a, options)
+  )[0];
+}
+
+async function fetchActiveSaisonIds() {
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from("saisons").select("id").eq("active", true),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة المواسم النشطة"
+    );
+    if (error || !data) return null;
+    return new Set(data.map((row) => row.id).filter(Boolean));
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Séance active du membre connecté (inscription 'accepte'), avec le profil
- * du superviseur joint. RLS (seances_select_member_inscrit) limite déjà la
- * réponse à sa séance. @returns { ok, seance? }
+ * Séance du membre connecté (inscription 'accepte'), avec le profil du
+ * superviseur joint. Un membre peut avoir plusieurs inscriptions (un musim
+ * par saison) : on privilégie la séance active du musim courant qui a un
+ * superviseur, pour que la conversation reste toujours joignable.
+ * @param {object} [options]
+ * @param {string} [options.preferSuperviseurId]
+ * @param {string} [options.preferSeanceId]
+ * @returns { ok, seance? }
  */
-export async function getMySeance() {
+export async function getMySeance(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
+  const preferSuperviseurId = options.preferSuperviseurId || null;
+  const preferSeanceId = options.preferSeanceId || null;
+
   try {
-    const { data, error } = await withTimeout(
+    const userId = await currentAuthId();
+    if (!userId) {
+      return { ok: false, error: "يجب تسجيل الدخول" };
+    }
+
+    const activeSaisonIds = await fetchActiveSaisonIds();
+    const pickOptions = { activeSaisonIds, preferSuperviseurId, preferSeanceId };
+
+    const { data: inscriptions, error: inscError } = await withTimeout(
       supabase
-        .from("seances")
+        .from("inscriptions")
         .select(
-          "id, nom, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email)"
+          `seance_id, saison_id, created_at, seance:seances!inscriptions_seance_id_fkey(${MEMBER_SEANCE_SELECT})`
         )
-        .limit(1)
-        .maybeSingle(),
+        .eq("membre_id", userId)
+        .eq("statut", "accepte")
+        .order("created_at", { ascending: false }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تسجيل الحصة"
+    );
+
+    if (!inscError && inscriptions?.length) {
+      const seances = inscriptions.map((row) => row.seance).filter(Boolean);
+      const picked = pickPreferredMemberSeance(seances, pickOptions);
+      if (picked) return { ok: true, seance: picked };
+    }
+
+    const { data: seances, error } = await withTimeout(
+      supabase.from("seances").select(MEMBER_SEANCE_SELECT),
       SUPABASE_TIMEOUT_MS,
       "قراءة الحصة"
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "seances") };
     }
-    return { ok: true, seance: data || null };
+    return {
+      ok: true,
+      seance: pickPreferredMemberSeance(seances, pickOptions),
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -580,6 +653,7 @@ export function mergeInboxRows(contacts, threads, options = {}) {
       avatarUrl: c.avatarUrl || t?.avatarUrl || null,
       avatarPrimary: !!c.avatarPrimary,
       highlighted: !!c.highlighted,
+      seanceId: c.seanceId || t?.seanceId || null,
       lastMessage: t?.lastMessage || "لا توجد رسائل بعد",
       lastAt,
       time: formatRelativeTime(lastAt),
@@ -601,6 +675,7 @@ export function mergeInboxRows(contacts, threads, options = {}) {
         avatarUrl: t.avatarUrl || null,
         avatarPrimary: t.role === "admin",
         highlighted: t.role === "admin",
+        seanceId: t.seanceId || null,
         lastMessage: t.lastMessage || "لا توجد رسائل بعد",
         lastAt: t.lastAt,
         time: formatRelativeTime(t.lastAt),

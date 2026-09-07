@@ -4,6 +4,13 @@ import { sortSeancesByJour } from "./seancesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
+/** UUID Postgres — les ids mock (`u_123`) ne doivent jamais être envoyés en filtre. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(id) {
+  return typeof id === "string" && UUID_RE.test(id);
+}
+
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -153,6 +160,9 @@ export async function getSupervisorActiveSeances(supervisorAuthId) {
   if (!supervisorAuthId) {
     return { ok: false, error: "معرّف المشرف مفقود", seances: [] };
   }
+  if (!isUuid(supervisorAuthId)) {
+    return { ok: false, error: "معرّف المشرف غير صالح", seances: [] };
+  }
 
   try {
     const withSaison = await querySupervisorActiveSeances(
@@ -231,19 +241,31 @@ export async function getSeanceMembers(seanceId) {
   if (!seanceId) {
     return { ok: false, error: "معرّف الحصة مفقود" };
   }
+  if (!isUuid(seanceId)) {
+    return { ok: false, error: "معرّف الحصة غير صالح" };
+  }
 
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select(
-          "membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email, phone, school, level, hifz_amount)"
-        )
-        .eq("seance_id", seanceId)
-        .eq("statut", "accepte"),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة أعضاء الحصة"
-    );
+    const selectMembers = (withAvatar) =>
+      withTimeout(
+        supabase
+          .from("inscriptions")
+          .select(
+            `membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email, phone, school, level, hifz_amount${
+              withAvatar ? ", avatar_url" : ""
+            })`
+          )
+          .eq("seance_id", seanceId)
+          .eq("statut", "accepte"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة أعضاء الحصة"
+      );
+
+    let { data, error } = await selectMembers(true);
+    // Base sans migration 0047 : on relit sans la colonne avatar_url.
+    if (error && /column.*avatar_url|avatar_url.*does not exist/i.test(error.message || "")) {
+      ({ data, error } = await selectMembers(false));
+    }
     if (error) {
       logSupabaseError("getSeanceMembers", error);
       return { ok: false, error: mapTableError(error, "inscriptions") };
@@ -259,6 +281,7 @@ export async function getSeanceMembers(seanceId) {
           nom: p.last_name || "",
           prenom: p.first_name || "",
           email: p.email || "",
+          avatarUrl: resolvePublicAvatarUrl(p.id, p.avatar_url),
           telephone: contact.telephone,
           ecole: contact.ecole,
           niveau: contact.niveau,

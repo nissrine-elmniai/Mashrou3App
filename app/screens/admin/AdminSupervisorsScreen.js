@@ -388,11 +388,12 @@ export default function AdminSupervisorsScreen({ navigation }) {
               const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
               return (
                 <View key={invitation.id} style={styles.card}>
-                  <View style={styles.cardAvatar}>
-                    <Text style={styles.cardAvatarText}>
-                      {name.charAt(0) || "؟"}
-                    </Text>
-                  </View>
+                  <ProfileAvatar
+                    fallbackLetter={name.charAt(0) || "؟"}
+                    size={48}
+                    softBackgroundColor={palette.softGreen}
+                    letterColor={palette.primary}
+                  />
                   <View style={styles.cardInfo}>
                     <Text style={styles.cardName}>{name || "دعوة مشرف"}</Text>
                     <Text style={styles.cardEmail}>{invitation.email}</Text>
@@ -437,7 +438,9 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 accessibilityLabel={`عرض ملف ${name || supervisor.email}`}
               >
                 <ProfileAvatar
+                  userId={supervisor.id}
                   avatarUrl={supervisor.avatar_url}
+                  cacheKey={supervisor.avatar_url || supervisor.id}
                   fallbackLetter={name.charAt(0) || "؟"}
                   size={48}
                   softBackgroundColor={palette.softGreen}
@@ -742,19 +745,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
-  },
-  cardAvatar: {
-    width: 48,
-    height: 48,
-    backgroundColor: palette.softGreen,
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 18,
   },
   cardInfo: {
     flex: 1,

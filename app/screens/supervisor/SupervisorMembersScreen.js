@@ -22,6 +22,8 @@ export default function SupervisorMembersScreen({
       contactId: m.user.id,
       contactName: name,
       contactAvatarLetter: initials(m.user.firstName),
+      contactAvatarUrl: m.user.avatarUrl || null,
+      contactRole: "member",
     });
   };
 
@@ -32,6 +34,7 @@ export default function SupervisorMembersScreen({
       saisonId: m.group?.seasonId,
       firstName: m.user.firstName,
       lastName: m.user.lastName,
+      avatarUrl: m.user.avatarUrl || null,
       email: m.user.email,
       phone: m.user.phone,
       school: m.user.school,

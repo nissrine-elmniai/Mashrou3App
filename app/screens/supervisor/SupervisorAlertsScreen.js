@@ -120,6 +120,7 @@ export default function SupervisorAlertsScreen({ navigation }) {
                 ]}
               >
                 <AlertSenderFace
+                  userId={alert.senderId}
                   avatarUrl={alert.senderAvatarUrl}
                   fallbackLetter={alert.senderInitial || "إ"}
                   senderName={alert.senderName}

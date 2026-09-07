@@ -47,8 +47,14 @@ function normalizeMessage(m, myAuthId) {
 }
 
 export default function ChatConversationScreen({ navigation, route }) {
-  const { contactId, contactName, contactAvatarLetter, contactAvatarUrl, contactRole } =
-    route.params || {};
+  const {
+    contactId,
+    contactName,
+    contactAvatarLetter,
+    contactAvatarUrl,
+    contactRole,
+    seanceId: routeSeanceId,
+  } = route.params || {};
   const { currentUser, supabaseSession } = useApp();
   const isAdmin = contactId === "admin" || contactRole === "admin";
 
@@ -80,13 +86,22 @@ export default function ChatConversationScreen({ navigation, route }) {
             failReason =
               "لا يمكن التواصل مع الإدارة مباشرة. يُرجى مراسلة مشرف الحصة.";
           } else {
-            // Chat membre <-> son superviseur : contactId = UUID du superviseur
-            const mySeance = await getMySeance();
-            if (mySeance?.ok && mySeance.seance) {
-              seanceId = mySeance.seance.id;
+            // Conversation permanente avec le superviseur assigné (même sans
+            // historique). On ancre l'envoi sur la séance où ce superviseur
+            // est réellement lié, sinon RLS refuse le message.
+            const mySeance = await getMySeance({
+              preferSuperviseurId: contactId || null,
+              preferSeanceId: routeSeanceId || null,
+            });
+            const assigned = mySeance?.ok ? mySeance.seance : null;
+            if (assigned?.superviseur_id) {
+              seanceId = assigned.id;
+              otherId = assigned.superviseur_id;
+            } else if (routeSeanceId && contactId) {
+              seanceId = routeSeanceId;
               otherId = contactId;
             } else {
-              failReason = mySeance?.error || "لم يتم العثور على حصة نشطة";
+              failReason = mySeance?.error || "لم يتم العثور على حصة مرتبطة بالمشرف";
             }
           }
         } else if (isAdmin && isSupervisor) {
@@ -133,10 +148,16 @@ export default function ChatConversationScreen({ navigation, route }) {
           return;
         }
 
-        const res = await getConversation({ otherUserId: otherId, seanceId });
+        // Côté membre : un seul fil avec le superviseur, toutes saisons
+        // confondues. L'envoi reste lié à la séance courante (RG6).
+        const historySeanceId = isMember ? null : seanceId;
+        const res = await getConversation({
+          otherUserId: otherId,
+          seanceId: historySeanceId,
+        });
         if (cancelled || !res.ok) return;
         setMessages((res.messages || []).map((m) => normalizeMessage(m, authId)));
-        markConversationRead({ otherUserId: otherId, seanceId });
+        markConversationRead({ otherUserId: otherId, seanceId: historySeanceId });
       } catch (e) {
         console.warn(
           "ChatConversationScreen: échec de chargement —",
@@ -147,7 +168,7 @@ export default function ChatConversationScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [authId, contactId, contactRole, isAdmin, isSupervisor, isMember, navigation]);
+  }, [authId, contactId, contactRole, routeSeanceId, isAdmin, isSupervisor, isMember, navigation]);
 
   // Abonnement Realtime aux nouveaux messages du binôme
   useEffect(() => {
@@ -169,6 +190,10 @@ export default function ChatConversationScreen({ navigation, route }) {
     const trimmed = inputText.trim();
     if (!trimmed) return;
     if (!conversation.otherId || !authId) return;
+    if (isMember && !conversation.seanceId) {
+      Alert.alert("تعذر الإرسال", "لا توجد حصة مرتبطة بالمشرف");
+      return;
+    }
     setInputText("");
     const res = await sendMessage({
       recipientId: conversation.otherId,
@@ -224,7 +249,9 @@ export default function ChatConversationScreen({ navigation, route }) {
           </TouchableOpacity>
           <View style={styles.avatarWrap}>
             <ProfileAvatar
+              userId={conversation.otherId || contactId}
               avatarUrl={headerAvatarUrl}
+              cacheKey={headerAvatarUrl || conversation.otherId || contactId}
               fallbackLetter={contactAvatarLetter || "؟"}
               size={42}
               softBackgroundColor={isAdmin && !headerAvatarUrl ? colors.primary : colors.primarySoft}

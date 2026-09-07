@@ -161,7 +161,9 @@ export function AdminSidebar({
         >
           <View style={sbStyles.header}>
             <ProfileAvatar
+              userId={currentUser?.authId || currentUser?.id || null}
               avatarUrl={currentUser?.avatarUrl}
+              cacheKey={currentUser?.avatarUrl || currentUser?.authId}
               fallbackLetter={initial}
               size={40}
               softBackgroundColor="#fff"

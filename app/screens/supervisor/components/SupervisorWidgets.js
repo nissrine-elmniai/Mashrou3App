@@ -4,6 +4,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../../constants/rtl";
 import { STATUS_COLORS, initials } from "../supervisorHelpers";
+import ProfileAvatar from "../../../components/ProfileAvatar";
+
+const MEMBER_AVATAR_SIZE = 42;
 
 export function MiniStat({ value, label, color }) {
   return (
@@ -35,9 +38,15 @@ export function MemberRow({ member, onMessage, onOpenProfile }) {
         activeOpacity={0.7}
       >
         <View style={styles.avatarWrap}>
-          <View style={styles.memberAvatar}>
-            <Text style={styles.memberAvatarText}>{initials(member.user.firstName)}</Text>
-          </View>
+          <ProfileAvatar
+            userId={member.user.id}
+            avatarUrl={member.user.avatarUrl}
+            cacheKey={member.user.avatarUrl || member.user.id}
+            fallbackLetter={initials(member.user.firstName)}
+            size={MEMBER_AVATAR_SIZE}
+            softBackgroundColor={colors.primarySoft}
+            letterColor={colors.primary}
+          />
           {showStatusDot ? (
             <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
           ) : null}
@@ -114,6 +123,8 @@ export function AttendanceHistoryRow({
 export function AttendanceRow({
   name,
   initial,
+  userId = null,
+  avatarUrl = null,
   value,
   onToggle,
   readOnly = false,
@@ -131,9 +142,15 @@ export function AttendanceRow({
   return (
     <View style={[styles.attendanceRow, shadows.card]}>
       <View style={styles.attendanceLeft}>
-        <View style={styles.memberAvatar}>
-          <Text style={styles.memberAvatarText}>{initial}</Text>
-        </View>
+        <ProfileAvatar
+          userId={userId}
+          avatarUrl={avatarUrl}
+          cacheKey={avatarUrl || userId}
+          fallbackLetter={initial}
+          size={MEMBER_AVATAR_SIZE}
+          softBackgroundColor={colors.primarySoft}
+          letterColor={colors.primary}
+        />
         <Text style={styles.attendanceName}>{name}</Text>
       </View>
       <View style={styles.attendanceRight}>
@@ -203,15 +220,6 @@ const styles = StyleSheet.create({
   },
   memberMainArea: { flex: 1, flexDirection: row, alignItems: "center", gap: 12 },
   avatarWrap: { position: "relative" },
-  memberAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.primarySoft,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  memberAvatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
   statusDot: {
     position: "absolute",
     bottom: 0,

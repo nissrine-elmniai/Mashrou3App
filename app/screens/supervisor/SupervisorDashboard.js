@@ -25,7 +25,6 @@ import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
 import SupervisorAttendanceScreen from "./SupervisorAttendanceScreen";
 import SupervisorProgressScreen from "./SupervisorProgressScreen";
-import SupervisorMessagesScreen from "./SupervisorMessagesScreen";
 import {
   registerSupervisorAttendanceSaved,
   unregisterSupervisorAttendanceSaved,
@@ -40,12 +39,11 @@ const NAV_TABS = [
   { key: "members", label: "الأعضاء", icon: "people-outline", iconActive: "people" },
   { key: "attendance", label: "الحضور", icon: "checkbox-outline", iconActive: "checkbox" },
   { key: "progress", label: "التقدم", icon: "bar-chart-outline", iconActive: "bar-chart" },
-  { key: "messages", label: "الرسائل", icon: "chatbubble-ellipses-outline", iconActive: "chatbubble-ellipses" },
 ];
 
 /**
  * Conteneur léger : header + bottomBar communs, état `tab` pour basculer entre
- * les 5 écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
+ * les 4 écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
 export default function SupervisorDashboard({ navigation }) {
   const { currentUser, logout } = useApp();
@@ -134,6 +132,17 @@ export default function SupervisorDashboard({ navigation }) {
   }, [refetch]);
 
   const openAlerts = () => navigation.navigate("SupervisorAlerts");
+  const openMessages = () =>
+    navigation.navigate("SupervisorMessages", {
+      seanceId: selectedGroupId,
+      groupName: activeGroup?.name || null,
+      members: (members || []).map((m) => ({
+        id: m.user?.id,
+        firstName: m.user?.firstName,
+        lastName: m.user?.lastName,
+        avatarUrl: m.user?.avatarUrl || null,
+      })),
+    });
 
   return (
     <SafeAreaView
@@ -232,14 +241,6 @@ export default function SupervisorDashboard({ navigation }) {
                 avgProgress={avgProgress}
               />
             )}
-            {tab === "messages" && (
-              <SupervisorMessagesScreen
-                navigation={navigation}
-                members={members}
-                activeGroup={activeGroup}
-                threads={threads}
-              />
-            )}
           </>
         )}
       </View>
@@ -254,20 +255,11 @@ export default function SupervisorDashboard({ navigation }) {
               onPress={() => setTab(t.key)}
               activeOpacity={0.7}
             >
-              <View style={styles.tabIconWrap}>
-                <Ionicons
-                  name={isActive ? t.iconActive : t.icon}
-                  size={22}
-                  color={isActive ? colors.primary : colors.placeholder}
-                />
-                {t.key === "messages" && messagesUnread > 0 ? (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>
-                      {formatUnreadBadge(messagesUnread)}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
+              <Ionicons
+                name={isActive ? t.iconActive : t.icon}
+                size={22}
+                color={isActive ? colors.primary : colors.placeholder}
+              />
               <Text style={[styles.bottomBarLabel, isActive && styles.bottomBarLabelActive]}>
                 {t.label}
               </Text>
@@ -275,6 +267,23 @@ export default function SupervisorDashboard({ navigation }) {
           );
         })}
       </View>
+
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={openMessages}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="الرسائل"
+      >
+        <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+        {messagesUnread > 0 ? (
+          <View style={styles.fabBadge}>
+            <Text style={styles.fabBadgeText}>
+              {formatUnreadBadge(messagesUnread)}
+            </Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -360,24 +369,41 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   bottomBarItem: { flex: 1, paddingVertical: 10, alignItems: "center", gap: 2 },
-  tabIconWrap: { position: "relative", paddingHorizontal: 6 },
-  tabBadge: {
+  bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
+  bottomBarLabelActive: { color: colors.primary },
+
+  fab: {
     position: "absolute",
-    top: -6,
-    end: -4,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
+    end: 16,
+    bottom: 96,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    zIndex: 10,
+  },
+  fabBadge: {
+    position: "absolute",
+    top: -2,
+    end: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     paddingHorizontal: 4,
     backgroundColor: colors.gold,
     justifyContent: "center",
     alignItems: "center",
   },
-  tabBadgeText: {
+  fabBadgeText: {
     color: colors.text,
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: fonts.bold,
   },
-  bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
-  bottomBarLabelActive: { color: colors.primary },
 });

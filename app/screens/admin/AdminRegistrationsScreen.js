@@ -357,7 +357,9 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
               <View key={reg.id} style={styles.card}>
                 <View style={styles.cardHeader}>
                   <ProfileAvatar
+                    userId={user?.authId || reg.userId || null}
                     avatarUrl={user?.avatarUrl}
+                    cacheKey={user?.avatarUrl || user?.authId || reg.userId}
                     fallbackLetter={(title || "?").charAt(0)}
                     size={44}
                     softBackgroundColor={palette.softGreen}

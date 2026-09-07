@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
+import React from "react";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { colors } from "../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../constants/rtl";
 import { formatUnreadBadge } from "../lib/messagesApi";
+import ProfileAvatar from "./ProfileAvatar";
+
+const AVATAR_SIZE = 42;
 
 export function ChatThreadRow({
   name,
   preview,
   time,
+  userId = null,
   avatarLetter,
   avatarUrl,
   avatarPrimary,
@@ -17,13 +21,6 @@ export function ChatThreadRow({
   onPress,
 }) {
   const badgeLabel = unread ? formatUnreadBadge(unreadCount) : "";
-  const letter = String(avatarLetter || "؟").trim().charAt(0) || "؟";
-  const [imageFailed, setImageFailed] = useState(false);
-  const showImage = Boolean(avatarUrl) && !imageFailed;
-
-  useEffect(() => {
-    setImageFailed(false);
-  }, [avatarUrl]);
 
   return (
     <TouchableOpacity
@@ -32,25 +29,15 @@ export function ChatThreadRow({
       onPress={onPress}
     >
       <View style={styles.avatarWrap}>
-        <View
-          style={[
-            styles.avatar,
-            avatarPrimary && !showImage && { backgroundColor: colors.primary },
-          ]}
-        >
-          {showImage ? (
-            <Image
-              source={{ uri: avatarUrl }}
-              style={styles.avatarImage}
-              resizeMode="cover"
-              onError={() => setImageFailed(true)}
-            />
-          ) : (
-            <Text style={avatarPrimary ? styles.avatarTextWhite : styles.avatarText}>
-              {letter}
-            </Text>
-          )}
-        </View>
+        <ProfileAvatar
+          userId={userId}
+          avatarUrl={avatarUrl}
+          cacheKey={avatarUrl || userId}
+          fallbackLetter={avatarLetter}
+          size={AVATAR_SIZE}
+          softBackgroundColor={avatarPrimary ? colors.primary : colors.primarySoft}
+          letterColor={avatarPrimary ? "white" : colors.primary}
+        />
       </View>
       <View style={styles.info}>
         <Text style={styles.name} numberOfLines={1}>
@@ -84,22 +71,6 @@ const styles = StyleSheet.create({
   },
   rowHighlight: { backgroundColor: colors.primarySoft },
   avatarWrap: { position: "relative" },
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.primarySoft,
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden",
-  },
-  avatarImage: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-  },
-  avatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
-  avatarTextWhite: { color: "white", fontFamily: fonts.bold, fontSize: 15 },
   info: { flex: 1 },
   name: { fontFamily: fonts.bold, fontSize: 15, color: colors.text, ...rtlTextBold },
   preview: { color: colors.muted, fontSize: 13, marginTop: 3, ...rtlText },

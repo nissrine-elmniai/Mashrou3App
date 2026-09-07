@@ -36,7 +36,9 @@ export default function ProfileHero({
         />
       ) : (
         <ProfileAvatar
+          userId={authId}
           avatarUrl={avatarUrl}
+          cacheKey={avatarUrl || authId}
           fallbackLetter={letter}
           size={76}
           softBackgroundColor={colors.primarySoft}
