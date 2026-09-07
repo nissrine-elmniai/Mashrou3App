@@ -26,6 +26,13 @@ function formatCardPercent(tumunTotal) {
   return `${LRI}${one.toFixed(1)}%${PDI}`;
 }
 
+function formatPctLabel(pct) {
+  const n = Math.min(100, Math.max(0, Number(pct) || 0));
+  if (n <= 0) return `${LRI}0%${PDI}`;
+  if (n >= 100) return `${LRI}100%${PDI}`;
+  return `${LRI}${n}%${PDI}`;
+}
+
 function PaceLine({ delta, suffix }) {
   const label = formatHizbTumunDelta(delta, suffix);
   if (!label) return null;
@@ -41,6 +48,39 @@ function PaceLine({ delta, suffix }) {
   );
 }
 
+function ObjectifProgressBlock({ objectifProgress, objectifLabel }) {
+  if (!objectifProgress && !objectifLabel) return null;
+  const pct = objectifProgress?.pct ?? 0;
+  return (
+    <View style={styles.objectifBlock}>
+      <View style={styles.objectifHeader}>
+        <Text style={styles.objectifTitle}>هدف الموسم</Text>
+        {objectifProgress ? (
+          <Text style={styles.objectifPct}>{formatPctLabel(pct)}</Text>
+        ) : null}
+      </View>
+      <Text style={styles.objectifLabel}>
+        {objectifProgress?.label || objectifLabel}
+      </Text>
+      {objectifProgress ? (
+        <>
+          <View style={styles.barTrack}>
+            <View
+              style={[
+                styles.barFill,
+                { width: `${Math.min(100, Math.max(0, pct))}%` },
+              ]}
+            />
+          </View>
+          <Text style={styles.objectifHint}>
+            تقدم الموسم نحو هدفك — يُحدَّث مع كل تسجيل للتقدم
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 function ProgressSectionContent({ progressState }) {
   if (progressState.loading) {
     return <ActivityIndicator color={colors.primary} style={styles.loader} />;
@@ -48,11 +88,16 @@ function ProgressSectionContent({ progressState }) {
   if (progressState.error) {
     return <Text style={styles.errorText}>{progressState.error}</Text>;
   }
-  if (!progressState.hasData) {
+
+  const metrics = progressState.metrics;
+  const objectifProgress = progressState.objectifProgress;
+  const hasMetrics = !!metrics;
+  const hasObjectif = !!(progressState.objectif || objectifProgress);
+
+  if (!hasMetrics && !hasObjectif) {
     return <Text style={styles.emptyText}>لم يتم تسجيل أي تقدم بعد</Text>;
   }
 
-  const metrics = progressState.metrics;
   const nbHizb = metrics?.nbHizbCompletes ?? 0;
   const pctLabel = formatCardPercent(metrics?.tumunTotal);
   const seasonDelta = progressState.seasonDeltaTumuns;
@@ -60,25 +105,27 @@ function ProgressSectionContent({ progressState }) {
   const hasPace =
     (seasonDelta != null && seasonDelta !== 0) ||
     (weekDelta != null && weekDelta !== 0);
-  const hasFooter = !!(
-    metrics?.dateSaisie ||
-    progressState.note ||
-    progressState.objectif
-  );
 
   return (
     <>
-      <View style={styles.hizbBlock}>
-        <Text style={styles.hizbLabel}>الأحزاب المكتملة</Text>
-        <View style={styles.hizbRow}>
-          <Text style={styles.hizbValue}>{nbHizb}</Text>
-          <Text style={styles.hizbDenom}>/ {TOTAL_HIZB}</Text>
+      <ObjectifProgressBlock
+        objectifProgress={objectifProgress}
+        objectifLabel={progressState.objectif}
+      />
+
+      {hasMetrics ? (
+        <View style={styles.hizbBlock}>
+          <Text style={styles.hizbLabel}>الأحزاب المكتملة</Text>
+          <View style={styles.hizbRow}>
+            <Text style={styles.hizbValue}>{nbHizb}</Text>
+            <Text style={styles.hizbDenom}>/ {TOTAL_HIZB}</Text>
+          </View>
+          <View style={styles.pctRow}>
+            <Text style={styles.pctCaption}>التقدم الكلي</Text>
+            <Text style={styles.pctValue}>{pctLabel}</Text>
+          </View>
         </View>
-        <View style={styles.pctRow}>
-          <Text style={styles.pctCaption}>التقدم الكلي</Text>
-          <Text style={styles.pctValue}>{pctLabel}</Text>
-        </View>
-      </View>
+      ) : null}
 
       {hasPace ? (
         <View style={styles.paceBlock}>
@@ -87,7 +134,7 @@ function ProgressSectionContent({ progressState }) {
         </View>
       ) : null}
 
-      {hasFooter ? (
+      {metrics?.dateSaisie || progressState.note ? (
         <View style={styles.footerBlock}>
           <View style={styles.footerRule} />
           {metrics?.dateSaisie ? (
@@ -103,13 +150,6 @@ function ProgressSectionContent({ progressState }) {
               label="ملاحظة"
               value={progressState.note}
               valueStyle={styles.noteValue}
-            />
-          ) : null}
-          {progressState.objectif ? (
-            <ProfileFieldRow
-              icon="flag-outline"
-              label="هدف الموسم"
-              value={progressState.objectif}
             />
           ) : null}
         </View>
@@ -137,6 +177,56 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: radii.xl,
     padding: radii.lg,
+  },
+  objectifBlock: {
+    backgroundColor: colors.soft,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    padding: radii.md,
+    marginBottom: radii.lg,
+    gap: radii.sm,
+  },
+  objectifHeader: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  objectifTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: radii.md,
+    color: colors.primary,
+    ...rtlText,
+  },
+  objectifPct: {
+    fontFamily: fonts.bold,
+    fontSize: radii.lg,
+    color: colors.primary,
+    ...rtlTextBold,
+  },
+  objectifLabel: {
+    fontFamily: fonts.regular,
+    fontSize: radii.md,
+    color: colors.text,
+    ...rtlText,
+  },
+  barTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.card,
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  barFill: {
+    height: "100%",
+    backgroundColor: colors.primary,
+    borderRadius: 4,
+  },
+  objectifHint: {
+    fontSize: 11,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
   },
   hizbBlock: {
     gap: radii.sm,

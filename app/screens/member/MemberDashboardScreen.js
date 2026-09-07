@@ -20,6 +20,8 @@ import {
   getMyProgress,
   computeProgressMetrics,
   computeProgressPace,
+  computeSeasonMemorizedTumuns,
+  computeObjectifProgress,
   latestProgressionRow,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
@@ -467,15 +469,30 @@ export default function MemberDashboardScreen({ navigation }) {
     [progressEntries, seasons]
   );
 
+  const objectifProgress = useMemo(() => {
+    const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+    const memorized = computeSeasonMemorizedTumuns(progressEntries, saisonId);
+    return computeObjectifProgress(
+      progressState.objectif || contactFields.hifzAmount,
+      memorized
+    );
+  }, [
+    progressEntries,
+    seasons,
+    progressState.objectif,
+    contactFields.hifzAmount,
+  ]);
+
   const profileProgressState = useMemo(
     () => ({
       loading:
         !memorizationMetrics && (activitiesLoading || progressState.loading),
       error: progressState.error,
-      hasData: !!memorizationMetrics,
+      hasData: !!memorizationMetrics || !!objectifProgress,
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
-      objectif: progressState.objectif,
+      objectif: progressState.objectif || contactFields.hifzAmount || null,
+      objectifProgress,
       seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
       weekDeltaTumuns: progressPace.weekDeltaTumuns,
     }),
@@ -485,6 +502,8 @@ export default function MemberDashboardScreen({ navigation }) {
       progressState.loading,
       progressState.error,
       progressState.objectif,
+      contactFields.hifzAmount,
+      objectifProgress,
       progressPace,
     ]
   );

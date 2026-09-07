@@ -24,6 +24,8 @@ import {
   getMyProgress,
   computeProgressMetrics,
   computeProgressPace,
+  computeSeasonMemorizedTumuns,
+  computeObjectifProgress,
   latestProgressionRow,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
@@ -188,17 +190,25 @@ export default function MemberProfileScreen({ navigation }) {
       const entries = progRes.entries || [];
       const latest = latestProgressionRow(entries);
       const metrics = latest ? computeProgressMetrics(latest) : null;
-      const pace = computeProgressPace(
-        entries,
-        getActiveRegularSeason(seasons)?.id ?? null
+      const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+      const pace = computeProgressPace(entries, saisonId);
+      const objectif =
+        (objRes.ok && objRes.objectif) ||
+        fieldsRes.quantiteHifz ||
+        currentUser?.hifzAmount ||
+        null;
+      const objectifProgress = computeObjectifProgress(
+        objectif,
+        computeSeasonMemorizedTumuns(entries, saisonId)
       );
       setProgressState({
         loading: false,
         error: null,
-        hasData: !!metrics,
+        hasData: !!metrics || !!objectifProgress,
         metrics,
         note: metrics?.notes || null,
-        objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
+        objectif,
+        objectifProgress,
         seasonDeltaTumuns: pace.seasonDeltaTumuns,
         weekDeltaTumuns: pace.weekDeltaTumuns,
       });

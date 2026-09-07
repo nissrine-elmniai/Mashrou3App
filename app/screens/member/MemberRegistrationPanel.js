@@ -65,10 +65,12 @@ function RegistrationBlock({
 }) {
   const [answers, setAnswers] = useState(EMPTY_ANSWERS);
   const [availableSeances, setAvailableSeances] = useState([]);
+  const [seancesReason, setSeancesReason] = useState(null);
   const [seancesLoading, setSeancesLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const primarySeasonId = seasons[0]?.id || null;
+  const seasonName = seasons[0]?.name || "";
 
   const setField = (key, value) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
@@ -77,6 +79,7 @@ function RegistrationBlock({
   useEffect(() => {
     if (!gender || !primarySeasonId) {
       setAvailableSeances([]);
+      setSeancesReason(!gender ? "invalid_genre" : "no_season");
       return undefined;
     }
     let cancelled = false;
@@ -85,6 +88,7 @@ function RegistrationBlock({
       const res = await getActiveSeancesByGenre(gender, primarySeasonId);
       if (!cancelled) {
         setAvailableSeances(res.ok ? res.seances || [] : []);
+        setSeancesReason(res.ok ? res.reason || null : "error");
         setSeancesLoading(false);
       }
     };
@@ -98,6 +102,18 @@ function RegistrationBlock({
     () => availableSeances.find((s) => s.id === answers.seanceId) || null,
     [availableSeances, answers.seanceId]
   );
+
+  const emptySeancesMessage = (() => {
+    if (seancesReason === "wrong_season") {
+      return seasonName
+        ? `لا توجد حصص نشطة لموسم «${seasonName}» حسب جنسك — أُرشفت حصص الموسم السابق عند الانطلاق. يضيفها المشرف العام من شاشة الحصص.`
+        : "لا توجد حصص لهذا الموسم حسب جنسك — يضيفها المشرف العام من شاشة الحصص بعد انطلاق الموسم.";
+    }
+    if (seancesReason === "invalid_genre") {
+      return "حدّث الجنس في ملفك الشخصي لعرض الحصص المتاحة";
+    }
+    return "لا توجد حصص نشطة حسب جنسك في هذا الموسم — يضيفها المشرف العام فقط من شاشة الحصص";
+  })();
 
   const handleSubmit = async (seasonId) => {
     if (!String(answers.seasonGoal || "").trim()) {
@@ -149,7 +165,7 @@ function RegistrationBlock({
         {seancesLoading ? (
           <ActivityIndicator color={buttonColor} style={{ marginVertical: 12 }} />
         ) : availableSeances.length === 0 ? (
-          <Text style={styles.hint}>لا توجد حصص متاحة حالياً لهذا الجنس</Text>
+          <Text style={styles.hint}>{emptySeancesMessage}</Text>
         ) : (
           <SeanceChips
             seances={availableSeances}

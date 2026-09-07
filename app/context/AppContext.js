@@ -994,6 +994,26 @@ export function AppProvider({ children }) {
                 : r
             )
           );
+          const goal = String(
+            reg.hifzAmount || reg.formAnswers?.seasonGoal || ""
+          ).trim();
+          if (reg.userId && goal) {
+            const authUserId =
+              users.find((u) => u.id === reg.userId)?.authId || reg.userId;
+            updateMemberInfo(authUserId, { hifzAmount: goal }).catch(() => {});
+            setUsers((prev) =>
+              prev.map((u) =>
+                u.id === reg.userId || u.authId === reg.userId
+                  ? { ...u, hifzAmount: goal }
+                  : u
+              )
+            );
+            if (currentUser?.id === reg.userId || currentUser?.authId === reg.userId) {
+              setCurrentUser((prev) =>
+                prev ? { ...prev, hifzAmount: goal } : prev
+              );
+            }
+          }
           if (reg.userId) {
             pushNotification({
               title: "قُبل تسجيلك للموسم",

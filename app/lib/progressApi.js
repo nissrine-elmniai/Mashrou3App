@@ -514,40 +514,133 @@ export async function getMemberProgressionSummary(membreId) {
 }
 
 /**
- * Objectif de saison (hifz_amount / level depuis member_applications).
- * Pas de table objectifs — retourne null si absent ou sans permission RLS.
+ * Objectif de saison : form_answers.seasonGoal (سؤال المقدار المطموح)
+ * puis hifz_amount, puis profiles.hifz_amount.
  */
 export async function getMemberSeasonObjectif(membreId, saisonId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!membreId || !saisonId) {
+  if (!membreId) {
     return { ok: true, objectif: null };
   }
 
   try {
-    const { data, error } = await withTimeout(
+    if (saisonId) {
+      const { data, error } = await withTimeout(
+        supabase
+          .from("member_applications")
+          .select("hifz_amount, level, form_answers")
+          .eq("user_id", membreId)
+          .eq("season_id", saisonId)
+          .order("updated_at", { ascending: false })
+          .limit(1),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة هدف العضو"
+      );
+      if (error) {
+        const msg = error?.message || "";
+        if (!/permission|row-level security|RLS|42501/i.test(msg)) {
+          // continuer vers profiles
+        }
+      } else {
+        const row = Array.isArray(data) ? data[0] : data;
+        if (row) {
+          const answers =
+            row.form_answers && typeof row.form_answers === "object"
+              ? row.form_answers
+              : {};
+          const fromAnswers = String(answers.seasonGoal || "").trim();
+          const fromHifz = String(row.hifz_amount || "").trim();
+          const objectif = fromAnswers || fromHifz || null;
+          if (objectif) {
+            return { ok: true, objectif };
+          }
+        }
+      }
+    }
+
+    const { data: profile } = await withTimeout(
       supabase
-        .from("member_applications")
-        .select("hifz_amount, level")
-        .eq("user_id", membreId)
-        .eq("season_id", saisonId)
+        .from("profiles")
+        .select("hifz_amount")
+        .eq("id", membreId)
         .maybeSingle(),
       SUPABASE_TIMEOUT_MS,
-      "قراءة هدف العضو"
+      "قراءة هدف الملف"
     );
-    if (error) {
-      const msg = error?.message || "";
-      if (/permission|row-level security|RLS|42501/i.test(msg)) {
-        return { ok: true, objectif: null };
-      }
-      return { ok: false, error: mapTableError(error, "member_applications") };
-    }
-    const objectif = data?.hifz_amount || data?.level || null;
-    return { ok: true, objectif };
+    const fromProfile = String(profile?.hifz_amount || "").trim();
+    return { ok: true, objectif: fromProfile || null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+/**
+ * Parse un objectif texte (« 5 أحزاب », « جزء », « 10 ») → nombre de أثمان.
+ * @returns {number|null}
+ */
+export function parseObjectifToTumuns(objectifText) {
+  const text = String(objectifText || "").trim();
+  if (!text) return null;
+  const numMatch = text.match(/(\d+(?:[.,]\d+)?)/);
+  if (!numMatch) {
+    if (/جزء|juz/i.test(text)) return 2 * TUMUNS_PER_HIZB;
+    return null;
+  }
+  const n = Number(String(numMatch[1]).replace(",", "."));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (/ثمن|tumun|thumun/i.test(text)) {
+    return Math.round(n);
+  }
+  if (/جزء|juz|ajza/i.test(text)) {
+    return Math.round(n * 2 * TUMUNS_PER_HIZB);
+  }
+  // Par défaut : أحزاب
+  return Math.round(n * TUMUNS_PER_HIZB);
+}
+
+/**
+ * Tumuns mémorisés depuis le début du musim (dernière − baseline avant musim).
+ */
+export function computeSeasonMemorizedTumuns(entries, saisonId) {
+  if (saisonId == null || saisonId === "") return null;
+  const sid = String(saisonId);
+  const dated = datedProgressionAsc(entries);
+  if (dated.length === 0) return 0;
+  const ofSeason = dated.filter(
+    (x) =>
+      x.e?.saison_id != null &&
+      x.e.saison_id !== "" &&
+      String(x.e.saison_id) === sid
+  );
+  if (ofSeason.length === 0) return 0;
+  const current = dated[dated.length - 1];
+  const firstSeason = ofSeason[0];
+  const before = dated.filter((x) => x.t < firstSeason.t);
+  const baseline = before.length > 0 ? before[before.length - 1] : firstSeason;
+  return Math.max(
+    0,
+    rowTumunTotal(current.e) - rowTumunTotal(baseline.e)
+  );
+}
+
+/**
+ * Progression vers هدف الموسم.
+ * @returns {{ label, targetTumuns, doneTumuns, pct, remainingTumuns }|null}
+ */
+export function computeObjectifProgress(objectifText, seasonMemorizedTumuns) {
+  const targetTumuns = parseObjectifToTumuns(objectifText);
+  if (!targetTumuns || targetTumuns <= 0) return null;
+  const doneTumuns = Math.max(0, Number(seasonMemorizedTumuns) || 0);
+  const pct = Math.min(100, Math.round((doneTumuns / targetTumuns) * 100));
+  return {
+    label: String(objectifText || "").trim(),
+    targetTumuns,
+    doneTumuns,
+    remainingTumuns: Math.max(0, targetTumuns - doneTumuns),
+    pct,
+  };
 }
 
 /**
