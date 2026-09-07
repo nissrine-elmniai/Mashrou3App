@@ -19,6 +19,7 @@ import {
   acknowledgeAlert,
   subscribeToNewAlerts,
 } from "../../lib/alertsApi";
+import AlertSenderFace from "../../components/AlertSenderFace";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -118,13 +119,15 @@ export default function SupervisorAlertsScreen({ navigation }) {
                   alert.acknowledged ? styles.alertCardAcked : styles.alertCardPending,
                 ]}
               >
+                <AlertSenderFace
+                  userId={alert.senderId}
+                  avatarUrl={alert.senderAvatarUrl}
+                  fallbackLetter={alert.senderInitial || "إ"}
+                  senderName={alert.senderName}
+                  size={64}
+                />
                 <View style={styles.alertTopRow}>
-                  <View style={styles.alertMeta}>
-                    <Text style={styles.alertTime}>{formatTime(alert.createdAt)}</Text>
-                    {alert.senderName ? (
-                      <Text style={styles.alertSender}>من {alert.senderName}</Text>
-                    ) : null}
-                  </View>
+                  <Text style={styles.alertTime}>{formatTime(alert.createdAt)}</Text>
                   {alert.acknowledged ? (
                     <View style={styles.ackedBadge}>
                       <Ionicons name="checkmark-circle" size={14} color={colors.primary} />
@@ -202,19 +205,11 @@ const styles = StyleSheet.create({
   alertTopRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 10,
     gap: 8,
   },
-  alertMeta: { flex: 1 },
   alertTime: { fontSize: 12, color: colors.muted, ...rtlText },
-  alertSender: {
-    fontSize: 11,
-    color: colors.primary,
-    marginTop: 2,
-    fontFamily: fonts.medium,
-    ...rtlText,
-  },
   pendingBadge: {
     backgroundColor: "#FFEBEE",
     borderRadius: radii.sm,

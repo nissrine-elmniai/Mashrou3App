@@ -20,6 +20,7 @@ import {
   textAlignStart,
   arrowBack,
 } from "../constants/rtl";
+import ProfileAvatar from "./ProfileAvatar";
 
 /** Marge basse minimale (Android renvoie souvent 0 pour insets.bottom) */
 const MIN_BOTTOM_GAP = 16;
@@ -261,6 +262,8 @@ export function FormInput(props) {
 
 export function PersonCard({
   initials,
+  userId = null,
+  avatarUrl = null,
   name,
   meta = [],
   accent = colors.primary,
@@ -270,9 +273,15 @@ export function PersonCard({
   return (
     <View style={[styles.personCard, shadows.card]}>
       {/* Avatar à droite (début RTL) */}
-      <View style={[styles.avatar, { backgroundColor: accent }]}>
-        <Text style={styles.avatarText}>{initials}</Text>
-      </View>
+      <ProfileAvatar
+        userId={userId}
+        avatarUrl={avatarUrl}
+        cacheKey={avatarUrl || userId}
+        fallbackLetter={initials}
+        size={48}
+        softBackgroundColor={accent}
+        letterColor="white"
+      />
       <View style={styles.personInfo}>
         <Text style={styles.personName}>{name}</Text>
         {meta.map((m, i) => (
@@ -649,17 +658,6 @@ const styles = StyleSheet.create({
     borderColor: colors.borderGreen,
     gap: 12,
     alignItems: "center",
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarText: {
-    color: "white",
-    fontFamily: fonts.bold,
   },
   personInfo: { flex: 1, alignItems: alignEdge },
   personName: {

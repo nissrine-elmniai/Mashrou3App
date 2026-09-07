@@ -21,7 +21,7 @@ import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
 import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
 import { getActiveRegularSeason, supervisorIdsForSeason } from "../../lib/seasonScope";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
+import ProfileAvatar from "../../components/ProfileAvatar";
 import { canonicalEmail } from "../../lib/authEmail";
 import {
   createSupervisorInvitation,
@@ -30,6 +30,7 @@ import {
   deleteSupervisorAccount,
   syncSupervisorSeanceLinks,
 } from "../../lib/supervisorInvitationsApi";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -89,10 +90,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [selectedSeanceId, setSelectedSeanceId] = useState(null);
   const [sending, setSending] = useState(false);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
   const loadAll = useCallback(async () => {
@@ -262,6 +259,16 @@ export default function AdminSupervisorsScreen({ navigation }) {
     );
   };
 
+  const openSupervisorDetail = (supervisor) => {
+    navigation.navigate("AdminSupervisorDetail", {
+      supervisorId: supervisor.id,
+      firstName: supervisor.first_name || "",
+      lastName: supervisor.last_name || "",
+      email: supervisor.email || "",
+      avatarUrl: supervisor.avatar_url || null,
+    });
+  };
+
   const confirmRevoke = (invitation) => {
     const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
     Alert.alert(
@@ -298,13 +305,10 @@ export default function AdminSupervisorsScreen({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>المشرفون</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
@@ -339,11 +343,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
             textAlign="right"
           />
         </View>
-
-        <ActiveSeasonBanner
-          season={activeSeason}
-          hint="يُعرض هنا فقط المشرفون المعيّنون لحصص الموسم الحالي"
-        />
 
         <View style={styles.filterRow}>
           <TouchableOpacity
@@ -389,11 +388,12 @@ export default function AdminSupervisorsScreen({ navigation }) {
               const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
               return (
                 <View key={invitation.id} style={styles.card}>
-                  <View style={styles.cardAvatar}>
-                    <Text style={styles.cardAvatarText}>
-                      {name.charAt(0) || "؟"}
-                    </Text>
-                  </View>
+                  <ProfileAvatar
+                    fallbackLetter={name.charAt(0) || "؟"}
+                    size={48}
+                    softBackgroundColor={palette.softGreen}
+                    letterColor={palette.primary}
+                  />
                   <View style={styles.cardInfo}>
                     <Text style={styles.cardName}>{name || "دعوة مشرف"}</Text>
                     <Text style={styles.cardEmail}>{invitation.email}</Text>
@@ -429,12 +429,23 @@ export default function AdminSupervisorsScreen({ navigation }) {
           filteredSupervisors.map((supervisor) => {
             const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
             return (
-              <View key={supervisor.id} style={styles.card}>
-                <View style={styles.cardAvatar}>
-                  <Text style={styles.cardAvatarText}>
-                    {name.charAt(0) || "؟"}
-                  </Text>
-                </View>
+              <TouchableOpacity
+                key={supervisor.id}
+                style={styles.card}
+                onPress={() => openSupervisorDetail(supervisor)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={`عرض ملف ${name || supervisor.email}`}
+              >
+                <ProfileAvatar
+                  userId={supervisor.id}
+                  avatarUrl={supervisor.avatar_url}
+                  cacheKey={supervisor.avatar_url || supervisor.id}
+                  fallbackLetter={name.charAt(0) || "؟"}
+                  size={48}
+                  softBackgroundColor={palette.softGreen}
+                  letterColor={palette.primary}
+                />
                 <View style={styles.cardInfo}>
                   <Text style={styles.cardName}>{name || supervisor.email}</Text>
                   <Text style={styles.cardEmail}>{supervisor.email}</Text>
@@ -453,7 +464,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
                     <Trash2 size={18} color={palette.red} />
                   </TouchableOpacity>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
@@ -734,19 +745,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
-  },
-  cardAvatar: {
-    width: 48,
-    height: 48,
-    backgroundColor: palette.softGreen,
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 18,
   },
   cardInfo: {
     flex: 1,

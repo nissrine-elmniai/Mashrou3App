@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -21,21 +22,28 @@ import { rtlText, row, textAlignStart } from "../constants/rtl";
 export default function ActivateAccountScreen({ navigation, route }) {
   const { activateInvite, activateSupervisorAccount } = useApp();
   const isSupervisor = route?.params?.role === "supervisor";
-  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState(route?.params?.email || "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const handleActivate = async () => {
-    if (isSupervisor) {
-      const result = await activateSupervisorAccount({
-        fullName,
-        email,
-        password,
-        confirmPassword,
-      });
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const result = isSupervisor
+        ? await activateSupervisorAccount({
+            email,
+            password,
+            confirmPassword,
+          })
+        : await activateInvite({
+            email,
+            password,
+            confirmPassword,
+          });
       if (!result.ok) {
         Alert.alert("خطأ", result.error);
         return;
@@ -49,27 +57,9 @@ export default function ActivateAccountScreen({ navigation, route }) {
           onPress: () => navigation.navigate("Login"),
         },
       ]);
-      return;
+    } finally {
+      setSubmitting(false);
     }
-
-    const result = await activateInvite({
-      email,
-      password,
-      confirmPassword,
-    });
-    if (!result.ok) {
-      Alert.alert("خطأ", result.error);
-      return;
-    }
-    const message = result.needsEmailConfirmation
-      ? "تم إنشاء الحساب. أكّد بريدك الإلكتروني ثم سجّل الدخول."
-      : "تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.";
-    Alert.alert("نجاح", message, [
-      {
-        text: "تسجيل الدخول",
-        onPress: () => navigation.navigate("Login"),
-      },
-    ]);
   };
 
   return (
@@ -102,22 +92,6 @@ export default function ActivateAccountScreen({ navigation, route }) {
           </View>
 
           <View style={styles.formContainer}>
-            {isSupervisor ? (
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>الاسم الكامل</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="كما هو مسجّل لدى الإدارة"
-                    placeholderTextColor={colors.placeholder}
-                    value={fullName}
-                    onChangeText={setFullName}
-                    textAlign={textAlignStart}
-                  />
-                </View>
-              </View>
-            ) : null}
-
             <View style={styles.inputGroup}>
               <Text style={styles.label}>البريد الإلكتروني</Text>
               <View style={styles.inputWrapper}>
@@ -187,11 +161,16 @@ export default function ActivateAccountScreen({ navigation, route }) {
             </View>
 
             <TouchableOpacity
-              style={styles.loginButton}
+              style={[styles.loginButton, submitting && { opacity: 0.7 }]}
               onPress={handleActivate}
               activeOpacity={0.85}
+              disabled={submitting}
             >
-              <Text style={styles.loginButtonText}>إنشاء الحساب</Text>
+              {submitting ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.loginButtonText}>إنشاء الحساب</Text>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity

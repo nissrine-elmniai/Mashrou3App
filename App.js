@@ -42,6 +42,9 @@ import SupervisorMemberProfileScreen from "./app/screens/supervisor/MemberProfil
 import SupervisorProfileScreen from "./app/screens/supervisor/SupervisorProfileScreen";
 import SupervisorAlertsScreen from "./app/screens/supervisor/SupervisorAlertsScreen";
 import SupervisorAttendanceDetailScreen from "./app/screens/supervisor/SupervisorAttendanceDetailScreen";
+import SupervisorMessagesScreen from "./app/screens/supervisor/SupervisorMessagesScreen";
+import GroupChatScreen from "./app/screens/chat/GroupChatScreen";
+import GroupInfoScreen from "./app/screens/chat/GroupInfoScreen";
 
 const Stack = createStackNavigator();
 
@@ -198,6 +201,13 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="AdminSupervisorDetail"
+          getComponent={() =>
+            require("./app/screens/admin/AdminSupervisorDetailScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="AdminStats"
           getComponent={() => require("./app/screens/admin/AdminStatsScreen").default}
           options={{ headerShown: false }}
@@ -289,6 +299,16 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="GroupChat"
+          component={GroupChatScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="GroupInfo"
+          component={GroupInfoScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="MemberProfile"
           component={SupervisorMemberProfileScreen}
           options={{ headerShown: false }}
@@ -301,6 +321,11 @@ function RootNavigator() {
         <Stack.Screen
           name="SupervisorAlerts"
           component={SupervisorAlertsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="SupervisorMessages"
+          component={SupervisorMessagesScreen}
           options={{ headerShown: false }}
         />
         <Stack.Screen

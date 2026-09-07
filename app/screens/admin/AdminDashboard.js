@@ -11,7 +11,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Menu, Bell, Plus } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import {
@@ -21,6 +20,7 @@ import {
   ACCOUNT_STATUS,
 } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -371,11 +371,6 @@ export default function AdminDashboard({ navigation }) {
     [registrations, exams, notifications, activeSeason]
   );
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
@@ -388,15 +383,10 @@ export default function AdminDashboard({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>لوحة التحكم</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="الملف الشخصي"
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
@@ -419,12 +409,6 @@ export default function AdminDashboard({ navigation }) {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.bannerWrap}>
-          <ActiveSeasonBanner
-            season={activeSeason}
-            hint="الإحصائيات أدناه خاصة بهذا الموسم فقط"
-          />
-        </View>
         <DashboardHome
           navigation={navigation}
           stats={derivedStats}
@@ -448,10 +432,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 24,
-  },
-  bannerWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
   },
   topBar: {
     backgroundColor: "#fff",

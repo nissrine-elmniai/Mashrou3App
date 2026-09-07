@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -10,61 +10,106 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { colors } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
+import { rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { EmptyState } from "../../components/ui";
 import { getMySeance, mergeInboxRows } from "../../lib/messagesApi";
+import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
 import { initials } from "../supervisor/supervisorHelpers";
+
+function supervisorContactFromSeance(seance) {
+  if (!seance?.superviseur_id) return null;
+  const s = seance.superviseur || {};
+  const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
+  const email = String(s.email || "").trim();
+  // Pas de ligne fantôme « المشرف » si le profil n'est pas lisible (RLS / jointure).
+  if (!name && !email) return null;
+  const displayName = name || email;
+  return {
+    id: seance.superviseur_id,
+    name: displayName,
+    role: "supervisor",
+    avatarLetter: initials(s.first_name || displayName || "م"),
+    avatarUrl: resolvePublicAvatarUrl(seance.superviseur_id, s.avatar_url),
+    seanceId: seance.id,
+    highlighted: true,
+  };
+}
 
 export default function MemberChatInboxScreen({ navigation }) {
   const { threads, loading: threadsLoading } = useInboxThreads();
+  const { groups: chatGroups, loading: groupsLoading } = useChatGroups();
   const [supervisor, setSupervisor] = useState(null);
   const [seanceLoading, setSeanceLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await getMySeance();
-      if (cancelled) return;
-      if (res.ok && res.seance?.superviseur_id) {
-        const s = res.seance.superviseur || {};
-        const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
-        setSupervisor({
-          id: res.seance.superviseur_id,
-          name: name || "المشرف",
-          role: "supervisor",
-          avatarLetter: initials(s.first_name  || name || "م"),
-        });
-      }
-      setSeanceLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        setSeanceLoading(true);
+        const res = await getMySeance();
+        if (cancelled) return;
+        setSupervisor(
+          res.ok ? supervisorContactFromSeance(res.seance) : null
+        );
+        setSeanceLoading(false);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [])
+  );
 
   const contacts = useMemo(
     () => (supervisor ? [supervisor] : []),
     [supervisor]
   );
 
-  const rows = useMemo(() => {
+  const dmRows = useMemo(() => {
+    // appendUnknown: le badge du FAB compte TOUS les non-lus ; la boîte doit
+    // afficher les mêmes fils (ex. superviseur d'une saison précédente), sinon
+    // le membre voit "3" sans aucune conversation.
     const merged = mergeInboxRows(contacts, threads, {
-      appendUnknown: false,
+      appendUnknown: true,
     });
-    return merged.filter((r) => r.role !== "admin");
+    return merged.filter((r) => {
+      if (r.role === "admin") return false;
+      // Contact fantôme « المشرف » (profil non joint) — pas un utilisateur.
+      if (r.name === "المشرف") return false;
+      // Ligne sans identité et sans historique
+      if (!r.lastAt && (r.name === "—" || !String(r.name || "").trim())) {
+        return false;
+      }
+      return true;
+    });
   }, [contacts, threads]);
+
+  const openGroupChat = (group) => {
+    navigation.navigate("GroupChat", {
+      groupId: group.id,
+      groupName: group.name,
+      groupAvatarUrl: group.avatarUrl || null,
+    });
+  };
 
   const openThread = (row) => {
     navigation.navigate("ChatConversation", {
       contactId: row.id,
       contactName: row.name,
       contactAvatarLetter: row.avatarLetter,
+      contactAvatarUrl: row.avatarUrl || null,
       contactRole: row.role || "supervisor",
+      seanceId: row.seanceId || supervisor?.seanceId || null,
     });
   };
+
+  const loading = threadsLoading || seanceLoading || groupsLoading;
+  const isEmpty =
+    !loading && (chatGroups || []).length === 0 && dmRows.length === 0;
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -80,21 +125,46 @@ export default function MemberChatInboxScreen({ navigation }) {
         <Text style={styles.title}>الرسائل</Text>
       </View>
 
-      {threadsLoading || seanceLoading ? (
+      {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      ) : rows.length === 0 ? (
-        <EmptyState text="لا توجد حصة نشطة للتواصل مع المشرف" />
+      ) : isEmpty ? (
+        <EmptyState
+          text={
+            supervisor
+              ? "لا توجد رسائل بعد"
+              : "لا توجد حصة نشطة للتواصل مع المشرف"
+          }
+        />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
-          {rows.map((row) => (
+          {(chatGroups || []).map((group) => (
+            <ChatThreadRow
+              key={`group-${group.id}`}
+              name={group.name}
+              preview={group.lastMessage}
+              time={group.time}
+              userId={group.id}
+              avatarLetter={(group.name || "م").charAt(0)}
+              avatarUrl={group.avatarUrl}
+              avatarPrimary={!group.avatarUrl}
+              isGroup
+              highlighted={!!group.unread}
+              unread={group.unread}
+              unreadCount={group.unreadCount}
+              onPress={() => openGroupChat(group)}
+            />
+          ))}
+          {dmRows.map((row) => (
             <ChatThreadRow
               key={`${row.role}-${row.id}`}
               name={row.name}
               preview={row.lastMessage}
               time={row.time}
+              userId={row.id}
               avatarLetter={row.avatarLetter}
+              avatarUrl={row.avatarUrl}
               avatarPrimary={row.avatarPrimary}
               highlighted={row.highlighted}
               unread={row.unread}

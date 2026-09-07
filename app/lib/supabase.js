@@ -8,8 +8,9 @@ const FALLBACK_SUPABASE_URL = "https://okqmyayjeiwzjkwlkmia.supabase.co";
 const FALLBACK_SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9rcW15YXlqZWl3emprd2xrbWlhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyMjg2MjUsImV4cCI6MjA5OTgwNDYyNX0.ttGINg_0hHbJcMiTBFTKnqOlNXO68VasZhx7kaPjwJg";
 
-const supabaseUrl =
+export const SUPABASE_URL =
   process.env.EXPO_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL;
+const supabaseUrl = SUPABASE_URL;
 const supabaseAnonKey =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY;
 

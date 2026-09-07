@@ -13,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
+import ProfileAvatar from "../../components/ProfileAvatar";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import {
@@ -25,12 +26,12 @@ import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
 import SupervisorAttendanceScreen from "./SupervisorAttendanceScreen";
 import SupervisorProgressScreen from "./SupervisorProgressScreen";
-import SupervisorMessagesScreen from "./SupervisorMessagesScreen";
 import {
   registerSupervisorAttendanceSaved,
   unregisterSupervisorAttendanceSaved,
 } from "./supervisorAttendanceBridge";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
 import { formatUnreadBadge } from "../../lib/messagesApi";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
@@ -40,12 +41,11 @@ const NAV_TABS = [
   { key: "members", label: "الأعضاء", icon: "people-outline", iconActive: "people" },
   { key: "attendance", label: "الحضور", icon: "checkbox-outline", iconActive: "checkbox" },
   { key: "progress", label: "التقدم", icon: "bar-chart-outline", iconActive: "bar-chart" },
-  { key: "messages", label: "الرسائل", icon: "chatbubble-ellipses-outline", iconActive: "chatbubble-ellipses" },
 ];
 
 /**
  * Conteneur léger : header + bottomBar communs, état `tab` pour basculer entre
- * les 5 écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
+ * les 4 écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
 export default function SupervisorDashboard({ navigation }) {
   const { currentUser, logout } = useApp();
@@ -71,10 +71,14 @@ export default function SupervisorDashboard({ navigation }) {
   } = useSupervisorMembers(selectedGroupId);
 
   const { threads } = useInboxThreads();
-  const messagesUnread = useMemo(
-    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
-    [threads]
-  );
+  const { totalUnread: groupsUnread } = useChatGroups();
+  const messagesUnread = useMemo(() => {
+    const dm = (threads || []).reduce(
+      (sum, t) => sum + (Number(t.unreadCount) || 0),
+      0
+    );
+    return dm + (Number(groupsUnread) || 0);
+  }, [threads, groupsUnread]);
 
   const fullName = currentUser?.firstName?.trim() || "";
 
@@ -134,6 +138,17 @@ export default function SupervisorDashboard({ navigation }) {
   }, [refetch]);
 
   const openAlerts = () => navigation.navigate("SupervisorAlerts");
+  const openMessages = () =>
+    navigation.navigate("SupervisorMessages", {
+      seanceId: selectedGroupId,
+      groupName: activeGroup?.name || null,
+      members: (members || []).map((m) => ({
+        id: m.user?.id,
+        firstName: m.user?.firstName,
+        lastName: m.user?.lastName,
+        avatarUrl: m.user?.avatarUrl || null,
+      })),
+    });
 
   return (
     <SafeAreaView
@@ -173,8 +188,19 @@ export default function SupervisorDashboard({ navigation }) {
                 style={styles.profileBtn}
                 onPress={() => navigation.navigate("SupervisorProfile")}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="الملف الشخصي"
               >
-                <Ionicons name="person-circle-outline" size={24} color="white" />
+                <ProfileAvatar
+                  userId={currentUser?.authId || currentUser?.id || null}
+                  avatarUrl={currentUser?.avatarUrl}
+                  cacheKey={currentUser?.avatarUrl || currentUser?.authId}
+                  fallbackLetter={(fullName || "م").charAt(0)}
+                  size={32}
+                  softBackgroundColor="rgba(255,255,255,0.28)"
+                  letterColor="white"
+                  style={styles.profileAvatar}
+                />
               </TouchableOpacity>
             </View>
           </View>
@@ -232,14 +258,6 @@ export default function SupervisorDashboard({ navigation }) {
                 avgProgress={avgProgress}
               />
             )}
-            {tab === "messages" && (
-              <SupervisorMessagesScreen
-                navigation={navigation}
-                members={members}
-                activeGroup={activeGroup}
-                threads={threads}
-              />
-            )}
           </>
         )}
       </View>
@@ -254,20 +272,11 @@ export default function SupervisorDashboard({ navigation }) {
               onPress={() => setTab(t.key)}
               activeOpacity={0.7}
             >
-              <View style={styles.tabIconWrap}>
-                <Ionicons
-                  name={isActive ? t.iconActive : t.icon}
-                  size={22}
-                  color={isActive ? colors.primary : colors.placeholder}
-                />
-                {t.key === "messages" && messagesUnread > 0 ? (
-                  <View style={styles.tabBadge}>
-                    <Text style={styles.tabBadgeText}>
-                      {formatUnreadBadge(messagesUnread)}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
+              <Ionicons
+                name={isActive ? t.iconActive : t.icon}
+                size={22}
+                color={isActive ? colors.primary : colors.placeholder}
+              />
               <Text style={[styles.bottomBarLabel, isActive && styles.bottomBarLabelActive]}>
                 {t.label}
               </Text>
@@ -275,6 +284,23 @@ export default function SupervisorDashboard({ navigation }) {
           );
         })}
       </View>
+
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={openMessages}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="الرسائل"
+      >
+        <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+        {messagesUnread > 0 ? (
+          <View style={styles.fabBadge}>
+            <Text style={styles.fabBadgeText}>
+              {formatUnreadBadge(messagesUnread)}
+            </Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -352,6 +378,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
   },
   profileBtn: { padding: 2 },
+  profileAvatar: {
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
 
   bottomBar: {
     flexDirection: row,
@@ -360,24 +390,41 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   bottomBarItem: { flex: 1, paddingVertical: 10, alignItems: "center", gap: 2 },
-  tabIconWrap: { position: "relative", paddingHorizontal: 6 },
-  tabBadge: {
+  bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
+  bottomBarLabelActive: { color: colors.primary },
+
+  fab: {
     position: "absolute",
-    top: -6,
-    end: -4,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
+    end: 16,
+    bottom: 96,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    zIndex: 10,
+  },
+  fabBadge: {
+    position: "absolute",
+    top: -2,
+    end: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     paddingHorizontal: 4,
     backgroundColor: colors.gold,
     justifyContent: "center",
     alignItems: "center",
   },
-  tabBadgeText: {
+  fabBadgeText: {
     color: colors.text,
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: fonts.bold,
   },
-  bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
-  bottomBarLabelActive: { color: colors.primary },
 });

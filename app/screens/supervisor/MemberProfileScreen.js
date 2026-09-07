@@ -52,6 +52,7 @@ import {
 import { initials, STATUS_COLORS, arabicSessionCountLabel } from "./supervisorHelpers";
 import { groupMemberPresenceByMonth } from "./supervisorAttendanceHelpers";
 import ProgressCard from "../../components/profile/ProgressCard";
+import ProfileAvatar from "../../components/ProfileAvatar";
 
 const PRESENCE_LABELS = {
   present: "حاضر",
@@ -202,6 +203,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     saisonId: initialSaisonId,
     firstName,
     lastName,
+    avatarUrl,
     email,
     phone,
     school,
@@ -211,6 +213,9 @@ export default function MemberProfileScreen({ navigation, route }) {
     groupName: initialGroupName,
     groupSchedule: initialGroupSchedule,
     registrationDate,
+    supervisorName: initialSupervisorName,
+    seasonName,
+    seasonVersion,
     canEditSeance = false,
     adminTheme = false,
   } = route.params || {};
@@ -222,6 +227,17 @@ export default function MemberProfileScreen({ navigation, route }) {
   const [saisonId, setSaisonId] = useState(initialSaisonId || null);
   const [groupName, setGroupName] = useState(initialGroupName || null);
   const [groupSchedule, setGroupSchedule] = useState(initialGroupSchedule || null);
+  const [supervisorName, setSupervisorName] = useState(initialSupervisorName || null);
+  const [avatarUri, setAvatarUri] = useState(avatarUrl || null);
+
+  const seasonLabel = useMemo(() => {
+    const season = seasons?.find((s) => s.id === saisonId) || null;
+    const name = season?.name || seasonName || null;
+    const version = season?.version ?? seasonVersion ?? null;
+    if (!name && version == null) return null;
+    if (version == null) return name;
+    return name ? `${name} — النسخة ${version}` : `النسخة ${version}`;
+  }, [seasons, saisonId, seasonName, seasonVersion]);
   const [seanceModalVisible, setSeanceModalVisible] = useState(false);
   const [availableSeances, setAvailableSeances] = useState([]);
   const [loadingSeances, setLoadingSeances] = useState(false);
@@ -253,11 +269,17 @@ export default function MemberProfileScreen({ navigation, route }) {
   });
   const [removingFromSeance, setRemovingFromSeance] = useState(false);
 
+  // L'admin affecte toujours dans le musim actif (un membre d'une ancienne
+  // version peut ainsi être ajouté à une séance de la version en cours).
+  const pickerSaisonId = adminTheme
+    ? getActiveRegularSeason(seasons)?.id || saisonId || null
+    : saisonId || null;
+
   const openSeancePicker = async () => {
     if (!canEditSeance || savingSeance) return;
     setSeanceModalVisible(true);
     setLoadingSeances(true);
-    const res = await getAllSeances({ saisonId: saisonId || null });
+    const res = await getAllSeances({ saisonId: pickerSaisonId });
     setLoadingSeances(false);
     if (!res.ok) {
       Alert.alert("تنبيه", res.error || "تعذر تحميل الحصص");
@@ -284,7 +306,8 @@ export default function MemberProfileScreen({ navigation, route }) {
       memberId,
       currentSeanceId: seanceId,
       newSeanceId: nextSeance.id,
-      saisonId,
+      saisonId: nextSeance.saison_id || pickerSaisonId,
+      createIfMissing: canEditSeance,
     });
     setSavingSeance(false);
 
@@ -297,8 +320,19 @@ export default function MemberProfileScreen({ navigation, route }) {
     setSaisonId(res.saisonId || nextSeance.saison_id || saisonId);
     setGroupName(nextSeance.nom || null);
     setGroupSchedule(formatSeanceScheduleLabel(nextSeance) || null);
+    const sup = nextSeance.superviseur;
+    setSupervisorName(
+      sup
+        ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() || sup.email || null
+        : null
+    );
     setSeanceModalVisible(false);
-    Alert.alert("تم", `تم نقل العضو إلى حصة «${nextSeance.nom}»`);
+    Alert.alert(
+      "تم",
+      res.created
+        ? `تم تسجيل العضو في حصة «${nextSeance.nom}»`
+        : `تم نقل العضو إلى حصة «${nextSeance.nom}»`
+    );
   };
 
   const confirmRemoveFromSeance = () => {
@@ -333,6 +367,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     (async () => {
       const res = await getMemberProfileFields(memberId);
       if (cancelled || !res.ok) return;
+      setAvatarUri(res.avatarUrl || avatarUrl || null);
       setContactFields({
         phone: res.telephone || phone || null,
         school: res.ecole || school || null,
@@ -484,9 +519,16 @@ export default function MemberProfileScreen({ navigation, route }) {
       </View>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.avatarBlock}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials(firstName)}</Text>
-          </View>
+          <ProfileAvatar
+            userId={memberId}
+            avatarUrl={avatarUri}
+            cacheKey={avatarUri || memberId}
+            fallbackLetter={initials(firstName)}
+            size={76}
+            softBackgroundColor={colors.primarySoft}
+            letterColor={colors.primary}
+            style={styles.avatar}
+          />
           <Text style={styles.name}>{fullName}</Text>
         </View>
 
@@ -524,7 +566,15 @@ export default function MemberProfileScreen({ navigation, route }) {
             ) : null}
           </View>
           <ProfileRow icon="people-outline" label="الحصة" value={groupName || "—"} />
+          {adminTheme ? (
+            <ProfileRow
+              icon="person-circle-outline"
+              label="المشرف"
+              value={supervisorName || "—"}
+            />
+          ) : null}
           <ProfileRow icon="time-outline" label="التوقيت" value={groupSchedule} />
+          <ProfileRow icon="layers-outline" label="الموسم / النسخة" value={seasonLabel} />
           <ProfileRow icon="calendar-clear-outline" label="تاريخ التسجيل" value={registrationDateOnly} />
         </View>
 
@@ -683,15 +733,8 @@ const styles = StyleSheet.create({
 
   avatarBlock: { alignItems: "center", marginBottom: 20 },
   avatar: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: colors.primarySoft,
-    justifyContent: "center",
-    alignItems: "center",
     marginBottom: 10,
   },
-  avatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 26 },
   name: { fontFamily: fonts.bold, fontSize: 18, color: colors.text, ...rtlTextBold },
 
   card: {

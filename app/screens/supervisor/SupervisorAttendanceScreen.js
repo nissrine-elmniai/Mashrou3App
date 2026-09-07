@@ -26,11 +26,10 @@ const DEGRADED_MESSAGE =
 
 function membersForNav(groupMembers) {
   return groupMembers.map((m) => ({
-
-    
     id: m.user?.id,
     firstName: m.user?.firstName,
     lastName: m.user?.lastName,
+    avatarUrl: m.user?.avatarUrl || null,
   }));
 }
 

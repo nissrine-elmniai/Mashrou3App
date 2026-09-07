@@ -29,6 +29,9 @@ function mapTableError(error, tableLabel) {
   if (/duplicate key|23505/i.test(msg)) {
     return "دعوة نشطة موجودة مسبقاً لهذا البريد — راجع قائمة المشرفين";
   }
+  if (/get_pending_supervisor_invitation|Could not find the function/i.test(msg)) {
+    return "دالة الدعوة غير موجودة — نفّذ ملف supabase/migrations/0025_supervisor_invitation_public_lookup.sql";
+  }
   return mapSupabaseAuthError(error);
 }
 
@@ -269,6 +272,37 @@ export async function revokeSupervisorInvitation(invitationId) {
       return { ok: false, error: mapTableError(error, "supervisor_invitations") };
     }
     return { ok: true, invitation: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Public / anon) Invitation superviseur en attente pour cet e-mail.
+ * RPC security definer (migration 0025) : sans elle, RLS admin-only
+ * empêche l'invité de vérifier sa invitation avant signUp.
+ * @param {string} email
+ * @returns {{ ok: boolean, invitation?: object|null, error?: string }}
+ */
+export async function getPendingSupervisorInvitation(email) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  const mail = canonicalEmail(email);
+  if (!mail) {
+    return { ok: false, error: "أدخل البريد الإلكتروني" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase.rpc("get_pending_supervisor_invitation", { p_email: mail }),
+      SUPABASE_TIMEOUT_MS,
+      "البحث عن دعوة المشرف"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "supervisor_invitations") };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return { ok: true, invitation: row || null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }

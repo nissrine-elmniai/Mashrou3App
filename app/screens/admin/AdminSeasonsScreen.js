@@ -20,7 +20,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { Menu, Bell, Plus, X, SquarePen } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { getActiveRegularSeason, filterSeancesForSeason } from "../../lib/seasonScope";
 import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
 import {
@@ -33,6 +32,7 @@ import {
   normalizePgTime,
 } from "../../lib/seancesApi";
 import { GENDER_OPTIONS } from "../../constants/roles";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
@@ -101,10 +101,6 @@ export default function AdminSeasonsScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [timePickerField, setTimePickerField] = useState(null);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = stats?.pendingRegs ?? 0;
 
   const loadAll = useCallback(async () => {
@@ -277,15 +273,10 @@ export default function AdminSeasonsScreen({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الحصص</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="الملف الشخصي"
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
@@ -311,10 +302,6 @@ export default function AdminSeasonsScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <ActiveSeasonBanner
-          season={activeSeason}
-          hint="الحصص والمشرفون والأعضاء المعروضون هنا خاصون بهذا الموسم فقط"
-        />
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />

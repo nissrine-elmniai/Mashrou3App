@@ -21,8 +21,9 @@ import {
   SEASON_TYPE_LABELS,
 } from "../../constants/roles";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { rtlText, row } from "../../constants/rtl";
+import ProfileAvatar from "../../components/ProfileAvatar";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
 
 const palette = {
@@ -116,10 +117,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     [registrations, seasons, seasonType, activeSeason?.id]
   );
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const bellCount = stats?.pendingRegs ?? pendingCount;
 
   const acceptAndInvite = async (reg) => {
@@ -256,13 +253,10 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                 ? "إعادة تسجيل الموسم"
                 : "طلبات التسجيل"}
         </Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
@@ -286,13 +280,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {!isSummer ? (
-          <ActiveSeasonBanner
-            season={activeSeason}
-            hint="طلبات هذا الموسم فقط — الموسم السابق لا يظهر هنا"
-          />
-        ) : null}
-
         {pendingCount > 0 ? (
           <View style={styles.hintBanner}>
             <Text style={styles.hintBannerText}>
@@ -369,11 +356,15 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
             return (
               <View key={reg.id} style={styles.card}>
                 <View style={styles.cardHeader}>
-                  <View style={styles.cardAvatar}>
-                    <Text style={styles.cardAvatarText}>
-                      {(title || "?").charAt(0)}
-                    </Text>
-                  </View>
+                  <ProfileAvatar
+                    userId={user?.authId || reg.userId || null}
+                    avatarUrl={user?.avatarUrl}
+                    cacheKey={user?.avatarUrl || user?.authId || reg.userId}
+                    fallbackLetter={(title || "?").charAt(0)}
+                    size={44}
+                    softBackgroundColor={palette.softGreen}
+                    letterColor={palette.primary}
+                  />
                   <View style={styles.cardHeaderInfo}>
                     <Text style={styles.cardName}>{title}</Text>
                     <View

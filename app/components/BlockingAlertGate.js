@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../constants/theme";
 import { rtlText, rtlTextBold, fonts } from "../constants/rtl";
 import { useApp } from "../context/AppContext";
@@ -17,6 +16,7 @@ import {
   acknowledgeAlert,
   subscribeToNewAlerts,
 } from "../lib/alertsApi";
+import AlertSenderFace from "./AlertSenderFace";
 
 const POLL_INTERVAL_MS = 30000;
 
@@ -103,10 +103,14 @@ export default function BlockingAlertGate() {
     <Modal visible transparent animationType="fade" onRequestClose={() => {}}>
       <View style={styles.overlay} accessibilityViewIsModal>
         <View style={styles.card}>
-          <View style={styles.iconWrap}>
-            <Ionicons name="megaphone" size={36} color="#fff" />
-          </View>
-          <Text style={styles.title}>إشعار إداري عاجل</Text>
+          <AlertSenderFace
+            userId={active.senderId}
+            avatarUrl={active.senderAvatarUrl}
+            fallbackLetter={active.senderInitial || "إ"}
+            senderName={active.senderName}
+            size={80}
+            subtitle="إشعار إداري عاجل"
+          />
           <Text style={styles.message}>{active.message}</Text>
           <TouchableOpacity
             style={[styles.button, loadingAck && styles.buttonDisabled]}
@@ -144,23 +148,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: 24,
     alignItems: "center",
-  },
-  iconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: colors.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  title: {
-    fontFamily: fonts.bold,
-    fontSize: 18,
-    color: colors.text,
-    textAlign: "center",
-    marginBottom: 12,
-    ...rtlTextBold,
   },
   message: {
     fontFamily: fonts.regular,

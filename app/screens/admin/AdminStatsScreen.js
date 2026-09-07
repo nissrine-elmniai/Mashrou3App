@@ -23,7 +23,7 @@ import {
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { SEASON_TYPES } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
@@ -109,10 +109,6 @@ export default function AdminStatsScreen({ navigation }) {
   const [error, setError] = useState(null);
   const [rawStats, setRawStats] = useState(null);
 
-  const displayName = currentUser
-    ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
-    : "";
-  const initial = displayName.charAt(0) || "م";
   const pendingCount = appStats?.pendingRegs ?? 0;
 
   const loadStats = useCallback(async (season) => {
@@ -251,13 +247,10 @@ export default function AdminStatsScreen({ navigation }) {
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الإحصائيات</Text>
-        <TouchableOpacity
-          style={styles.topBarAvatar}
+        <AdminTopBarAvatar
+          currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
-          hitSlop={8}
-        >
-          <Text style={styles.topBarAvatarText}>{initial}</Text>
-        </TouchableOpacity>
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
@@ -279,11 +272,6 @@ export default function AdminStatsScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <ActiveSeasonBanner
-          season={activeSeason}
-          hint="الإحصائيات مرتبطة بالموسم المختار فقط"
-        />
-
         <Text style={styles.blockTitle}>الموسم</Text>
         <ScrollView
           horizontal
@@ -494,19 +482,6 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     fontSize: 16,
     ...rtlText,
-  },
-  topBarAvatar: {
-    width: 32,
-    height: 32,
-    backgroundColor: palette.softGreen,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  topBarAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 14,
   },
   bellBadge: {
     position: "absolute",

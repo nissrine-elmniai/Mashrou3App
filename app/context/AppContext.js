@@ -38,7 +38,6 @@ import {
 import {
   upsertMemberApplication,
   insertPendingMemberApplication,
-  markMemberApplicationActivated,
   listMemberApplications,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
@@ -51,6 +50,8 @@ import {
 } from "../lib/saisonsApi";
 import { snapshotSeasonsBeforeClose } from "../lib/seasonStatsApi";
 import { getActiveRegularSeason, isSeasonRegistrationAvailable } from "../lib/seasonScope";
+import { getPendingSupervisorInvitation } from "../lib/supervisorInvitationsApi";
+import { canonicalEmail } from "../lib/authEmail";
 
 /** ISO YYYY-MM-DD pour colonnes Postgres `date`. Accepte aussi YYYY/MM/DD (placeholders admin). Pas de parse JJ/MM/AAAA. */
 function toIsoDateOnly(value) {
@@ -125,13 +126,6 @@ function splitFullName(fullName) {
     firstName: parts.slice(0, -1).join(" "),
     lastName: parts[parts.length - 1],
   };
-}
-
-function normalizeName(value) {
-  return String(value || "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
 }
 
 /** Union des rôles Supabase (profiles.role) et mock locaux pour le routing multi-rôle. */
@@ -1165,6 +1159,16 @@ export function AppProvider({ children }) {
         r.status === REGISTRATION_STATUS.INVITED
     );
     if (!reg) {
+      if (isSupabaseConfigured()) {
+        const lookup = await getPendingSupervisorInvitation(mail);
+        if (lookup.ok && lookup.invitation) {
+          return activateSupervisorAccount({
+            email: mail,
+            password,
+            confirmPassword,
+          });
+        }
+      }
       return {
         ok: false,
         error: "لا توجد دعوة مقبولة لهذا البريد أو الحساب مفعّل مسبقاً",
@@ -1194,40 +1198,27 @@ export function AppProvider({ children }) {
       let needsEmailConfirmation = false;
 
       if (isSupabaseConfigured()) {
-        if (authId || existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE) {
-          const authResult = await signInWithEmailPassword(mail, password);
-          if (!authResult.ok) {
-            return {
-              ok: false,
-              error:
-                authResult.error ||
-                "كلمة المرور غير صحيحة للحساب الموجود بهذا البريد",
-            };
-          }
-          authId = authResult.authUser.id;
-          await markMemberApplicationActivated({
-            email: mail,
-            userId: authId,
-          });
-          await signOutAuth();
-        } else {
-          const authResult = await signUpWithProfile({
-            email: mail,
-            password,
-            role: existingUser.role || ROLES.MEMBER,
-            firstName:
-              existingUser.firstName ||
-              reg.firstName ||
-              splitFullName(reg.fullName).firstName,
-            lastName:
-              existingUser.lastName ||
-              reg.lastName ||
-              splitFullName(reg.fullName).lastName,
-          });
-          if (!authResult.ok) return authResult;
-          authId = authResult.authUser.id;
-          needsEmailConfirmation = !!authResult.needsEmailConfirmation;
-        }
+        // L'écran demande de choisir un nouveau mot de passe. Même si une fiche
+        // locale existe déjà, passer par l'activation distante afin de créer le
+        // compte Auth ou de mettre à jour son mot de passe. Une tentative de
+        // connexion ici interpréterait à tort le nouveau mot de passe comme
+        // l'ancien et retournerait « identifiants incorrects ».
+        const authResult = await signUpWithProfile({
+          email: mail,
+          password,
+          role: existingUser.role || ROLES.MEMBER,
+          firstName:
+            existingUser.firstName ||
+            reg.firstName ||
+            splitFullName(reg.fullName).firstName,
+          lastName:
+            existingUser.lastName ||
+            reg.lastName ||
+            splitFullName(reg.fullName).lastName,
+        });
+        if (!authResult.ok) return authResult;
+        authId = authResult.authUser.id;
+        needsEmailConfirmation = !!authResult.needsEmailConfirmation;
       } else if (
         existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE &&
         existingUser.password &&
@@ -1353,9 +1344,7 @@ export function AppProvider({ children }) {
     password,
     confirmPassword,
   }) => {
-    const name = String(fullName || "").trim();
-    const mail = String(email || "").trim().toLowerCase();
-    if (!name) return { ok: false, error: "أدخل الاسم الكامل" };
+    const mail = canonicalEmail(email);
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
     if (!password || password.length < 6) {
       return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
@@ -1364,30 +1353,34 @@ export function AppProvider({ children }) {
       return { ok: false, error: "كلمة المرور غير متطابقة" };
     }
 
+    let invitation = null;
+    if (isSupabaseConfigured()) {
+      const lookup = await getPendingSupervisorInvitation(mail);
+      if (!lookup.ok) return lookup;
+      invitation = lookup.invitation || null;
+    }
+
     const pendingUser = users.find(
       (u) =>
-        u.email.toLowerCase() === mail &&
+        canonicalEmail(u.email) === mail &&
         u.role === ROLES.SUPERVISOR &&
         u.accountStatus === ACCOUNT_STATUS.INVITED
     );
-    if (!pendingUser) {
+
+    if (!pendingUser && !invitation) {
       return {
         ok: false,
         error: "لا توجد دعوة مشرف لهذا البريد أو الحساب مفعّل مسبقاً",
       };
     }
 
-    const expectedName = normalizeName(
-      `${pendingUser.firstName} ${pendingUser.lastName}`
-    );
-    if (normalizeName(name) !== expectedName) {
-      return {
-        ok: false,
-        error: "الاسم الكامل لا يطابق البيانات المسجلة لدى الإدارة",
-      };
-    }
-
-    const { firstName, lastName } = splitFullName(name);
+    const typed = splitFullName(fullName);
+    const firstName = String(
+      invitation?.first_name || pendingUser?.firstName || typed.firstName || ""
+    ).trim();
+    const lastName = String(
+      invitation?.last_name || pendingUser?.lastName || typed.lastName || ""
+    ).trim();
 
     if (isSupabaseConfigured()) {
       const authResult = await signUpWithProfile({
@@ -1399,39 +1392,54 @@ export function AppProvider({ children }) {
       });
       if (!authResult.ok) return authResult;
 
+      const activatedUser = pendingUser
+        ? {
+            ...pendingUser,
+            firstName,
+            lastName,
+            password: null,
+            authId: authResult.authUser.id,
+            accountStatus: ACCOUNT_STATUS.ACTIVE,
+            inviteToken: null,
+          }
+        : {
+            id: uid("u"),
+            email: mail,
+            password: null,
+            firstName,
+            lastName,
+            birthDate: "2000/01/01",
+            gender: "غير محدد",
+            role: ROLES.SUPERVISOR,
+            roles: [ROLES.SUPERVISOR],
+            accountStatus: ACCOUNT_STATUS.ACTIVE,
+            authId: authResult.authUser.id,
+            inviteToken: null,
+          };
+
       setUsers((prev) =>
-        prev.map((u) =>
-          u.id === pendingUser.id
-            ? {
-                ...u,
-                firstName,
-                lastName,
-                password: null,
-                authId: authResult.authUser.id,
-                accountStatus: ACCOUNT_STATUS.ACTIVE,
-                inviteToken: null,
-              }
-            : u
-        )
+        pendingUser
+          ? prev.map((u) => (u.id === pendingUser.id ? activatedUser : u))
+          : [...prev, activatedUser]
       );
       pushNotification({
         title: "تم إنشاء الحساب",
-        body: `مرحباً ${pendingUser.firstName}، حسابك جاهز لتسجيل الدخول`,
+        body: `مرحباً ${firstName || mail}، حسابك جاهز لتسجيل الدخول`,
         audience: "user",
-        userId: pendingUser.id,
+        userId: activatedUser.id,
       });
       return {
         ok: true,
-        user: {
-          ...pendingUser,
-          firstName,
-          lastName,
-          password: null,
-          authId: authResult.authUser.id,
-          accountStatus: ACCOUNT_STATUS.ACTIVE,
-        },
+        user: activatedUser,
         role: ROLES.SUPERVISOR,
         needsEmailConfirmation: authResult.needsEmailConfirmation,
+      };
+    }
+
+    if (!pendingUser) {
+      return {
+        ok: false,
+        error: "لا توجد دعوة مشرف لهذا البريد أو الحساب مفعّل مسبقاً",
       };
     }
 
@@ -1832,6 +1840,39 @@ export function AppProvider({ children }) {
     return { ok: true, hifzAmount: clean };
   };
 
+  const updateCurrentUserAvatar = (avatarUrl) => {
+    if (!currentUser) return;
+    const patchUser = (user) => {
+      const isSelf =
+        (currentUser.authId && user.authId === currentUser.authId) ||
+        user.id === currentUser.id;
+      return isSelf ? { ...user, avatarUrl: avatarUrl || null } : user;
+    };
+    setUsers((prev) => prev.map(patchUser));
+    setCurrentUser((prev) =>
+      prev ? { ...prev, avatarUrl: avatarUrl || null } : prev
+    );
+  };
+
+  const updateCurrentUserProfile = (patch = {}) => {
+    if (!currentUser) return;
+    const next = {};
+    if (patch.firstName !== undefined) next.firstName = patch.firstName || "";
+    if (patch.lastName !== undefined) next.lastName = patch.lastName || "";
+    if (patch.phone !== undefined) next.phone = patch.phone || null;
+    if (patch.gender !== undefined) next.gender = patch.gender || "غير محدد";
+    if (patch.birthDate !== undefined) next.birthDate = patch.birthDate || null;
+    if (Object.keys(next).length === 0) return;
+    const patchUser = (user) => {
+      const isSelf =
+        (currentUser.authId && user.authId === currentUser.authId) ||
+        user.id === currentUser.id;
+      return isSelf ? { ...user, ...next } : user;
+    };
+    setUsers((prev) => prev.map(patchUser));
+    setCurrentUser((prev) => (prev ? { ...prev, ...next } : prev));
+  };
+
   const getMemberPrograms = (memberId = currentUser?.id) =>
     memberPrograms
       .filter((p) => p.userId === memberId)
@@ -2206,6 +2247,8 @@ export function AppProvider({ children }) {
     saveAttendance,
     updateMemberProgress,
     updateMemberHifzGoal,
+    updateCurrentUserAvatar,
+    updateCurrentUserProfile,
     getMemberPrograms,
     saveMemberProgram,
     deleteMemberProgram,

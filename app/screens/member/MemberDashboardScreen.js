@@ -51,6 +51,7 @@ import {
 } from "../../lib/membersApi";
 import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
+import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
@@ -61,6 +62,7 @@ import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
+import AlertSenderFace from "../../components/AlertSenderFace";
 import MemberProgramsPanel from "./MemberProgramsPanel";
 import MemberRegistrationPanel from "./MemberRegistrationPanel";
 
@@ -159,14 +161,19 @@ export default function MemberDashboardScreen({ navigation }) {
     submitSeasonRegistration,
     getNotificationsForUser,
     getMemberPrograms,
+    updateCurrentUserAvatar,
   } = useApp();
 
   const authId = currentUser?.authId || currentUser?.id || null;
   const { threads } = useInboxThreads();
-  const messagesUnread = useMemo(
-    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
-    [threads]
-  );
+  const { totalUnread: groupsUnread } = useChatGroups();
+  const messagesUnread = useMemo(() => {
+    const dm = (threads || []).reduce(
+      (sum, t) => sum + (Number(t.unreadCount) || 0),
+      0
+    );
+    return dm + (Number(groupsUnread) || 0);
+  }, [threads, groupsUnread]);
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
@@ -178,6 +185,7 @@ export default function MemberDashboardScreen({ navigation }) {
   const [activityCutoffReady, setActivityCutoffReady] = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
   const [editInfoModal, setEditInfoModal] = useState(false);
+  const [seasonObjectif, setSeasonObjectif] = useState("");
   const [contactFields, setContactFields] = useState({
     phone: currentUser?.phone || null,
     school: currentUser?.school || null,
@@ -473,13 +481,14 @@ export default function MemberDashboardScreen({ navigation }) {
     const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
     const memorized = computeSeasonMemorizedTumuns(progressEntries, saisonId);
     return computeObjectifProgress(
-      progressState.objectif || contactFields.hifzAmount,
+      progressState.objectif || seasonObjectif || contactFields.hifzAmount,
       memorized
     );
   }, [
     progressEntries,
     seasons,
     progressState.objectif,
+    seasonObjectif,
     contactFields.hifzAmount,
   ]);
 
@@ -491,7 +500,11 @@ export default function MemberDashboardScreen({ navigation }) {
       hasData: !!memorizationMetrics || !!objectifProgress,
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
-      objectif: progressState.objectif || contactFields.hifzAmount || null,
+      objectif:
+        progressState.objectif ||
+        seasonObjectif ||
+        contactFields.hifzAmount ||
+        null,
       objectifProgress,
       seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
       weekDeltaTumuns: progressPace.weekDeltaTumuns,
@@ -502,6 +515,7 @@ export default function MemberDashboardScreen({ navigation }) {
       progressState.loading,
       progressState.error,
       progressState.objectif,
+      seasonObjectif,
       contactFields.hifzAmount,
       objectifProgress,
       progressPace,
@@ -871,7 +885,13 @@ export default function MemberDashboardScreen({ navigation }) {
               ) : (
                 adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
-                    <Text style={styles.notifTitle}>تنبيه من الإدارة</Text>
+                    <AlertSenderFace
+                      userId={n.senderId}
+                      avatarUrl={n.senderAvatarUrl}
+                      fallbackLetter={n.senderInitial || "إ"}
+                      senderName={n.senderName}
+                      size={56}
+                    />
                     <Text style={styles.notifBody}>{n.message}</Text>
                   </View>
                 ))
@@ -929,6 +949,10 @@ export default function MemberDashboardScreen({ navigation }) {
             <ProfileHero
               firstName={currentUser?.firstName}
               fullName={fullName}
+              avatarUrl={currentUser?.avatarUrl}
+              editable
+              authId={authId}
+              onAvatarChanged={updateCurrentUserAvatar}
             />
 
             <View style={styles.profileCards}>
@@ -967,21 +991,21 @@ export default function MemberDashboardScreen({ navigation }) {
 
       <View style={styles.bottomWrap}>
         <MemberBottomTabBar tabs={TABS} activeKey={tab} onChange={setTab} />
-        <TouchableOpacity
-          style={[styles.fab, { bottom: 70 + Math.max(insets.bottom, 16) }]}
-          onPress={openChat}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="chatbubble-ellipses" size={24} color="white" />
-          {messagesUnread > 0 ? (
-            <View style={styles.fabBadge}>
-              <Text style={styles.fabBadgeText}>
-                {formatUnreadBadge(messagesUnread)}
-              </Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
       </View>
+      <TouchableOpacity
+        style={[styles.fab, { bottom: 68 + Math.max(insets.bottom, 16) }]}
+        onPress={openChat}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+        {messagesUnread > 0 ? (
+          <View style={styles.fabBadge}>
+            <Text style={styles.fabBadgeText}>
+              {formatUnreadBadge(messagesUnread)}
+            </Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
 
       <ChangePasswordModal
         visible={passwordModal}
@@ -1339,27 +1363,32 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
+    alignItems: "center",
   },
-  notifTitle: {
-    ...rtlText,
-    fontWeight: "bold",
-    color: colors.primary,
-    marginBottom: 4,
-  },
-  notifBody: { ...rtlText, color: colors.muted, fontSize: 13 },
+  notifBody: { ...rtlText, color: colors.muted, fontSize: 13, textAlign: "center" },
   profileCards: {
     gap: 14,
+  },
+  avatarBlock: {
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  profileName: {
+    marginTop: 10,
+    fontFamily: fonts.bold,
+    fontSize: 18,
+    color: colors.text,
+    ...rtlText,
   },
   profileLoader: { marginVertical: 8 },
 
   bottomWrap: {},
   fab: {
     position: "absolute",
-    end: 8,
-    bottom: 78,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    end: 16,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",

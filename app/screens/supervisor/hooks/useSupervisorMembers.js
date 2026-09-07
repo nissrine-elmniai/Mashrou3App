@@ -55,6 +55,7 @@ function mapSeanceMembersToRows(seanceMembers, group) {
       firstName: m.prenom,
       lastName: m.nom,
       email: m.email,
+      avatarUrl: m.avatarUrl || null,
       phone: m.telephone,
       school: m.ecole,
       level: m.niveau,

@@ -2,6 +2,8 @@ import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { colors } from "../../constants/theme";
 import { rtlTextBold, fonts } from "../../constants/rtl";
+import ProfileAvatar from "../ProfileAvatar";
+import EditableAvatar from "../EditableAvatar";
 
 /** Initiale unique, même règle que la fiche membre superviseur. */
 function initialLetter(name = "") {
@@ -10,14 +12,39 @@ function initialLetter(name = "") {
 
 /**
  * En-tête identité — avatar + nom, identique à la fiche membre côté superviseur.
+ * Si `editable`, l'avatar peut être changé (photo de profil).
  */
-export default function ProfileHero({ firstName, fullName }) {
+export default function ProfileHero({
+  firstName,
+  fullName,
+  avatarUrl,
+  editable = false,
+  authId,
+  onAvatarChanged,
+}) {
   const name = String(fullName || "").trim() || "عضو";
+  const letter = initialLetter(firstName || name);
   return (
     <View style={styles.avatarBlock}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{initialLetter(firstName)}</Text>
-      </View>
+      {editable ? (
+        <EditableAvatar
+          authId={authId}
+          avatarUrl={avatarUrl}
+          fallbackLetter={letter}
+          size={76}
+          onChanged={onAvatarChanged}
+        />
+      ) : (
+        <ProfileAvatar
+          userId={authId}
+          avatarUrl={avatarUrl}
+          cacheKey={avatarUrl || authId}
+          fallbackLetter={letter}
+          size={76}
+          softBackgroundColor={colors.primarySoft}
+          letterColor={colors.primary}
+        />
+      )}
       <Text style={styles.name}>{name}</Text>
     </View>
   );
@@ -25,20 +52,11 @@ export default function ProfileHero({ firstName, fullName }) {
 
 const styles = StyleSheet.create({
   avatarBlock: { alignItems: "center", marginBottom: 20 },
-  avatar: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: colors.primarySoft,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  avatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 26 },
   name: {
     fontFamily: fonts.bold,
     fontSize: 18,
     color: colors.text,
+    marginTop: 10,
     ...rtlTextBold,
   },
 });

@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { resolvePublicAvatarUrl } from "./avatarApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -18,6 +19,61 @@ function mapSenderName(row) {
   const p = row?.sender;
   const name = `${p?.first_name || ""} ${p?.last_name || ""}`.trim();
   return name || "الإدارة";
+}
+
+function mapSenderAvatar(row) {
+  return row?.sender?.avatar_url || null;
+}
+
+function mapSenderInitial(row) {
+  const p = row?.sender;
+  const name = `${p?.first_name || ""} ${p?.last_name || ""}`.trim();
+  return (name || "إ").charAt(0);
+}
+
+const ALERTS_SENDER_SELECT =
+  "id, message, title, body, audience, created_at, created_by, sender:profiles!created_by(first_name, last_name, avatar_url)";
+
+const ALERTS_SENDER_SELECT_FALLBACK =
+  "id, message, title, body, audience, created_at, created_by";
+
+async function fetchAlertsWithSender(queryBuilder) {
+  let res = await withTimeout(queryBuilder(ALERTS_SENDER_SELECT), SUPABASE_TIMEOUT_MS, "قراءة التنبيهات");
+  if (
+    res.error &&
+    /relationship|PGRST200|Could not find|avatar_url/i.test(res.error.message || "")
+  ) {
+    res = await withTimeout(
+      queryBuilder(ALERTS_SENDER_SELECT.replace(", avatar_url", "")),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+  }
+  if (
+    res.error &&
+    /relationship|PGRST200|Could not find/i.test(res.error.message || "")
+  ) {
+    res = await withTimeout(
+      queryBuilder(ALERTS_SENDER_SELECT_FALLBACK),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+  }
+  return res;
+}
+
+function mapAlertRow(a) {
+  const senderId = a.created_by || a.sender?.id || null;
+  return {
+    id: a.id,
+    message: a.message || a.body || a.title || "",
+    audience: a.audience,
+    createdAt: a.created_at,
+    senderId,
+    senderName: mapSenderName(a),
+    senderAvatarUrl: resolvePublicAvatarUrl(senderId, mapSenderAvatar(a)),
+    senderInitial: mapSenderInitial(a),
+  };
 }
 
 function mapTableError(error, tableLabel) {
@@ -153,13 +209,8 @@ export async function getUnacknowledgedAlerts(options = {}) {
       : Promise.resolve({ ok: true, sinceIso: null });
 
     const [alertsRes, acksRes, cutoff] = await Promise.all([
-      withTimeout(
-        supabase
-          .from("alerts")
-          .select("id, message, title, body, created_at")
-          .order("created_at", { ascending: true }),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة التنبيهات"
+      fetchAlertsWithSender((selectClause) =>
+        supabase.from("alerts").select(selectClause).order("created_at", { ascending: true })
       ),
       withTimeout(
         supabase.from("alert_acknowledgments").select("alert_id"),
@@ -179,11 +230,7 @@ export async function getUnacknowledgedAlerts(options = {}) {
     const acked = new Set((acksRes.data || []).map((a) => a.alert_id));
     let pending = (alertsRes.data || [])
       .filter((a) => !acked.has(a.id))
-      .map((a) => ({
-        id: a.id,
-        message: a.message || a.body || a.title || "",
-        createdAt: a.created_at,
-      }));
+      .map(mapAlertRow);
 
     if (sinceMemberRegistration) {
       pending = filterAlertsSince(pending, cutoff.sinceIso);
@@ -365,14 +412,12 @@ export async function getVisibleAlerts(options = {}) {
       : Promise.resolve({ ok: true, sinceIso: null });
 
     const [result, cutoff] = await Promise.all([
-      withTimeout(
+      fetchAlertsWithSender((selectClause) =>
         supabase
           .from("alerts")
-          .select("id, message, title, body, audience, created_at")
+          .select(selectClause)
           .order("created_at", { ascending: false })
-          .limit(Math.max(limit, 50)),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة التنبيهات"
+          .limit(Math.max(limit, 50))
       ),
       cutoffPromise,
     ]);
@@ -381,12 +426,7 @@ export async function getVisibleAlerts(options = {}) {
     if (error) {
       return { ok: false, error: mapTableError(error, "alerts") };
     }
-    let alerts = (data || []).map((a) => ({
-      id: a.id,
-      message: a.message || a.body || a.title || "",
-      audience: a.audience,
-      createdAt: a.created_at,
-    }));
+    let alerts = (data || []).map(mapAlertRow);
     if (sinceMemberRegistration) {
       alerts = filterAlertsSince(alerts, cutoff.sinceIso);
     }
@@ -411,34 +451,14 @@ export async function getVisibleAlertsWithAckStatus(options = {}) {
       ? resolveMemberAlertCutoff()
       : Promise.resolve({ ok: true, sinceIso: null });
 
-    let visibleRes = await withTimeout(
-      supabase
-        .from("alerts")
-        .select(
-          "id, message, title, body, created_at, created_by, sender:profiles!alerts_created_by_fkey(first_name, last_name)"
-        )
-        .order("created_at", { ascending: false })
-        .limit(50),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة التنبيهات"
-    );
-
-    if (
-      visibleRes.error &&
-      /relationship|PGRST200|Could not find/i.test(visibleRes.error.message || "")
-    ) {
-      visibleRes = await withTimeout(
+    const [visibleRes, acksRes, cutoff] = await Promise.all([
+      fetchAlertsWithSender((selectClause) =>
         supabase
           .from("alerts")
-          .select("id, message, title, body, created_at, created_by")
+          .select(selectClause)
           .order("created_at", { ascending: false })
-          .limit(50),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة التنبيهات"
-      );
-    }
-
-    const [acksRes, cutoff] = await Promise.all([
+          .limit(50)
+      ),
       withTimeout(
         supabase.from("alert_acknowledgments").select("alert_id"),
         SUPABASE_TIMEOUT_MS,
@@ -456,10 +476,7 @@ export async function getVisibleAlertsWithAckStatus(options = {}) {
 
     const acked = new Set((acksRes.data || []).map((a) => a.alert_id));
     let alerts = (visibleRes.data || []).map((a) => ({
-      id: a.id,
-      message: a.message || a.body || a.title || "",
-      createdAt: a.created_at,
-      senderName: mapSenderName(a),
+      ...mapAlertRow(a),
       acknowledged: acked.has(a.id),
     }));
     if (sinceMemberRegistration) {

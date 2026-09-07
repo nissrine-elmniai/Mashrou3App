@@ -31,7 +31,7 @@ export default function AdminMessagesFab({
       accessibilityRole="button"
       accessibilityLabel="المحادثات"
     >
-      <Ionicons name="chatbubble-ellipses" size={24} color="white" />
+      <Ionicons name="chatbubble-ellipses" size={28} color="white" />
       {unreadTotal > 0 ? (
         <View style={styles.fabBadge}>
           <Text style={styles.fabBadgeText}>
@@ -47,9 +47,9 @@ const styles = StyleSheet.create({
   fab: {
     position: "absolute",
     end: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: palette.primary,
     alignItems: "center",
     justifyContent: "center",

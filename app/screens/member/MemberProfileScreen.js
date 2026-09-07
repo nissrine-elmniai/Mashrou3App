@@ -49,7 +49,7 @@ function displayGenderFromUser(gender) {
  * Props conceptuelles : showRemove=false, headerLeft="logout".
  */
 export default function MemberProfileScreen({ navigation }) {
-  const { currentUser, logout, seasons } = useApp();
+  const { currentUser, logout, seasons, updateCurrentUserAvatar } = useApp();
   const authId = currentUser?.authId || currentUser?.id || null;
 
   const [contactFields, setContactFields] = useState({
@@ -286,6 +286,10 @@ export default function MemberProfileScreen({ navigation }) {
         <ProfileHero
           firstName={currentUser?.firstName}
           fullName={`${currentUser?.firstName || ""} ${currentUser?.lastName || ""}`.trim()}
+          avatarUrl={currentUser?.avatarUrl}
+          editable
+          authId={authId}
+          onAvatarChanged={updateCurrentUserAvatar}
         />
 
         <View style={styles.cards}>

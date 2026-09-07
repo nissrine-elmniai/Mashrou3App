@@ -27,6 +27,8 @@ import {
   sendMessage,
   subscribeConversation,
 } from "../../lib/messagesApi";
+import ProfileAvatar from "../../components/ProfileAvatar";
+import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 
 function formatTime(iso) {
   const d = iso ? new Date(iso) : new Date();
@@ -45,13 +47,21 @@ function normalizeMessage(m, myAuthId) {
 }
 
 export default function ChatConversationScreen({ navigation, route }) {
-  const { contactId, contactName, contactAvatarLetter, contactRole } = route.params || {};
+  const {
+    contactId,
+    contactName,
+    contactAvatarLetter,
+    contactAvatarUrl,
+    contactRole,
+    seanceId: routeSeanceId,
+  } = route.params || {};
   const { currentUser, supabaseSession } = useApp();
   const isAdmin = contactId === "admin" || contactRole === "admin";
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [conversation, setConversation] = useState({ otherId: null, seanceId: null });
+  const [headerAvatarUrl, setHeaderAvatarUrl] = useState(contactAvatarUrl || null);
 
   const authId = supabaseSession?.user?.id || currentUser?.authId || null;
   const role = currentUser?.role;
@@ -76,23 +86,38 @@ export default function ChatConversationScreen({ navigation, route }) {
             failReason =
               "لا يمكن التواصل مع الإدارة مباشرة. يُرجى مراسلة مشرف الحصة.";
           } else {
-            // Chat membre <-> son superviseur : contactId = UUID du superviseur
-            const mySeance = await getMySeance();
-            if (mySeance?.ok && mySeance.seance) {
-              seanceId = mySeance.seance.id;
+            // Conversation permanente avec le superviseur assigné (même sans
+            // historique). On ancre l'envoi sur la séance où ce superviseur
+            // est réellement lié, sinon RLS refuse le message.
+            const mySeance = await getMySeance({
+              preferSuperviseurId: contactId || null,
+              preferSeanceId: routeSeanceId || null,
+            });
+            const assigned = mySeance?.ok ? mySeance.seance : null;
+            if (assigned?.superviseur_id) {
+              seanceId = assigned.id;
+              otherId = assigned.superviseur_id;
+            } else if (routeSeanceId && contactId) {
+              seanceId = routeSeanceId;
               otherId = contactId;
             } else {
-              failReason = mySeance?.error || "لم يتم العثور على حصة نشطة";
+              failReason = mySeance?.error || "لم يتم العثور على حصة مرتبطة بالمشرف";
             }
           }
         } else if (isAdmin && isSupervisor) {
           // Chat superviseur <-> admin : UUID réel, ou repli sur le compte admin racine.
           if (contactId && contactId !== "admin") {
             otherId = contactId;
+            if (!headerAvatarUrl) {
+              setHeaderAvatarUrl(resolvePublicAvatarUrl(contactId, null));
+            }
           } else {
             const res = await resolveAdminProfile();
             if (res?.ok && res.admin) {
               otherId = res.admin.id;
+              setHeaderAvatarUrl((prev) =>
+                prev || resolvePublicAvatarUrl(res.admin.id, res.admin.avatar_url)
+              );
             } else {
               failReason = res?.error || "لم يتم العثور على حساب الإدارة";
             }
@@ -106,10 +131,15 @@ export default function ChatConversationScreen({ navigation, route }) {
             otherId = contactId;
           }
         } else if (isSupervisor) {
-          // Chat superviseur <-> membre : séance active du superviseur
-          const seanceRes = await getSupervisorActiveSeance(authId);
-          seanceId =
-            seanceRes?.ok && seanceRes.seance ? seanceRes.seance.id : null;
+          // Chat superviseur <-> membre : séance passée depuis l'inbox
+          // (groupe sélectionné), sinon première séance active.
+          if (routeSeanceId) {
+            seanceId = routeSeanceId;
+          } else {
+            const seanceRes = await getSupervisorActiveSeance(authId);
+            seanceId =
+              seanceRes?.ok && seanceRes.seance ? seanceRes.seance.id : null;
+          }
           otherId = contactId;
         }
 
@@ -123,10 +153,16 @@ export default function ChatConversationScreen({ navigation, route }) {
           return;
         }
 
-        const res = await getConversation({ otherUserId: otherId, seanceId });
+        // Côté membre : un seul fil avec le superviseur, toutes saisons
+        // confondues. L'envoi reste lié à la séance courante (RG6).
+        const historySeanceId = isMember ? null : seanceId;
+        const res = await getConversation({
+          otherUserId: otherId,
+          seanceId: historySeanceId,
+        });
         if (cancelled || !res.ok) return;
         setMessages((res.messages || []).map((m) => normalizeMessage(m, authId)));
-        markConversationRead({ otherUserId: otherId, seanceId });
+        markConversationRead({ otherUserId: otherId, seanceId: historySeanceId });
       } catch (e) {
         console.warn(
           "ChatConversationScreen: échec de chargement —",
@@ -137,7 +173,7 @@ export default function ChatConversationScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [authId, contactId, contactRole, isAdmin, isSupervisor, isMember, navigation]);
+  }, [authId, contactId, contactRole, routeSeanceId, isAdmin, isSupervisor, isMember, navigation]);
 
   // Abonnement Realtime aux nouveaux messages du binôme
   useEffect(() => {
@@ -159,6 +195,10 @@ export default function ChatConversationScreen({ navigation, route }) {
     const trimmed = inputText.trim();
     if (!trimmed) return;
     if (!conversation.otherId || !authId) return;
+    if (isMember && !conversation.seanceId) {
+      Alert.alert("تعذر الإرسال", "لا توجد حصة مرتبطة بالمشرف");
+      return;
+    }
     setInputText("");
     const res = await sendMessage({
       recipientId: conversation.otherId,
@@ -212,10 +252,17 @@ export default function ChatConversationScreen({ navigation, route }) {
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
             <Ionicons name={arrowBack} size={22} color={colors.text} />
           </TouchableOpacity>
-          <View style={[styles.memberAvatar, isAdmin && { backgroundColor: colors.primary }]}>
-            <Text style={isAdmin ? styles.memberAvatarTextWhite : styles.memberAvatarText}>
-              {contactAvatarLetter}
-            </Text>
+          <View style={styles.avatarWrap}>
+            <ProfileAvatar
+              userId={conversation.otherId || contactId}
+              avatarUrl={headerAvatarUrl}
+              cacheKey={headerAvatarUrl || conversation.otherId || contactId}
+              fallbackLetter={contactAvatarLetter || "؟"}
+              size={42}
+              softBackgroundColor={isAdmin && !headerAvatarUrl ? colors.primary : colors.primarySoft}
+              letterColor={isAdmin && !headerAvatarUrl ? "#fff" : colors.primary}
+            />
+            <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
           </View>
           <Text style={styles.contactName} numberOfLines={1}>
             {contactName}
@@ -262,6 +309,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   backBtn: { padding: 2 },
+  avatarWrap: { position: "relative" },
   memberAvatar: {
     width: 42,
     height: 42,
@@ -272,6 +320,16 @@ const styles = StyleSheet.create({
   },
   memberAvatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
   memberAvatarTextWhite: { color: "white", fontFamily: fonts.bold, fontSize: 15 },
+  statusDot: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.card,
+  },
   contactName: { flex: 1, fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
 
   listContent: { paddingVertical: 12 },
