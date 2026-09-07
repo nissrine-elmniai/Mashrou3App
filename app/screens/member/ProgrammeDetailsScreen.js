@@ -1,5 +1,5 @@
 // app/screens/member/ProgrammeDetailScreen.js
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import {
   StyleSheet,
   View,
@@ -11,13 +11,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
-import { addProgressEntry } from "../../lib/progressApi";
+import {
+  flushMemberProgressDelta,
+  scheduleMemberProgressDelta,
+} from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
-import { row as rtlRow, rtlText, arrowBack } from "../../constants/rtl";
+import { isHifzProgram } from "../../lib/memberProgramsApi";
+import { row as rtlRow, rtlText } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
-
-const HISTORY_DEBOUNCE_MS = 800;
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
   const routeProgram = route.params?.programme;
@@ -46,6 +48,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
         completedTumuns: programFromContext.completedTumuns,
         totalTumuns: programFromContext.totalTumuns,
         progression: programFromContext.progression,
+        type: programFromContext.type,
         dateDebut: programFromContext.startDate,
         statut: programFromContext.progression >= 100 ? "terminé" : "en_cours",
       };
@@ -75,12 +78,33 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     };
   }, [programFromContext, routeProgram]);
 
-  const historyTimerRef = useRef(null);
-  const pendingHistoryRef = useRef(null);
-
   const { completed: hizbCompletes, remaining: hizbRestants } = hizbBreakdown(
     programData.completedTumuns,
     programData.nbHizb
+  );
+
+  const handleAdjustTumuns = (delta) => {
+    if (!programData.id) return;
+    const result = adjustMemberProgramTumuns(programData.id, delta);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
+      return;
+    }
+    if (result.unchanged) return;
+    if (isHifzProgram(result.program)) {
+      scheduleMemberProgressDelta({
+        delta,
+        saisonId: activeSeasonIdRef.current,
+        notes: result.program.title || programData.nom || null,
+      });
+    }
+  };
+
+  useEffect(
+    () => () => {
+      flushMemberProgressDelta();
+    },
+    []
   );
 
   const rawDate = programData.dateDebut;
@@ -104,8 +128,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     : 0;
   const joursRestants = Math.max(0, programData.duree - joursEcoules);
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString.replace(/\//g, "-"));
+  const formatDate = (date) => {
     const mois = [
       "يناير",
       "فبراير",
@@ -123,80 +146,23 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     return `${date.getDate()} ${mois[date.getMonth()]} ${date.getFullYear()}`;
   };
 
-  const dateDebutFormatted = dateIsValid ? formatDate(rawDate) : "Date non définie";
+  const dateDebutFormatted = dateDebut ? formatDate(dateDebut) : "تاريخ غير محدد";
 
   const dateFinObj = dateDebut ? new Date(dateDebut) : null;
   if (dateFinObj) {
     dateFinObj.setDate(dateFinObj.getDate() + programData.duree);
   }
   const dateFinFormatted = dateFinObj
-    ? `${dateFinObj.getDate()} ${dateFinObj.toLocaleDateString("fr-FR", { month: "long" })} ${dateFinObj.getFullYear()}`
-    : "Date non définie";
+    ? formatDate(dateFinObj)
+    : "تاريخ غير محدد";
 
   const atMin = programData.completedTumuns <= 0;
   const atMax = programData.completedTumuns >= programData.totalTumuns;
 
-  const flushProgressHistory = useCallback(async () => {
-    const pending = pendingHistoryRef.current;
-    pendingHistoryRef.current = null;
-    if (!pending || pending.completedTumuns <= 0) return;
-
-    const result = await addProgressEntry({
-      completedTumuns: pending.completedTumuns,
-      nbHizb: pending.nbHizb,
-      saisonId: activeSeasonIdRef.current,
-      notes: `${pending.title} — ${pending.completedTumuns}/${pending.totalTumuns} أثمان`,
-    });
-
-    if (!result.ok) {
-      Alert.alert("تنبيه", result.error || "تعذر تسجيل النشاط");
-    }
-  }, []);
-
-  const scheduleProgressHistory = useCallback(
-    (program) => {
-      pendingHistoryRef.current = {
-        title: program.nom,
-        completedTumuns: program.completedTumuns,
-        totalTumuns: program.totalTumuns,
-        nbHizb: program.nbHizb,
-      };
-      if (historyTimerRef.current) {
-        clearTimeout(historyTimerRef.current);
-      }
-      historyTimerRef.current = setTimeout(flushProgressHistory, HISTORY_DEBOUNCE_MS);
-    },
-    [flushProgressHistory]
-  );
-
-  useEffect(
-    () => () => {
-      if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
-    },
-    []
-  );
-
-  const handleAdjustTumuns = (delta) => {
-    if (!programData.id) return;
-    const result = adjustMemberProgramTumuns(programData.id, delta);
-    if (!result.ok) {
-      Alert.alert("خطأ", result.error);
-      return;
-    }
-    if (delta > 0 && result.program && !result.unchanged) {
-      scheduleProgressHistory({
-        nom: result.program.title,
-        completedTumuns: result.program.completedTumuns,
-        totalTumuns: result.program.totalTumuns,
-        nbHizb: result.program.nbHizb,
-      });
-    }
-  };
-
   const handleDeleteProgramme = () => {
     Alert.alert(
       "حذف البرنامج",
-      `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيتم حذف جميع بيانات التقدم المرتبطة به بشكل نهائي.`,
+      `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيُحذف البرنامج فقط. موضعك في القرآن يبقى كما هو.`,
       [
         { text: "إلغاء", style: "cancel" },
         {
@@ -229,33 +195,10 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={styles.backText}>رجوع</Text>
-            <Ionicons name={arrowBack} size={20} color="white" />
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.content}>
           <View style={[styles.card, styles.mainCard]}>
-            <View style={styles.rowBetween}>
-              <View style={styles.headerIcons}>
-                <View style={styles.badgeGreen}>
-                  <Text style={styles.badgeTextGreen}>
-                    {programData.nbHizb} أحزاب
-                  </Text>
-                </View>
-                <View style={styles.badgeYellow}>
-                  <Text style={styles.badgeTextYellow}>
-                    {programData.duree} يوم
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.titleContainer}>
-                <Text style={styles.mainTitle}>{programData.nom}</Text>
+            <View style={styles.titleContainer}>
+              <View style={styles.bookCol}>
                 <View style={styles.iconCircle}>
                   <MaterialCommunityIcons
                     name="book-open-variant"
@@ -263,6 +206,24 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
                     color="white"
                   />
                 </View>
+              </View>
+              <Text style={styles.mainTitle}>{programData.nom}</Text>
+            </View>
+            <View style={styles.headerIcons}>
+              <View style={styles.badgeGreen}>
+                <Text style={styles.badgeTextGreen}>
+                  {isHifzProgram(programData) ? "حفظ" : "مراجعة"}
+                </Text>
+              </View>
+              <View style={styles.badgeYellow}>
+                <Text style={styles.badgeTextYellow}>
+                  {programData.nbHizb} أحزاب
+                </Text>
+              </View>
+              <View style={styles.badgeGreen}>
+                <Text style={styles.badgeTextGreen}>
+                  {programData.duree} يوم
+                </Text>
               </View>
             </View>
           </View>
@@ -293,42 +254,47 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               <View style={styles.dateItem}>
                 <Text style={styles.dateLabel}>تاريخ البداية</Text>
                 <View style={styles.dateValueRow}>
-                  <Text style={styles.dateValue}>{dateDebutFormatted}</Text>
                   <Ionicons
                     name="calendar-outline"
                     size={16}
                     color={colors.primary}
                     style={styles.dateIcon}
                   />
+                  <Text style={styles.dateValue}>{dateDebutFormatted}</Text>
                 </View>
               </View>
               <View style={styles.dateItem}>
                 <Text style={styles.dateLabel}>تاريخ الانتهاء المتوقع</Text>
                 <View style={styles.dateValueRow}>
-                  <Text style={styles.dateValue}>{dateFinFormatted}</Text>
                   <Ionicons
                     name="calendar-outline"
                     size={16}
                     color={colors.gold}
                     style={styles.dateIcon}
                   />
+                  <Text style={styles.dateValue}>{dateFinFormatted}</Text>
                 </View>
               </View>
             </View>
 
             <View style={styles.progressContainer}>
               <View style={styles.progressHeader}>
+                <Text style={styles.progressTitle}>الأيام المنقضية</Text>
                 <Text style={styles.progressText}>
                   {joursEcoules} من {programData.duree} يوم
                 </Text>
-                <Text style={styles.progressTitle}>الأيام المنقضية</Text>
               </View>
-              <View style={styles.progressBarFull}>
+              <View style={[styles.progressBarFull, styles.progressBarRtl]}>
                 <View
                   style={[
                     styles.progressBarFill,
+                    styles.progressBarFillRtl,
                     {
-                      width: `${programData.duree ? (joursEcoules / programData.duree) * 100 : 0}%`,
+                      width: `${
+                        programData.duree
+                          ? (joursRestants / programData.duree) * 100
+                          : 0
+                      }%`,
                     },
                   ]}
                 />
@@ -344,7 +310,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
             <Text style={styles.currentProgressLabel}>التقدم الحالي</Text>
             <Text style={styles.tumunCountText}>
-              {programData.completedTumuns} / {programData.totalTumuns} أثمان
+              {programData.completedTumuns} / {programData.totalTumuns} ثمن
             </Text>
             <Text style={styles.percentageText}>{programData.progression}%</Text>
 
@@ -375,10 +341,11 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.progressBarFull}>
+            <View style={[styles.progressBarFull, styles.progressBarRtl]}>
               <View
                 style={[
                   styles.progressBarFill,
+                  styles.progressBarFillRtl,
                   { width: `${programData.progression}%` },
                 ]}
               />
@@ -397,9 +364,10 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
           <TouchableOpacity
             style={styles.deleteButton}
             onPress={handleDeleteProgramme}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
+            accessibilityLabel="حذف البرنامج"
           >
-            <Text style={styles.deleteButtonIcon}>🗑️</Text>
+            <Ionicons name="trash-outline" size={18} color={colors.red} />
             <Text style={styles.deleteButtonText}>حذف البرنامج</Text>
           </TouchableOpacity>
 
@@ -414,13 +382,13 @@ const StatCard = ({ title, value, icon, color }) => (
   <View style={[styles.card, { borderColor: color, borderStartWidth: 4 }]}>
     <View style={styles.rowBetween}>
       <View style={styles.itemRow}>
-        <Text style={[styles.statTitle, { ...rtlText }]}>{title}</Text>
         <MaterialCommunityIcons
           name={icon}
           size={20}
           color={colors.muted}
-          style={{ marginStart: 8 }}
+          style={{ marginEnd: 8 }}
         />
+        <Text style={[styles.statTitle, { ...rtlText }]}>{title}</Text>
       </View>
       <Text style={[styles.statValue, { color }]}>{value}</Text>
     </View>
@@ -432,28 +400,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
-  header: {
-    backgroundColor: colors.primary,
-    height: 100,
-    borderBottomLeftRadius: radii.xl,
-    borderBottomRightRadius: radii.xl,
-    paddingHorizontal: 20,
-    justifyContent: "center",
-    alignItems: "flex-end",
-  },
-  backButton: {
-    flexDirection: rtlRow,
-    alignItems: "center",
-  },
-  backText: {
-    color: "white",
-    marginEnd: 8,
-    fontSize: 16,
-    fontWeight: "bold",
-  },
   content: {
     padding: 16,
-    marginTop: -20,
   },
   card: {
     backgroundColor: "white",
@@ -477,25 +425,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   titleContainer: {
-    flex: 1,
     flexDirection: rtlRow,
     alignItems: "center",
-    justifyContent: "flex-end",
+    marginBottom: 10,
+    gap: 10,
+  },
+  bookCol: {
+    width: 50,
+    alignItems: "center",
   },
   mainTitle: {
+    flex: 1,
     fontSize: 22,
     fontWeight: "bold",
     color: colors.primary,
-    marginEnd: 10,
+    ...rtlText,
   },
   iconCircle: {
+    width: 50,
+    height: 50,
     backgroundColor: colors.primary,
-    padding: 10,
-    borderRadius: radii.pill,
+    borderRadius: 25,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerIcons: {
-    flexDirection: "column",
-    alignItems: "flex-start",
+    flexDirection: rtlRow,
+    flexWrap: "wrap",
+    gap: 6,
+    paddingStart: 25,
   },
   badgeGreen: {
     borderColor: colors.primary,
@@ -503,7 +461,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    marginBottom: 5,
   },
   badgeYellow: {
     borderColor: colors.gold,
@@ -521,11 +478,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   statTitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: colors.muted,
   },
   statValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "bold",
   },
   sectionCard: {
@@ -544,7 +501,7 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   titleRight: {
-    alignItems: "flex-end",
+    alignItems: "flex-start",
     marginBottom: 8,
   },
   subTitle: {
@@ -556,29 +513,30 @@ const styles = StyleSheet.create({
     flexDirection: rtlRow,
     justifyContent: "space-between",
     marginVertical: 20,
+    gap: 12,
   },
   dateItem: {
-    alignItems: "flex-end",
+    alignItems: "flex-start",
     flex: 1,
   },
   dateLabel: {
     fontSize: 12,
     color: colors.placeholder,
     marginBottom: 5,
+    ...rtlText,
   },
   dateValue: {
     fontSize: 13,
     fontWeight: "bold",
     color: colors.textSecondary,
-    marginEnd: 5,
+    ...rtlText,
   },
   dateValueRow: {
     flexDirection: rtlRow,
     alignItems: "center",
+    gap: 5,
   },
-  dateIcon: {
-    marginStart: 5,
-  },
+  dateIcon: {},
   progressContainer: {
     backgroundColor: colors.soft,
     padding: 12,
@@ -587,14 +545,17 @@ const styles = StyleSheet.create({
   progressHeader: {
     flexDirection: rtlRow,
     justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 10,
   },
   progressTitle: {
     color: colors.primary,
     fontWeight: "bold",
+    ...rtlText,
   },
   progressText: {
     color: colors.textSecondary,
+    ...rtlText,
   },
   progressBarFull: {
     height: 8,
@@ -602,9 +563,16 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     overflow: "hidden",
   },
+  progressBarRtl: {
+    direction: "rtl",
+  },
   progressBarFill: {
     height: "100%",
     backgroundColor: colors.primary,
+    alignSelf: "flex-end",
+  },
+  progressBarFillRtl: {
+    alignSelf: "flex-start",
   },
   currentProgressLabel: {
     fontSize: 14,
@@ -614,14 +582,14 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   tumunCountText: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "bold",
     color: colors.primary,
     marginVertical: 4,
     ...rtlText,
   },
   percentageText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
     color: colors.textSecondary,
     marginBottom: 16,
@@ -648,7 +616,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   stepperBtnText: {
-    fontSize: 28,
+    fontSize: 25,
     fontWeight: "bold",
     color: colors.primary,
   },
@@ -682,29 +650,20 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   deleteButton: {
-    backgroundColor: colors.red,
+    backgroundColor: "#FEE2E2",
     marginTop: 8,
     marginBottom: 16,
-    paddingVertical: 18,
-    borderRadius: radii.lg,
+    paddingVertical: 12,
+    borderRadius: radii.md,
     flexDirection: rtlRow,
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: colors.red,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  deleteButtonIcon: {
-    fontSize: 22,
-    color: "white",
-    marginEnd: 10,
+    gap: 8,
   },
   deleteButtonText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
+    color: colors.red,
+    fontSize: 16,
+    fontWeight: "700",
     ...rtlText,
   },
   bottomPadding: {

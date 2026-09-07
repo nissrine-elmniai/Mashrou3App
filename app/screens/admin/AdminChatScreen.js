@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Menu, Bell } from "lucide-react-native";
 import { colors } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
+import { rtlTextBold, row, fonts } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { useApp } from "../../context/AppContext";
@@ -70,6 +70,7 @@ export default function AdminChatScreen({ navigation }) {
       contactId: row.id,
       contactName: row.name,
       contactAvatarLetter: row.avatarLetter,
+      contactAvatarUrl: row.avatarUrl || null,
       contactRole: row.role || "supervisor",
     });
   };
@@ -85,7 +86,7 @@ export default function AdminChatScreen({ navigation }) {
         >
           <Menu size={24} color={colors.text} pointerEvents="none" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>الدردشة</Text>
+        <Text style={styles.topBarTitle}>المحادثات</Text>
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
@@ -103,10 +104,6 @@ export default function AdminChatScreen({ navigation }) {
             </View>
           ) : null}
         </TouchableOpacity>
-      </View>
-
-      <View style={styles.messagesDivider}>
-        <Text style={styles.messagesDividerText}>المحادثات</Text>
       </View>
 
       {loading ? (
@@ -185,11 +182,5 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "bold",
   },
-  messagesDivider: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: colors.bg,
-  },
-  messagesDividerText: { color: colors.muted, fontSize: 13, ...rtlText },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
 });

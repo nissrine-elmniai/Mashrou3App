@@ -59,9 +59,15 @@ export default function AdminNewSeasonScreen({ navigation }) {
     setName("");
     setStartDate("");
     setVersion("");
+    const alertNote =
+      result.alertOk === false
+        ? `\n\nتنبيه: تعذر إرسال الإشعار للأعضاء${
+            result.alertError ? ` (${result.alertError})` : ""
+          }.`
+        : "\nتم إرسال تنبيه في «الإشعارات» لحث الأعضاء على تعبئة استمارة التسجيل.";
     Alert.alert(
       "انطلاق موسم جديد",
-      `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nابدأ بإعداد حصص ومشرفي هذا الموسم.`,
+      `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nابدأ بإعداد حصص ومشرفي هذا الموسم.${alertNote}`,
       [{ text: "حسناً", onPress: () => navigation.goBack() }]
     );
   };
@@ -116,7 +122,8 @@ export default function AdminNewSeasonScreen({ navigation }) {
               <Text style={styles.formTitle}>إنشاء موسم جديد</Text>
             </View>
             <Text style={styles.formHint}>
-              يُغلق الموسم العادي السابق تلقائياً ويُفتح باب التسجيل للأعضاء
+              يُغلق الموسم العادي السابق وباب تسجيله تلقائياً، ويُفعَّل التسجيل
+              للأعضاء في الموسم الجديد فوراً
             </Text>
 
             <Text style={styles.fieldLabel}>اسم الموسم</Text>

@@ -158,6 +158,13 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="AdminSeanceDetail"
+          getComponent={() =>
+            require("./app/screens/admin/AdminSeanceDetailScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="AdminSummerSchool"
           getComponent={() =>
             require("./app/screens/admin/AdminSummerSchoolScreen").default
@@ -250,6 +257,13 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
+          name="MemberProgress"
+          getComponent={() =>
+            require("./app/screens/member/MemberProgressScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="MemberChatInbox"
           getComponent={() =>
             require("./app/screens/member/MemberChatInboxScreen").default
@@ -258,7 +272,9 @@ function RootNavigator() {
         />
         <Stack.Screen
           name="MemberAlerts"
-          component={SupervisorAlertsScreen}
+          getComponent={() =>
+            require("./app/screens/member/MemberAlertsScreen").default
+          }
           options={{ headerShown: false }}
         />
 

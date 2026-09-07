@@ -21,11 +21,16 @@ import {
 } from "../../lib/membersApi";
 import { getMySeance, getMyInscriptionDate } from "../../lib/messagesApi";
 import {
-  getMemberProgressionSummary,
+  getMyProgress,
+  computeProgressMetrics,
+  computeProgressPace,
+  latestProgressionRow,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import ProfileHero from "../../components/profile/ProfileHero";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
@@ -42,7 +47,7 @@ function displayGenderFromUser(gender) {
  * Props conceptuelles : showRemove=false, headerLeft="logout".
  */
 export default function MemberProfileScreen({ navigation }) {
-  const { currentUser, logout } = useApp();
+  const { currentUser, logout, seasons, updateCurrentUserAvatar } = useApp();
   const authId = currentUser?.authId || currentUser?.id || null;
 
   const [contactFields, setContactFields] = useState({
@@ -67,6 +72,8 @@ export default function MemberProfileScreen({ navigation }) {
     metrics: null,
     note: null,
     objectif: null,
+    seasonDeltaTumuns: null,
+    weekDeltaTumuns: null,
   });
   const [presenceState, setPresenceState] = useState({
     loading: !!authId,
@@ -110,6 +117,8 @@ export default function MemberProfileScreen({ navigation }) {
         metrics: null,
         note: null,
         objectif: null,
+        seasonDeltaTumuns: null,
+        weekDeltaTumuns: null,
       });
       setPresenceState({
         loading: false,
@@ -157,7 +166,7 @@ export default function MemberProfileScreen({ navigation }) {
     });
 
     const [progRes, objRes, presRes] = await Promise.all([
-      getMemberProgressionSummary(authId),
+      getMyProgress(),
       saisonId
         ? getMemberSeasonObjectif(authId, saisonId)
         : Promise.resolve({ ok: true, objectif: null }),
@@ -172,15 +181,26 @@ export default function MemberProfileScreen({ navigation }) {
         metrics: null,
         note: null,
         objectif: null,
+        seasonDeltaTumuns: null,
+        weekDeltaTumuns: null,
       });
     } else {
+      const entries = progRes.entries || [];
+      const latest = latestProgressionRow(entries);
+      const metrics = latest ? computeProgressMetrics(latest) : null;
+      const pace = computeProgressPace(
+        entries,
+        getActiveRegularSeason(seasons)?.id ?? null
+      );
       setProgressState({
         loading: false,
         error: null,
-        hasData: progRes.hasData,
-        metrics: progRes.metrics,
-        note: progRes.metrics?.notes || null,
+        hasData: !!metrics,
+        metrics,
+        note: metrics?.notes || null,
         objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
+        seasonDeltaTumuns: pace.seasonDeltaTumuns,
+        weekDeltaTumuns: pace.weekDeltaTumuns,
       });
     }
 
@@ -205,7 +225,7 @@ export default function MemberProfileScreen({ navigation }) {
         records: presRes.records || [],
       });
     }
-  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount]);
+  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount, seasons]);
 
   useFocusEffect(
     useCallback(() => {
@@ -253,28 +273,42 @@ export default function MemberProfileScreen({ navigation }) {
           <ActivityIndicator color={colors.primary} style={styles.pageLoader} />
         ) : null}
 
-        <ProfileInfoCard
-          email={currentUser?.email || null}
-          gender={displayGenderFromUser(currentUser?.gender)}
-          phone={contactFields.phone}
-          school={contactFields.school}
-          level={contactFields.level}
-          hifzAmount={contactFields.hifzAmount}
+        <ProfileHero
+          firstName={currentUser?.firstName}
+          fullName={`${currentUser?.firstName || ""} ${currentUser?.lastName || ""}`.trim()}
+          avatarUrl={currentUser?.avatarUrl}
+          editable
+          authId={authId}
+          onAvatarChanged={updateCurrentUserAvatar}
         />
 
-        <SessionCard
-          groupName={sessionState.groupName}
-          jour={sessionState.jour}
-          heureDebut={sessionState.heureDebut}
-          registrationDate={sessionState.registrationDate}
-        />
+        <View style={styles.cards}>
+          <ProfileInfoCard
+            email={currentUser?.email || null}
+            gender={displayGenderFromUser(currentUser?.gender)}
+            phone={contactFields.phone}
+            school={contactFields.school}
+            level={contactFields.level}
+            hifzAmount={contactFields.hifzAmount}
+          />
 
-        <ProgressCard progressState={progressState} />
+          <SessionCard
+            groupName={sessionState.groupName}
+            jour={sessionState.jour}
+            heureDebut={sessionState.heureDebut}
+            registrationDate={sessionState.registrationDate}
+          />
 
-        <AttendanceCard
-          key={`${authId || ""}_${sessionState.seanceId || ""}`}
-          presenceState={presenceState}
-        />
+          <ProgressCard
+            progressState={progressState}
+            onUpdate={() => navigation.navigate("MemberProgress")}
+          />
+
+          <AttendanceCard
+            key={`${authId || ""}_${sessionState.seanceId || ""}`}
+            presenceState={presenceState}
+          />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -285,7 +319,9 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 32,
-    gap: 16,
+  },
+  cards: {
+    gap: 14,
   },
   header: {
     flexDirection: rtlRow,

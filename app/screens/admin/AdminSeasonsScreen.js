@@ -15,20 +15,22 @@ import {
   Pressable,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Menu, Bell, Plus, X, SquarePen, Archive } from "lucide-react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
+import { Ionicons } from "@expo/vector-icons";
+import { Menu, Bell, Plus, X, SquarePen } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import ActiveSeasonBanner from "../../components/ActiveSeasonBanner";
 import { getActiveRegularSeason, filterSeancesForSeason } from "../../lib/seasonScope";
-import { rtlText, row, textAlignStart } from "../../constants/rtl";
+import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
 import {
   getAllSeances,
   createSeance,
   updateSeance,
-  archiveSeance,
   getSupervisorProfiles,
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
+  normalizePgTime,
 } from "../../lib/seancesApi";
 import { GENDER_OPTIONS } from "../../constants/roles";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
@@ -51,7 +53,37 @@ const EMPTY_FORM = {
   superviseurId: null,
   jour: null,
   genre: null,
+  heureDebut: "",
+  heureFin: "",
 };
+
+function timeToStorage(date) {
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+function storageToTime(str) {
+  const normalized = normalizePgTime(str);
+  const date = new Date();
+  if (!normalized) {
+    date.setHours(18, 0, 0, 0);
+    return date;
+  }
+  const [h, m] = normalized.split(":").map((n) => Number(n) || 0);
+  date.setHours(h, m, 0, 0);
+  return date;
+}
+
+function formatTimeDisplay(str) {
+  const normalized = normalizePgTime(str);
+  return normalized ? normalized.slice(0, 5) : "";
+}
+
+function seasonDateToStorage(value) {
+  if (!value) return "";
+  return String(value).trim().replace(/\//g, "-").slice(0, 10);
+}
 
 export default function AdminSeasonsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "sessions");
@@ -68,6 +100,7 @@ export default function AdminSeasonsScreen({ navigation }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [timePickerField, setTimePickerField] = useState(null);
 
   const pendingCount = stats?.pendingRegs ?? 0;
 
@@ -116,7 +149,8 @@ export default function AdminSeasonsScreen({ navigation }) {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM });
+    setTimePickerField(null);
     setModalVisible(true);
   };
 
@@ -127,8 +161,19 @@ export default function AdminSeasonsScreen({ navigation }) {
       superviseurId: seance.superviseur_id || null,
       jour: JOUR_SEMAINE_VALUES.includes(seance.jour) ? seance.jour : null,
       genre: seance.genre || null,
+      heureDebut: formatTimeDisplay(seance.heure_debut),
+      heureFin: formatTimeDisplay(seance.heure_fin),
     });
+    setTimePickerField(null);
     setModalVisible(true);
+  };
+
+  const onTimeChange = (event, selected) => {
+    if (Platform.OS !== "ios") setTimePickerField(null);
+    if (event.type === "dismissed") return;
+    if (selected && timePickerField) {
+      setField(timePickerField, timeToStorage(selected));
+    }
   };
 
   const handleSave = async () => {
@@ -149,11 +194,25 @@ export default function AdminSeasonsScreen({ navigation }) {
       Alert.alert("تنبيه", "اختر جنس الحصة (ذكر أو أنثى)");
       return;
     }
+    if (!form.heureDebut) {
+      Alert.alert("تنبيه", "أدخل ساعة بداية الحصة");
+      return;
+    }
+    if (!form.heureFin) {
+      Alert.alert("تنبيه", "أدخل ساعة نهاية الحصة");
+      return;
+    }
+    if (form.heureFin <= form.heureDebut) {
+      Alert.alert("تنبيه", "ساعة النهاية يجب أن تكون بعد ساعة البداية");
+      return;
+    }
     if (!activeSeason?.id) {
       Alert.alert("تنبيه", "أنشئ موسماً جديداً أولاً من لوحة التحكم");
       return;
     }
     setSaving(true);
+    const seasonStart = seasonDateToStorage(activeSeason?.startDate) || null;
+    const seasonEnd = seasonDateToStorage(activeSeason?.endDate) || null;
     let result;
     if (editingId) {
       result = await updateSeance({
@@ -163,6 +222,8 @@ export default function AdminSeasonsScreen({ navigation }) {
           superviseur_id: form.superviseurId,
           jour: form.jour,
           genre: form.genre,
+          heure_debut: form.heureDebut,
+          heure_fin: form.heureFin,
         },
       });
     } else {
@@ -172,6 +233,10 @@ export default function AdminSeasonsScreen({ navigation }) {
         jour: form.jour,
         genre: form.genre,
         saisonId: activeSeason.id,
+        heureDebut: form.heureDebut,
+        heureFin: form.heureFin,
+        dateDebut: seasonStart,
+        dateFin: seasonEnd,
       });
     }
     setSaving(false);
@@ -193,29 +258,6 @@ export default function AdminSeasonsScreen({ navigation }) {
       editingId ? "تم تحديث الحصة بنجاح" : "تم إنشاء الحصة بنجاح"
     );
     loadAll();
-  };
-
-  const confirmArchive = (seance) => {
-    Alert.alert(
-      "أرشفة الحصة",
-      `هل تريد أرشفة «${seance.nom}»؟ لن تُلغى البيانات المرتبطة بها.`,
-      [
-        { text: "تراجع", style: "cancel" },
-        {
-          text: "أرشفة",
-          style: "destructive",
-          onPress: async () => {
-            const result = await archiveSeance(seance.id);
-            if (!result.ok) {
-              Alert.alert("خطأ", result.error);
-              return;
-            }
-            Alert.alert("تمت الأرشفة", "تمت أرشفة الحصة بنجاح");
-            loadAll();
-          },
-        },
-      ]
-    );
   };
 
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -287,12 +329,18 @@ export default function AdminSeasonsScreen({ navigation }) {
               : "";
             const archived = seance.statut === "archivee";
             return (
-              <View
+              <TouchableOpacity
                 key={seance.id}
                 style={[
                   styles.card,
                   archived && { borderRightColor: palette.placeholder },
                 ]}
+                activeOpacity={0.85}
+                onPress={() =>
+                  navigation.navigate("AdminSeanceDetail", { seance })
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`تفاصيل حصة ${seance.nom || ""}`}
               >
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
@@ -317,15 +365,6 @@ export default function AdminSeasonsScreen({ navigation }) {
                     >
                       <SquarePen size={18} color={palette.textSecondary} />
                     </TouchableOpacity>
-                    {!archived ? (
-                      <TouchableOpacity
-                        style={[styles.actionBtn, styles.archiveBtn]}
-                        onPress={() => confirmArchive(seance)}
-                        accessibilityLabel="أرشفة الحصة"
-                      >
-                        <Archive size={18} color={palette.primary} />
-                      </TouchableOpacity>
-                    ) : null}
                   </View>
                 </View>
 
@@ -334,6 +373,12 @@ export default function AdminSeasonsScreen({ navigation }) {
                 ) : null}
                 {seance.jour ? (
                   <Text style={styles.cardSup}>اليوم: {seance.jour}</Text>
+                ) : null}
+                {seance.heure_debut || seance.heure_fin ? (
+                  <Text style={styles.cardSup}>
+                    الوقت: {formatTimeDisplay(seance.heure_debut) || "—"} –{" "}
+                    {formatTimeDisplay(seance.heure_fin) || "—"}
+                  </Text>
                 ) : null}
                 {seance.genre ? (
                   <Text style={styles.cardSup}>الجنس: {seance.genre}</Text>
@@ -345,8 +390,14 @@ export default function AdminSeasonsScreen({ navigation }) {
                       👥 {memberCount} عضو
                     </Text>
                   </View>
+                  <Ionicons
+                    name={arrowForward}
+                    size={18}
+                    color={palette.placeholder}
+                    style={{ marginStart: "auto" }}
+                  />
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
@@ -463,6 +514,60 @@ export default function AdminSeasonsScreen({ navigation }) {
                 );
               })}
             </View>
+
+            <Text style={styles.modalLabel}>ساعة البداية</Text>
+            <TouchableOpacity
+              style={styles.dateBtn}
+              onPress={() => setTimePickerField("heureDebut")}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.dateBtnText,
+                  !form.heureDebut && styles.dateBtnPlaceholder,
+                ]}
+              >
+                {form.heureDebut
+                  ? formatTimeDisplay(form.heureDebut)
+                  : "اختر ساعة البداية"}
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.modalLabel}>ساعة النهاية</Text>
+            <TouchableOpacity
+              style={styles.dateBtn}
+              onPress={() => setTimePickerField("heureFin")}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.dateBtnText,
+                  !form.heureFin && styles.dateBtnPlaceholder,
+                ]}
+              >
+                {form.heureFin
+                  ? formatTimeDisplay(form.heureFin)
+                  : "اختر ساعة النهاية"}
+              </Text>
+            </TouchableOpacity>
+
+            {timePickerField ? (
+              <DateTimePicker
+                value={storageToTime(form[timePickerField])}
+                mode="time"
+                is24Hour
+                display={Platform.OS === "ios" ? "spinner" : "default"}
+                onChange={onTimeChange}
+              />
+            ) : null}
+            {Platform.OS === "ios" && timePickerField ? (
+              <TouchableOpacity
+                style={styles.dateDoneBtn}
+                onPress={() => setTimePickerField(null)}
+              >
+                <Text style={styles.dateDoneBtnText}>تم</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <Text style={styles.modalLabel}>المشرف</Text>
             <View style={styles.supervisorChips}>
@@ -654,9 +759,6 @@ const styles = StyleSheet.create({
   editBtn: {
     backgroundColor: "#F5F5F5",
   },
-  archiveBtn: {
-    backgroundColor: palette.softGreen,
-  },
   cardSup: {
     color: palette.textSecondary,
     fontSize: 13,
@@ -732,6 +834,36 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: palette.textPrimary,
     backgroundColor: palette.background,
+  },
+  dateBtn: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 10,
+    backgroundColor: palette.background,
+  },
+  dateBtnText: {
+    fontSize: 15,
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  dateBtnPlaceholder: {
+    color: palette.placeholder,
+  },
+  dateDoneBtn: {
+    alignSelf: "flex-end",
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: palette.softGreen,
+  },
+  dateDoneBtnText: {
+    color: palette.primary,
+    fontWeight: "700",
+    ...rtlText,
   },
   modalLabel: {
     fontSize: 13,

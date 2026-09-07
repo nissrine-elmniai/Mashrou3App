@@ -39,16 +39,18 @@ import {
   upsertMemberApplication,
   insertPendingMemberApplication,
   markMemberApplicationActivated,
+  listMemberApplications,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
-import { sendAlert } from "../lib/alertsApi";
+import { sendAlert as sendRemoteAlert } from "../lib/alertsApi";
 import { archiveSeancesForSaisonIds } from "../lib/seancesApi";
 import {
   closeRegularSaisons,
   syncSeasonsWithSupabase,
   upsertSaison,
 } from "../lib/saisonsApi";
-import { getActiveRegularSeason } from "../lib/seasonScope";
+import { snapshotSeasonsBeforeClose } from "../lib/seasonStatsApi";
+import { getActiveRegularSeason, isSeasonRegistrationAvailable } from "../lib/seasonScope";
 import { getPendingSupervisorInvitation } from "../lib/supervisorInvitationsApi";
 import { canonicalEmail } from "../lib/authEmail";
 
@@ -79,6 +81,7 @@ import {
 } from "../lib/tumun";
 import {
   deleteMemberProgramRemote,
+  normalizeProgramType,
   syncMemberProgramsWithSupabase,
   upsertMemberProgram,
 } from "../lib/memberProgramsApi";
@@ -101,7 +104,11 @@ function migrateMemberPrograms(programs = []) {
         ? clampTumuns(p.completedTumuns, nbHizb)
         : percentToTumuns(p.progression, nbHizb);
     const { progression: _legacy, ...rest } = p;
-    return { ...rest, completedTumuns };
+    return {
+      ...rest,
+      completedTumuns,
+      type: normalizeProgramType(p.type),
+    };
   });
 }
 
@@ -186,6 +193,7 @@ export function AppProvider({ children }) {
   const [supabaseSession, setSupabaseSession] = useState(null);
   const skipNextSave = useRef(true);
   const programsSyncedRef = useRef(false);
+  const applicationsSyncedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -311,6 +319,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!supabaseSession?.user?.id) {
       programsSyncedRef.current = false;
+      applicationsSyncedRef.current = false;
     }
   }, [supabaseSession?.user?.id]);
 
@@ -340,6 +349,38 @@ export function AppProvider({ children }) {
       cancelled = true;
     };
   }, [hydrated, supabaseSession?.user?.id, currentUser?.id]);
+
+  // Admin : synchroniser les demandes d'intégration depuis Supabase (form_answers inclus)
+  useEffect(() => {
+    if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
+    if (!currentUser || !userHasRole(currentUser, ROLES.ADMIN)) return;
+    if (applicationsSyncedRef.current) return;
+
+    let cancelled = false;
+    applicationsSyncedRef.current = true;
+    (async () => {
+      const res = await listMemberApplications();
+      if (cancelled || !res.ok || res.skipped) return;
+      const remote = res.applications || [];
+      setRegistrations((prev) => {
+        const remoteById = new Map(remote.map((r) => [r.id, r]));
+        const renewals = prev.filter(
+          (r) => getRegistrationKind(r) === REGISTRATION_KIND.SEASON_RENEWAL
+        );
+        const localJoinOnly = prev.filter((r) => {
+          const kind = getRegistrationKind(r);
+          return (
+            kind !== REGISTRATION_KIND.SEASON_RENEWAL && !remoteById.has(r.id)
+          );
+        });
+        return [...renewals, ...localJoinOnly, ...remote];
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, supabaseSession?.user?.id, currentUser]);
 
   const login = async (email, password, options = {}) => {
     const mail = String(email || "").trim().toLowerCase();
@@ -475,7 +516,7 @@ export function AppProvider({ children }) {
   const submitMemberApplication = async ({
     fullName,
     school = "",
-    level,
+    level = "",
     phone,
     hifzAmount = "",
     seasonId,
@@ -483,6 +524,7 @@ export function AppProvider({ children }) {
     gender = "",
     seanceId = null,
     seanceName = "",
+    formAnswers = null,
   }) => {
     const name = String(fullName || "").trim();
     const phoneClean = String(phone || "").trim();
@@ -491,7 +533,9 @@ export function AppProvider({ children }) {
     const hifzClean = String(hifzAmount || "").trim();
     const emailClean = String(email || "").trim().toLowerCase();
     const genderClean = String(gender || "").trim();
-    if (!name || !schoolClean || !levelClean || !phoneClean || !emailClean) {
+    const answers =
+      formAnswers && typeof formAnswers === "object" ? formAnswers : {};
+    if (!name || !phoneClean || !emailClean || !schoolClean) {
       return { ok: false, error: "الرجاء ملء جميع الحقول المطلوبة" };
     }
     if (!genderClean || (genderClean !== "ذكر" && genderClean !== "أنثى")) {
@@ -502,6 +546,9 @@ export function AppProvider({ children }) {
     }
     if (!emailClean.includes("@")) {
       return { ok: false, error: "أدخل بريداً إلكترونياً صالحاً" };
+    }
+    if (!String(answers.seasonGoal || "").trim()) {
+      return { ok: false, error: "أدخل المقدار الذي تطمح لحفظه هذا الموسم" };
     }
     // Inscription membre toujours ouverte — rattachement optionnel au saison actif
     const resolvedSeasonId =
@@ -536,6 +583,7 @@ export function AppProvider({ children }) {
       gender: genderClean,
       seanceId,
       seanceName: String(seanceName || "").trim(),
+      formAnswers: answers,
       freeTimes: [],
       status: REGISTRATION_STATUS.PENDING,
       inviteToken: null,
@@ -663,18 +711,22 @@ export function AppProvider({ children }) {
       .filter((s) => s.type === SEASON_TYPES.REGULAR)
       .map((s) => s.id);
 
+    // انطلاق موسم جديد ⇒ الموسم نشط + باب التسجيل مفتوح للأعضاء
+    const registrationOpens = openRegistration !== false;
+
     const season = {
       id: uid("s"),
       name: seasonName,
       type: SEASON_TYPES.REGULAR,
       startDate: start,
       version: versionNum,
-      registrationOpen: !!openRegistration,
+      registrationOpen: registrationOpens,
       active: true,
       remote: false,
     };
 
     setSeasons((prev) => {
+      // إغلاق المواسم العادية السابقة ⇒ تعطيل التسجيل تلقائياً
       const closed = prev.map((s) =>
         s.type === SEASON_TYPES.REGULAR
           ? { ...s, registrationOpen: false, active: false }
@@ -683,26 +735,51 @@ export function AppProvider({ children }) {
       return [...closed, season];
     });
 
+    await snapshotSeasonsBeforeClose(previousRegularIds).catch(() => {});
     await archiveSeancesForSaisonIds(previousRegularIds).catch(() => {});
     await closeRegularSaisons(previousRegularIds).catch(() => {});
     await upsertSaison(season).catch(() => {});
 
-    const alertMessage = openRegistration
-      ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`
+    const alertMessage = registrationOpens
+      ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`
       : `انطلاق موسم جديد: «${seasonName}» — سيفتح باب التسجيل لاحقاً.`;
     pushNotification({
       title: "انطلاق موسم جديد",
       body: alertMessage,
       audience: "members",
     });
-    sendAlert(alertMessage, "members").catch(() => {});
 
-    return { ok: true, season };
+    let alertOk = true;
+    let alertError = null;
+    try {
+      const alertRes = await sendRemoteAlert(alertMessage, "members");
+      if (!alertRes?.ok) {
+        alertOk = false;
+        alertError = alertRes?.error || null;
+      }
+    } catch (e) {
+      alertOk = false;
+      alertError = e?.message || null;
+    }
+
+    return { ok: true, season, alertOk, alertError };
   };
 
   const announceRegistrationForm = (seasonId) => {
     const season = seasons.find((s) => s.id === seasonId);
     if (!season) return { ok: false, error: "الموسم غير موجود" };
+    // الموسم العادي: باب التسجيل يُفتح مع «انطلاق موسم جديد» فقط
+    if (season.type === SEASON_TYPES.REGULAR) {
+      return {
+        ok: false,
+        error: "تسجيل الموسم العادي يُفتح تلقائياً عند انطلاق موسم جديد",
+      };
+    }
+    const next = {
+      ...season,
+      registrationOpen: true,
+      active: true,
+    };
     setSeasons((prev) =>
       prev.map((s) => {
         if (s.id === seasonId) {
@@ -714,14 +791,15 @@ export function AppProvider({ children }) {
         return s;
       })
     );
-    const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`;
+    upsertSaison(next).catch(() => {});
+    const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
     pushNotification({
       title: "فتح باب التسجيل",
       body: alertMessage,
       audience: "members",
     });
-    sendAlert(alertMessage, "members").catch(() => {});
-    return { ok: true, season };
+    sendRemoteAlert(alertMessage, "members").catch(() => {});
+    return { ok: true, season: next };
   };
 
   const updateSeason = (seasonId, patch) => {
@@ -731,53 +809,123 @@ export function AppProvider({ children }) {
   };
 
   const setRegistrationOpen = (seasonId, open) => {
-    updateSeason(seasonId, { registrationOpen: open });
     const season = seasons.find((s) => s.id === seasonId);
-    if (season && open) {
-      const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». انتقل إلى تبويب «التسجيل» لإعادة تسجيلك.`;
+    if (!season) return { ok: false, error: "الموسم غير موجود" };
+
+    // موسم عادي مغلق/غير نشط: لا إعادة فتح إلا عبر انطلاق موسم جديد
+    if (
+      open &&
+      season.type === SEASON_TYPES.REGULAR &&
+      !season.active
+    ) {
+      return {
+        ok: false,
+        error: "افتح التسجيل عبر «انطلاق موسم جديد» فقط",
+      };
+    }
+
+    const next = { ...season, registrationOpen: !!open };
+    updateSeason(seasonId, { registrationOpen: !!open });
+    upsertSaison(next).catch(() => {});
+
+    if (open) {
+      const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
       pushNotification({
         title: "فتح باب التسجيل",
         body: alertMessage,
         audience: "members",
       });
-      sendAlert(alertMessage, "members").catch(() => {});
+      sendRemoteAlert(alertMessage, "members").catch(() => {});
     }
+    return { ok: true, season: next };
   };
 
   const activateSeason = (seasonId) => {
-    setSeasons((prev) => {
-      const target = prev.find((s) => s.id === seasonId);
-      if (!target) return prev;
-      return prev.map((s) =>
-        s.type === target.type
-          ? { ...s, active: s.id === seasonId }
-          : s
-      );
-    });
+    const target = seasons.find((s) => s.id === seasonId);
+    if (!target) return;
+
+    setSeasons((prev) =>
+      prev.map((s) => {
+        if (s.type !== target.type) return s;
+        if (s.id === seasonId) return { ...s, active: true };
+        // désactiver l'ancien musim du même type ⇒ fermer son inscription
+        return { ...s, active: false, registrationOpen: false };
+      })
+    );
+
+    upsertSaison({ ...target, active: true }).catch(() => {});
+    seasons
+      .filter((s) => s.type === target.type && s.id !== seasonId)
+      .forEach((s) => {
+        if (!s.active && !s.registrationOpen) return;
+        upsertSaison({ ...s, active: false, registrationOpen: false }).catch(
+          () => {}
+        );
+      });
   };
 
   const submitSeasonRegistration = ({
     seasonId,
-    freeTimes,
+    freeTimes = [],
+    seanceId = null,
+    seanceName = "",
+    formAnswers = null,
+    hifzAmount = "",
     userId = currentUser?.id,
   }) => {
     if (!userId) return { ok: false, error: "يجب تسجيل الدخول" };
+
+    let season = seasons.find((s) => s.id === seasonId) || null;
+    // Associer automatiquement au musim actif ouvert si l'id est absent / invalide
+    if (!isSeasonRegistrationAvailable(season)) {
+      const fallbackType = season?.type || SEASON_TYPES.REGULAR;
+      season =
+        seasons.find(
+          (s) =>
+            s.type === fallbackType && isSeasonRegistrationAvailable(s)
+        ) || null;
+    }
+    if (!isSeasonRegistrationAvailable(season)) {
+      return {
+        ok: false,
+        error:
+          "باب التسجيل مغلق حالياً — يُفتح عند انطلاق موسم جديد من الإدارة",
+      };
+    }
+
+    const boundSeasonId = season.id;
     const exists = registrations.find(
-      (r) => r.userId === userId && r.seasonId === seasonId
+      (r) => r.userId === userId && r.seasonId === boundSeasonId
     );
     if (exists) {
       return { ok: false, error: "لديك طلب تسجيل مسبقاً لهذا الموسم" };
     }
-    const season = seasons.find((s) => s.id === seasonId);
-    if (!season?.registrationOpen) {
-      return { ok: false, error: "باب التسجيل مغلق حالياً" };
+    if (!seanceId) {
+      return { ok: false, error: "اختر الحصة المناسبة" };
     }
+    const answers =
+      formAnswers && typeof formAnswers === "object" ? formAnswers : {};
+    if (!String(answers.seasonGoal || hifzAmount || "").trim()) {
+      return {
+        ok: false,
+        error: "أدخل المقدار الذي تطمح لحفظه هذا الموسم",
+      };
+    }
+    const member = users.find((u) => u.id === userId);
     const registration = {
       id: uid("r"),
       kind: REGISTRATION_KIND.SEASON_RENEWAL,
       userId,
-      seasonId,
-      freeTimes,
+      seasonId: boundSeasonId,
+      freeTimes: Array.isArray(freeTimes) ? freeTimes : [],
+      seanceId,
+      seanceName: String(seanceName || "").trim(),
+      hifzAmount: String(hifzAmount || answers.seasonGoal || "").trim(),
+      formAnswers: answers,
+      fullName: member
+        ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
+        : "",
+      gender: member?.gender || "",
       status: REGISTRATION_STATUS.PENDING,
       createdAt: todayStr(),
     };
@@ -1739,6 +1887,7 @@ export function AppProvider({ children }) {
       durationDays,
       startDate: String(program.startDate || todayStr()).trim() || todayStr(),
       completedTumuns,
+      type: normalizeProgramType(program.type ?? existing?.type),
     };
 
     setMemberPrograms((prev) => {

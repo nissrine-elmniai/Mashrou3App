@@ -43,14 +43,17 @@ export default function BlockingAlertGate() {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     try {
-      const res = await getUnacknowledgedAlerts();
+      const isMember = currentUser?.role === ROLES.MEMBER;
+      const res = await getUnacknowledgedAlerts({
+        sinceMemberRegistration: isMember,
+      });
       if (res.ok) setQueue(res.alerts);
     } catch (e) {
       console.warn("BlockingAlertGate: échec de requête —", e?.message || e);
     } finally {
       fetchingRef.current = false;
     }
-  }, [supabaseSession?.user?.id, isAdmin]);
+  }, [supabaseSession?.user?.id, isAdmin, currentUser?.role]);
 
   // Requête immédiate au montage + Realtime (affichage dès l'envoi admin)
   useEffect(() => {

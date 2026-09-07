@@ -88,6 +88,7 @@ export const bootstrapMemberPrograms = [
     durationDays: 30,
     startDate: "2025/01/01",
     completedTumuns: 16,
+    type: "hifz",
   },
   {
     id: "mp_bootstrap_2",
@@ -97,6 +98,7 @@ export const bootstrapMemberPrograms = [
     durationDays: 90,
     startDate: "2025/01/15",
     completedTumuns: 20,
+    type: "hifz",
   },
 ];
 

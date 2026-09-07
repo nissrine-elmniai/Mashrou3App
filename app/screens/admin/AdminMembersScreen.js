@@ -85,38 +85,41 @@ export default function AdminMembersScreen({ navigation }) {
         const entries = progressions
           .filter((e) => e.membre_id === p.id)
           .sort((a, b) => {
-            const d = (x) => `${x.date_saisie}T${x.date || ""}`;
-            return d(b) < d(a) ? -1 : 1;
+            const ta = new Date(a.date || 0).getTime();
+            const tb = new Date(b.date || 0).getTime();
+            return tb - ta;
           });
         const latest = entries[0];
         const pct = computeProgressMetrics(latest)?.globalPct ?? 0;
         const level = deriveLevel(pct);
         const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
-        const seance = inscription?.seance;
+        const seance = inscription?.seance || null;
         return {
           id: p.id,
           name,
           firstName: p.first_name || "",
           lastName: p.last_name || "",
           avatarUrl: p.avatar_url || null,
-          email: p.email || null,
+          email: p.email || "",
           phone: p.phone || null,
           school: p.school || null,
           levelLabel: p.level || null,
           hifzAmount: p.hifz_amount || null,
           level,
           pct,
-          session: seance?.nom || inscription?.seance?.nom || "بدون حصة",
+          session: seance?.nom || "بدون حصة",
           seanceId: inscription?.seance_id || seance?.id || null,
-          saisonId: inscription?.saison_id || seance?.saison_id || null,
+          saisonId:
+            inscription?.saison_id ||
+            seance?.saison_id ||
+            activeSeason?.id ||
+            null,
           groupSchedule: formatSeanceScheduleLabel(seance),
           registrationDate: inscription?.date_inscription || null,
           active: !!inscription,
         };
       });
-  }, [profiles, inscriptions, progressions]);
-
-  const pendingCount = stats?.pendingRegs ?? 0;
+  }, [profiles, inscriptions, progressions, activeSeason?.id]);
 
   const openMemberProfile = (member) => {
     navigation.navigate("MemberProfile", {
@@ -130,11 +133,15 @@ export default function AdminMembersScreen({ navigation }) {
       school: member.school,
       level: member.levelLabel,
       hifzAmount: member.hifzAmount,
-      groupName: member.session,
-      groupSchedule: member.groupSchedule,
+      groupName: member.session !== "بدون حصة" ? member.session : null,
+      groupSchedule: member.groupSchedule || null,
       registrationDate: member.registrationDate,
+      canEditSeance: true,
+      adminTheme: true,
     });
   };
+
+  const pendingCount = stats?.pendingRegs ?? 0;
 
   return (
     <SafeAreaView
@@ -238,7 +245,7 @@ function MemberCard({ member, onPress }) {
     <TouchableOpacity
       style={styles.card}
       onPress={onPress}
-      activeOpacity={0.75}
+      activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel={`عرض ملف ${member.name || "عضو"}`}
     >

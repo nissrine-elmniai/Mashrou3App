@@ -21,7 +21,7 @@ import { updateMemberInfo } from "../../lib/membersApi";
 /**
  * Édition des infos personnelles par le membre lui-même.
  * Colonnes écrites : profiles.phone / school / level (policy profiles_update_own).
- * Email (auth Supabase), genre (absent de profiles) et مقدار الحفظ restent en lecture seule.
+ * Email (auth Supabase), genre (profiles.genre) et مقدار الحفظ restent en lecture seule.
  */
 export default function EditProfileInfoModal({
   visible,

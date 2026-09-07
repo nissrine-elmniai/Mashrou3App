@@ -13,13 +13,16 @@ export const JOUR_SEMAINE_VALUES = [
   "الجمعة",
 ];
 
-/** Libellé affiché pour une séance (jour — heure). */
+/** Libellé affiché pour une séance (jour — heure début–fin). */
 export function formatSeanceScheduleLabel(seance) {
   if (!seance) return "";
   const jour = seance.jour || "";
-  const heure = seance.heure_debut ? String(seance.heure_debut).slice(0, 5) : "";
-  if (jour && heure) return `${jour} — ${heure}`;
-  return jour || seance.nom || "";
+  const start = seance.heure_debut ? String(seance.heure_debut).slice(0, 5) : "";
+  const end = seance.heure_fin ? String(seance.heure_fin).slice(0, 5) : "";
+  const heures =
+    start && end ? `${start} – ${end}` : start || end || "";
+  if (jour && heures) return `${jour} — ${heures}`;
+  return jour || heures || seance.nom || "";
 }
 
 const JOUR_SEMAINE_INDEX = Object.fromEntries(
@@ -213,7 +216,7 @@ export async function findActiveSeanceByName(nom, saisonId = null) {
 
 /**
  * (Admin) Création d'une séance.
- * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId? }
+ * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId?, genre?, dateDebut?, dateFin? }
  * @returns { ok, seance? }
  */
 export async function createSeance({
@@ -224,6 +227,8 @@ export async function createSeance({
   heureFin = null,
   superviseurId = null,
   genre = null,
+  dateDebut = null,
+  dateFin = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -249,14 +254,34 @@ export async function createSeance({
     return { ok: false, error: "اختر جنس الحصة (ذكر أو أنثى)" };
   }
 
+  const startTime = normalizePgTime(heureDebut);
+  const endTime = normalizePgTime(heureFin);
+  if (!startTime) {
+    return { ok: false, error: "أدخل ساعة بداية الحصة" };
+  }
+  if (!endTime) {
+    return { ok: false, error: "أدخل ساعة نهاية الحصة" };
+  }
+  if (endTime <= startTime) {
+    return { ok: false, error: "ساعة النهاية يجب أن تكون بعد ساعة البداية" };
+  }
+
+  const start = normalizePgDate(dateDebut);
+  const end = normalizePgDate(dateFin);
+  if (start && end && end < start) {
+    return { ok: false, error: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية" };
+  }
+
   const row = {
     nom: cleanNom,
     saison_id: saisonId || null,
     jour: jour || null,
-    heure_debut: heureDebut ? normalizePgTime(heureDebut) : null,
-    heure_fin: heureFin ? normalizePgTime(heureFin) : null,
+    heure_debut: startTime,
+    heure_fin: endTime,
     superviseur_id: superviseurId || null,
     genre,
+    date_debut: start,
+    date_fin: end,
     statut: "active",
   };
 
@@ -273,6 +298,18 @@ export async function createSeance({
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+/** Normalise une date (YYYY-MM-DD ou YYYY/MM/DD) pour Postgres date. */
+function normalizePgDate(value) {
+  if (value == null || value === "") return null;
+  const raw = String(value).trim().replace(/\//g, "-");
+  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!match) return null;
+  const y = match[1];
+  const m = String(match[2]).padStart(2, "0");
+  const d = String(match[3]).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function normalizeTimeValue(value) {
@@ -330,11 +367,53 @@ export async function updateSeance({ seanceId, patch }) {
   }
   if (clean.heure_debut !== undefined && clean.heure_debut !== null && clean.heure_debut !== "") {
     const normalized = normalizePgTime(clean.heure_debut);
+    if (!normalized) {
+      return { ok: false, error: "ساعة البداية غير صالحة" };
+    }
     clean.heure_debut = normalized;
   }
   if (clean.heure_fin !== undefined && clean.heure_fin !== null && clean.heure_fin !== "") {
     const normalized = normalizePgTime(clean.heure_fin);
+    if (!normalized) {
+      return { ok: false, error: "ساعة النهاية غير صالحة" };
+    }
     clean.heure_fin = normalized;
+  }
+  if (
+    clean.heure_debut &&
+    clean.heure_fin &&
+    clean.heure_fin <= clean.heure_debut
+  ) {
+    return { ok: false, error: "ساعة النهاية يجب أن تكون بعد ساعة البداية" };
+  }
+  if (clean.date_debut !== undefined) {
+    if (clean.date_debut === null || clean.date_debut === "") {
+      clean.date_debut = null;
+    } else {
+      const normalized = normalizePgDate(clean.date_debut);
+      if (!normalized) {
+        return { ok: false, error: "تاريخ البداية غير صالح" };
+      }
+      clean.date_debut = normalized;
+    }
+  }
+  if (clean.date_fin !== undefined) {
+    if (clean.date_fin === null || clean.date_fin === "") {
+      clean.date_fin = null;
+    } else {
+      const normalized = normalizePgDate(clean.date_fin);
+      if (!normalized) {
+        return { ok: false, error: "تاريخ النهاية غير صالح" };
+      }
+      clean.date_fin = normalized;
+    }
+  }
+  if (
+    clean.date_debut &&
+    clean.date_fin &&
+    clean.date_fin < clean.date_debut
+  ) {
+    return { ok: false, error: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية" };
   }
 
   try {
@@ -375,10 +454,15 @@ export async function updateSeance({ seanceId, patch }) {
       );
 
       if (archiveError) {
-        return { ok: false, error: mapTableError(archiveError, "seance_planning_history") };
+        // Ne bloque pas la mise à jour de la séance : table absente / grants
+        // manquants / RLS — le planning est quand même mis à jour.
+        console.warn(
+          "[seancesApi] archive planning history échouée — mise à jour sans historique:",
+          archiveError.message || archiveError
+        );
+      } else {
+        updatePayload.planning_valide_depuis = now;
       }
-
-      updatePayload.planning_valide_depuis = now;
     }
 
     const { data, error } = await withTimeout(
@@ -393,6 +477,13 @@ export async function updateSeance({ seanceId, patch }) {
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "seances") };
+    }
+    // .single() échoue si 0 lignes (RLS a filtré l'update)
+    if (!data) {
+      return {
+        ok: false,
+        error: "لا صلاحية كافية لهذه العملية — تحقق أن حسابك أدمن",
+      };
     }
     return { ok: true, seance: data };
   } catch (e) {

@@ -14,10 +14,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { Picker } from "@react-native-picker/picker";
 import { useApp } from "../context/AppContext";
 import {
-  LEVEL_OPTIONS,
   GENDER_OPTIONS,
   REGISTRATION_STATUS,
   REGISTRATION_STATUS_LABELS,
@@ -30,31 +28,65 @@ import { getActiveRegularSeason } from "../lib/seasonScope";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
-const FIELDS = [
-  {
-    key: "fullName",
-    label: "الاسم الكامل",
-    placeholder: "أحمد محمد",
-  },
-  {
-    key: "email",
-    label: "البريد الإلكتروني",
-    placeholder: "quran@gmail.com",
-    keyboardType: "email-address",
-    autoCapitalize: "none",
-  },
-  {
-    key: "phone",
-    label: "رقم الهاتف",
-    placeholder: "06xxxxxxxx",
-    keyboardType: "phone-pad",
-  },
-  {
-    key: "school",
-    label: "المدرسة أو الكلية",
-    placeholder: "كلية العلوم",
-  },
+const UNIVERSITY_OPTIONS = [
+  { value: "طالب(ة)", label: "طالب(ة)" },
+  { value: "خريج(ة)", label: "خريج(ة)" },
 ];
+
+const YES_NO_OPTIONS = [
+  { value: "نعم", label: "نعم" },
+  { value: "لا", label: "لا" },
+];
+
+const EMPTY_FORM = {
+  fullName: "",
+  phone: "",
+  email: "",
+  gender: "",
+  universityStatus: "",
+  studentDetails: "",
+  graduateSchool: "",
+  hasExperience: "",
+  hizbCount: "",
+  seanceId: "",
+  seasonGoal: "",
+  difficulties: "",
+  desiredActivities: "",
+};
+
+function ChipGroup({ options, value, onChange, columns = false }) {
+  return (
+    <View style={columns ? styles.chipColumn : styles.chipRow}>
+      {options.map((opt) => {
+        const active = value === opt.value;
+        return (
+          <TouchableOpacity
+            key={opt.value}
+            style={[
+              columns ? styles.seanceChip : styles.chip,
+              active && styles.chipActive,
+            ]}
+            onPress={() => onChange(opt.value)}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.chipText, active && styles.chipTextActive]}>
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function FieldLabel({ children, required }) {
+  return (
+    <Text style={styles.label}>
+      {children}
+      {required ? <Text style={styles.requiredMark}> *</Text> : null}
+    </Text>
+  );
+}
 
 export default function RegisterScreen({ navigation }) {
   const {
@@ -64,15 +96,7 @@ export default function RegisterScreen({ navigation }) {
     findRegistrationByPhone,
   } = useApp();
 
-  const [form, setForm] = useState({
-    fullName: "",
-    school: "",
-    level: "",
-    phone: "",
-    email: "",
-    gender: "",
-    seanceId: "",
-  });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [availableSeances, setAvailableSeances] = useState([]);
   const [seancesLoading, setSeancesLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -88,6 +112,13 @@ export default function RegisterScreen({ navigation }) {
       const next = { ...prev, [key]: value };
       if (key === "gender" && value !== prev.gender) {
         next.seanceId = "";
+      }
+      if (key === "universityStatus") {
+        if (value !== "طالب(ة)") next.studentDetails = "";
+        if (value !== "خريج(ة)") next.graduateSchool = "";
+      }
+      if (key === "hasExperience" && value !== "نعم") {
+        next.hizbCount = "";
       }
       return next;
     });
@@ -123,16 +154,96 @@ export default function RegisterScreen({ navigation }) {
     [availableSeances, form.seanceId]
   );
 
-  const handleSubmit = async () => {
-    const seasonId = getActiveRegularSeason(seasons)?.id || null;
-    setSubmitting(true);
-    const result = await submitMemberApplication({
-      ...form,
-      seasonId,
+  const buildPayload = () => {
+    const isStudent = form.universityStatus === "طالب(ة)";
+    const isGraduate = form.universityStatus === "خريج(ة)";
+    const school = isStudent
+      ? form.studentDetails.trim()
+      : isGraduate
+        ? form.graduateSchool.trim()
+        : "";
+    const level = form.universityStatus || "";
+    const hizfAmount =
+      form.hasExperience === "نعم" ? form.hizbCount.trim() : "";
+
+    const formAnswers = {
+      universityStatus: form.universityStatus,
+      studentDetails: isStudent ? form.studentDetails.trim() : "",
+      graduateSchool: isGraduate ? form.graduateSchool.trim() : "",
+      hasExperience: form.hasExperience,
+      hizbCount: hizfAmount,
+      seasonGoal: form.seasonGoal.trim(),
+      difficulties: form.difficulties.trim(),
+      desiredActivities: form.desiredActivities.trim(),
+    };
+
+    return {
+      fullName: form.fullName.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim(),
+      gender: form.gender,
+      school,
+      level,
+      hifzAmount: hizfAmount,
+      seanceId: form.seanceId,
       seanceName: selectedSeance
         ? formatSeanceScheduleLabel(selectedSeance)
         : "",
-    });
+      seasonId: getActiveRegularSeason(seasons)?.id || null,
+      formAnswers,
+    };
+  };
+
+  const handleSubmit = async () => {
+    if (!String(form.fullName || "").trim()) {
+      Alert.alert("تنبيه", "أدخل الاسم الكامل");
+      return;
+    }
+    if (!String(form.phone || "").trim()) {
+      Alert.alert("تنبيه", "أدخل رقم الهاتف");
+      return;
+    }
+    if (!String(form.email || "").trim().includes("@")) {
+      Alert.alert("تنبيه", "أدخل بريداً إلكترونياً صالحاً");
+      return;
+    }
+    if (!form.gender) {
+      Alert.alert("تنبيه", "اختر الجنس (ذكر أو أنثى)");
+      return;
+    }
+    if (!form.universityStatus) {
+      Alert.alert("تنبيه", "هل أنت طالب(ة) أو خريج(ة)؟");
+      return;
+    }
+    if (
+      form.universityStatus === "طالب(ة)" &&
+      !String(form.studentDetails || "").trim()
+    ) {
+      Alert.alert("تنبيه", "أدخل الكلية أو المدرسة ومستواك الدراسي");
+      return;
+    }
+    if (
+      form.universityStatus === "خريج(ة)" &&
+      !String(form.graduateSchool || "").trim()
+    ) {
+      Alert.alert("تنبيه", "أدخل الكلية أو المدرسة التي تابعت فيها دراستك");
+      return;
+    }
+    if (!form.hasExperience) {
+      Alert.alert("تنبيه", "أجب عن تجربة حفظ القرآن تحت تأطير");
+      return;
+    }
+    if (!form.seanceId) {
+      Alert.alert("تنبيه", "اختر الحصة المناسبة لجنسك");
+      return;
+    }
+    if (!String(form.seasonGoal || "").trim()) {
+      Alert.alert("تنبيه", "أدخل المقدار الذي تطمح لحفظه هذا الموسم");
+      return;
+    }
+
+    setSubmitting(true);
+    const result = await submitMemberApplication(buildPayload());
     setSubmitting(false);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
@@ -149,6 +260,8 @@ export default function RegisterScreen({ navigation }) {
     }
     setSubmittedId(found.id);
   };
+
+  const answers = submitted?.formAnswers || {};
 
   if (submitted) {
     return (
@@ -180,27 +293,9 @@ export default function RegisterScreen({ navigation }) {
             <View style={styles.infoRows}>
               <InfoRow icon="person-outline" label="الاسم" value={submitted.fullName} />
               {submitted.email ? (
-                <InfoRow
-                  icon="mail-outline"
-                  label="البريد"
-                  value={submitted.email}
-                />
+                <InfoRow icon="mail-outline" label="البريد" value={submitted.email} />
               ) : null}
               <InfoRow icon="call-outline" label="الهاتف" value={submitted.phone} />
-              {submitted.school ? (
-                <InfoRow
-                  icon="school-outline"
-                  label="المدرسة"
-                  value={submitted.school}
-                />
-              ) : null}
-              {submitted.level ? (
-                <InfoRow
-                  icon="layers-outline"
-                  label="المستوى"
-                  value={submitted.level}
-                />
-              ) : null}
               {submitted.gender ? (
                 <InfoRow
                   icon="male-female-outline"
@@ -208,11 +303,39 @@ export default function RegisterScreen({ navigation }) {
                   value={submitted.gender}
                 />
               ) : null}
+              {answers.universityStatus ? (
+                <InfoRow
+                  icon="school-outline"
+                  label="طالب / خريج"
+                  value={answers.universityStatus}
+                />
+              ) : null}
+              {submitted.school ? (
+                <InfoRow
+                  icon="business-outline"
+                  label="الكلية / المدرسة"
+                  value={submitted.school}
+                />
+              ) : null}
+              {submitted.hifzAmount ? (
+                <InfoRow
+                  icon="book-outline"
+                  label="عدد الأحزاب"
+                  value={submitted.hifzAmount}
+                />
+              ) : null}
               {submitted.seanceName ? (
                 <InfoRow
                   icon="calendar-outline"
                   label="الحصة"
                   value={submitted.seanceName}
+                />
+              ) : null}
+              {answers.seasonGoal ? (
+                <InfoRow
+                  icon="flag-outline"
+                  label="هدف الموسم"
+                  value={answers.seasonGoal}
                 />
               ) : null}
             </View>
@@ -267,78 +390,143 @@ export default function RegisterScreen({ navigation }) {
           <Header />
 
           <View style={styles.formContainer}>
-            {FIELDS.map((field) => {
-              const afterSchool =
-                field.key === "school" ? (
-                  <View key="level" style={styles.inputGroup}>
-                    <Text style={styles.label}>مستوى حفظ القرآن</Text>
-                    <View style={styles.pickerWrapper}>
-                      <Picker
-                        selectedValue={form.level}
-                        onValueChange={(v) => setField("level", v)}
-                        style={styles.picker}
-                        dropdownIconColor={colors.primary}
-                      >
-                        <Picker.Item
-                          label="اختر مستوى الحفظ"
-                          value=""
-                          color={colors.placeholder}
-                        />
-                        {LEVEL_OPTIONS.map((opt) => (
-                          <Picker.Item key={opt} label={opt} value={opt} />
-                        ))}
-                      </Picker>
-                    </View>
-                  </View>
-                ) : null;
-              return (
-                <React.Fragment key={field.key}>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>{field.label}</Text>
-                    <View style={styles.inputWrapper}>
-                      <TextInput
-                        style={styles.input}
-                        placeholder={field.placeholder}
-                        placeholderTextColor={colors.placeholder}
-                        value={form[field.key]}
-                        onChangeText={(v) => setField(field.key, v)}
-                        keyboardType={field.keyboardType}
-                        autoCapitalize={field.autoCapitalize || "sentences"}
-                        textAlign={textAlignStart}
-                      />
-                    </View>
-                  </View>
-                  {afterSchool}
-                </React.Fragment>
-              );
-            })}
-
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>الجنس</Text>
-              <View style={styles.chipRow}>
-                {GENDER_OPTIONS.map((opt) => {
-                  const active = form.gender === opt.value;
-                  return (
-                    <TouchableOpacity
-                      key={opt.value}
-                      style={[styles.chip, active && styles.chipActive]}
-                      onPress={() => setField("gender", opt.value)}
-                      activeOpacity={0.75}
-                    >
-                      <Text
-                        style={[styles.chipText, active && styles.chipTextActive]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              <FieldLabel required>الاسم الكامل</FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="أحمد محمد"
+                  placeholderTextColor={colors.placeholder}
+                  value={form.fullName}
+                  onChangeText={(v) => setField("fullName", v)}
+                  textAlign={textAlignStart}
+                />
               </View>
             </View>
 
+            <View style={styles.inputGroup}>
+              <FieldLabel required>رقم الهاتف</FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="06xxxxxxxx"
+                  placeholderTextColor={colors.placeholder}
+                  value={form.phone}
+                  onChangeText={(v) => setField("phone", v)}
+                  keyboardType="phone-pad"
+                  textAlign={textAlignStart}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <FieldLabel required>البريد الإلكتروني</FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="quran@gmail.com"
+                  placeholderTextColor={colors.placeholder}
+                  value={form.email}
+                  onChangeText={(v) => setField("email", v)}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  textAlign={textAlignStart}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <FieldLabel required>ذكر أم أنثى ؟</FieldLabel>
+              <ChipGroup
+                options={GENDER_OPTIONS}
+                value={form.gender}
+                onChange={(v) => setField("gender", v)}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <FieldLabel required>
+                هل أنت طالب أو خريج في جامعة محمد الأول وجدة؟
+              </FieldLabel>
+              <ChipGroup
+                options={UNIVERSITY_OPTIONS}
+                value={form.universityStatus}
+                onChange={(v) => setField("universityStatus", v)}
+              />
+            </View>
+
+            {form.universityStatus === "طالب(ة)" ? (
+              <View style={styles.inputGroup}>
+                <FieldLabel required>
+                  بأي كلية أو مدرسة تتابع دراستك؟ وماهو مستواك الدراسي؟
+                </FieldLabel>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={[styles.input, styles.multiline]}
+                    placeholder="مثال: كلية العلوم — السنة الثانية"
+                    placeholderTextColor={colors.placeholder}
+                    value={form.studentDetails}
+                    onChangeText={(v) => setField("studentDetails", v)}
+                    multiline
+                    textAlign={textAlignStart}
+                    textAlignVertical="top"
+                  />
+                </View>
+              </View>
+            ) : null}
+
+            {form.universityStatus === "خريج(ة)" ? (
+              <View style={styles.inputGroup}>
+                <FieldLabel required>
+                  ماهي الكلية أو المدرسة التي تابعت فيها دراستك؟
+                </FieldLabel>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="مثال: المدرسة الوطنية للعلوم التطبيقية"
+                    placeholderTextColor={colors.placeholder}
+                    value={form.graduateSchool}
+                    onChangeText={(v) => setField("graduateSchool", v)}
+                    textAlign={textAlignStart}
+                  />
+                </View>
+              </View>
+            ) : null}
+
+            <View style={styles.inputGroup}>
+              <FieldLabel required>
+                هل سبق وعشت تجربة حفظ القرآن الكريم تحت تأطير أحدهم؟
+              </FieldLabel>
+              <ChipGroup
+                options={YES_NO_OPTIONS}
+                value={form.hasExperience}
+                onChange={(v) => setField("hasExperience", v)}
+              />
+            </View>
+
+            {form.hasExperience === "نعم" ? (
+              <View style={styles.inputGroup}>
+                <FieldLabel>كم عدد الأحزاب التي تحفظها؟</FieldLabel>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="مثال: 5"
+                    placeholderTextColor={colors.placeholder}
+                    value={form.hizbCount}
+                    onChangeText={(v) => setField("hizbCount", v)}
+                    keyboardType="numeric"
+                    textAlign={textAlignStart}
+                  />
+                </View>
+              </View>
+            ) : null}
+
             {form.gender ? (
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>الحصة</Text>
+                <FieldLabel required>الحصة</FieldLabel>
+                <Text style={styles.hintInline}>
+                  الحصص المعروضة حسب الجنس الذي اخترته — يضيفها المشرف العام فقط
+                </Text>
                 {seancesLoading ? (
                   <Text style={styles.hintText}>جاري تحميل الحصص المتاحة...</Text>
                 ) : availableSeances.length === 0 ? (
@@ -346,28 +534,15 @@ export default function RegisterScreen({ navigation }) {
                     لا توجد حصص متاحة حالياً لهذا الجنس
                   </Text>
                 ) : (
-                  <View style={styles.chipColumn}>
-                    {availableSeances.map((seance) => {
-                      const active = form.seanceId === seance.id;
-                      return (
-                        <TouchableOpacity
-                          key={seance.id}
-                          style={[styles.seanceChip, active && styles.chipActive]}
-                          onPress={() => setField("seanceId", seance.id)}
-                          activeOpacity={0.75}
-                        >
-                          <Text
-                            style={[
-                              styles.chipText,
-                              active && styles.chipTextActive,
-                            ]}
-                          >
-                            {formatSeanceScheduleLabel(seance)}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+                  <ChipGroup
+                    columns
+                    options={availableSeances.map((s) => ({
+                      value: s.id,
+                      label: formatSeanceScheduleLabel(s),
+                    }))}
+                    value={form.seanceId}
+                    onChange={(v) => setField("seanceId", v)}
+                  />
                 )}
               </View>
             ) : (
@@ -375,6 +550,61 @@ export default function RegisterScreen({ navigation }) {
                 اختر الجنس أولاً لعرض الحصص المتاحة
               </Text>
             )}
+
+            <View style={styles.inputGroup}>
+              <FieldLabel required>
+                ما هو المقدار الذي تطمح لحفظه من كتاب الله خلال هذا الموسم؟
+              </FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={[styles.input, styles.multiline]}
+                  placeholder="مثال: 5 أحزاب"
+                  placeholderTextColor={colors.placeholder}
+                  value={form.seasonGoal}
+                  onChangeText={(v) => setField("seasonGoal", v)}
+                  multiline
+                  textAlign={textAlignStart}
+                  textAlignVertical="top"
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <FieldLabel>
+                ما أهم الصعوبات التي تجدها أثناء حفظ القرآن الكريم؟
+              </FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={[styles.input, styles.multiline]}
+                  placeholder="اختياري"
+                  placeholderTextColor={colors.placeholder}
+                  value={form.difficulties}
+                  onChangeText={(v) => setField("difficulties", v)}
+                  multiline
+                  textAlign={textAlignStart}
+                  textAlignVertical="top"
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <FieldLabel>
+                ما هي البرامج أو الأنشطة التي تود أن تجدها في مشروع مهندس حامل
+                لكتاب الله لتثري تجربتك؟
+              </FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={[styles.input, styles.multiline]}
+                  placeholder="اختياري"
+                  placeholderTextColor={colors.placeholder}
+                  value={form.desiredActivities}
+                  onChangeText={(v) => setField("desiredActivities", v)}
+                  multiline
+                  textAlign={textAlignStart}
+                  textAlignVertical="top"
+                />
+              </View>
+            </View>
 
             <TouchableOpacity
               style={[styles.loginButton, submitting && { opacity: 0.6 }]}
@@ -413,7 +643,7 @@ function Header() {
       </View>
       <View style={styles.headerContainer}>
         <Text style={styles.titleMain}>مهندس حامل لكتاب الله</Text>
-        <Text style={styles.subtitleMain}>عضو جديد — طلب انضمام</Text>
+        <Text style={styles.subtitleMain}>طلب انضمام — النسخة السادسة</Text>
         <View style={styles.divider} />
       </View>
     </>
@@ -495,13 +725,15 @@ const styles = StyleSheet.create({
   },
   inputGroup: { marginBottom: 20 },
   label: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
     color: colors.textSecondary,
     marginBottom: 8,
     ...rtlText,
     alignSelf: "stretch",
+    lineHeight: 22,
   },
+  requiredMark: { color: colors.red },
   inputWrapper: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -515,16 +747,9 @@ const styles = StyleSheet.create({
     color: colors.text,
     ...rtlText,
   },
-  pickerWrapper: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.bg,
-    overflow: "hidden",
-  },
-  picker: {
-    width: "100%",
-    color: colors.text,
+  multiline: {
+    minHeight: 88,
+    paddingTop: 14,
   },
   chipRow: {
     flexDirection: "row",
@@ -571,6 +796,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 16,
     lineHeight: 20,
+  },
+  hintInline: {
+    ...rtlText,
+    color: colors.muted,
+    fontSize: 12,
+    marginBottom: 10,
+    lineHeight: 18,
   },
   loginButton: {
     backgroundColor: colors.primary,

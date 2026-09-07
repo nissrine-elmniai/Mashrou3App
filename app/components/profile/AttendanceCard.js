@@ -1,5 +1,12 @@
-import React, { useMemo } from "react";
-import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  TouchableOpacity,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, row as rtlRow } from "../../constants/rtl";
 import { groupMemberPresenceByMonth } from "../../screens/supervisor/supervisorAttendanceHelpers";
@@ -23,14 +30,15 @@ function arabicSessionCountLabel(count) {
   return `${n} حصص`;
 }
 
-function PresenceRecordRow({ date, status }) {
+function PresenceMiniRow({ date, status }) {
   const label = PRESENCE_LABELS[status] || status;
   const statusColor = STATUS_COLORS[status] || colors.muted;
-  // rtlRow : date à droite, statut à gauche
   return (
-    <View style={styles.recordRow}>
-      <Text style={styles.recordDate}>{date || "—"}</Text>
-      <Text style={[styles.recordStatus, { color: statusColor }]}>{label}</Text>
+    <View style={styles.presenceMiniRow}>
+      <Text style={styles.presenceMiniDate}>{date || "—"}</Text>
+      <Text style={[styles.presenceMiniStatus, { color: statusColor }]}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -40,6 +48,11 @@ function AttendanceBody({ presenceState }) {
     () => groupMemberPresenceByMonth(presenceState.records || []),
     [presenceState.records]
   );
+  const [monthIndex, setMonthIndex] = useState(0);
+
+  useEffect(() => {
+    setMonthIndex(0);
+  }, [presenceState.records]);
 
   if (presenceState.loading) {
     return <ActivityIndicator color={colors.primary} style={styles.loader} />;
@@ -50,6 +63,11 @@ function AttendanceBody({ presenceState }) {
   if (!presenceState.hasData) {
     return <Text style={styles.emptyText}>لا يوجد سجل حضور بعد</Text>;
   }
+
+  const currentMonth = monthGroups[monthIndex] || null;
+  const canGoOlder = monthIndex < monthGroups.length - 1;
+  const canGoNewer = monthIndex > 0;
+  const showMonthNav = monthGroups.length > 1;
 
   return (
     <>
@@ -67,26 +85,63 @@ function AttendanceBody({ presenceState }) {
         iconColor={STATUS_COLORS.absent}
         valueStyle={styles.statValue}
       />
-      {monthGroups.map((month) => (
-        <View key={month.monthKey} style={styles.monthBlock}>
-          <Text style={styles.monthLabel}>{month.label}</Text>
-          {month.rows.map((rec, idx) => (
-            <PresenceRecordRow
-              key={`${rec.date}_${rec.status}_${idx}`}
-              date={rec.date}
-              status={rec.status}
-            />
-          ))}
-        </View>
-      ))}
+      {currentMonth ? (
+        <>
+          {!showMonthNav ? (
+            <Text style={styles.monthNavLabelStatic}>{currentMonth.label}</Text>
+          ) : null}
+          <View style={styles.presenceList}>
+            {currentMonth.rows.map((rec, idx) => (
+              <PresenceMiniRow
+                key={`${rec.date}_${rec.status}_${idx}`}
+                date={rec.date}
+                status={rec.status}
+              />
+            ))}
+          </View>
+          {showMonthNav ? (
+            <View style={styles.monthNavBar}>
+              <TouchableOpacity
+                style={styles.monthNavBtn}
+                onPress={() => setMonthIndex((i) => i + 1)}
+                disabled={!canGoOlder}
+                activeOpacity={0.7}
+                accessibilityLabel="الشهر السابق"
+              >
+                <Ionicons
+                  name="chevron-back"
+                  size={20}
+                  color={canGoOlder ? colors.primary : colors.placeholder}
+                />
+              </TouchableOpacity>
+              <Text style={styles.monthNavLabel}>{currentMonth.label}</Text>
+              <TouchableOpacity
+                style={styles.monthNavBtn}
+                onPress={() => setMonthIndex((i) => i - 1)}
+                disabled={!canGoNewer}
+                activeOpacity={0.7}
+                accessibilityLabel="الشهر التالي"
+              >
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={canGoNewer ? colors.primary : colors.placeholder}
+                />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </>
+      ) : null}
     </>
   );
 }
 
-/** Carte الحضور (%X) — totaux + mois empilés. */
+/** Carte الحضور — totaux + un mois à la fois (même présentation que la fiche superviseur). */
 export default function AttendanceCard({ presenceState }) {
   const title =
-    !presenceState.loading && presenceState.rate != null
+    !presenceState.loading &&
+    presenceState.rate != null &&
+    presenceState.rate !== 0
       ? `الحضور (${presenceState.rate}%)`
       : "الحضور";
 
@@ -101,7 +156,7 @@ export default function AttendanceCard({ presenceState }) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: radii.xl,
+    borderRadius: radii.lg,
     padding: 16,
   },
   cardTitle: {
@@ -129,33 +184,53 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     ...rtlText,
   },
-  monthBlock: {
-    marginTop: 12,
-  },
-  monthLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 14,
-    color: colors.text,
-    marginBottom: 6,
-    ...rtlTextBold,
-  },
-  recordRow: {
+  presenceList: { marginTop: 8 },
+  presenceMiniRow: {
     flexDirection: rtlRow,
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  recordStatus: {
+  presenceMiniDate: {
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  presenceMiniStatus: {
     fontSize: 13,
     fontFamily: fonts.semiBold,
     ...rtlText,
   },
-  recordDate: {
-    fontSize: 13,
+  monthNavBar: {
+    flexDirection: "row",
+    direction: "ltr",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  monthNavBtn: {
+    padding: 6,
+    minWidth: 32,
+    alignItems: "center",
+  },
+  monthNavLabel: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
     color: colors.text,
-    fontFamily: fonts.medium,
+    textAlign: "center",
+    ...rtlText,
+  },
+  monthNavLabelStatic: {
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.text,
+    marginTop: 8,
+    marginBottom: 4,
+    textAlign: "center",
     ...rtlText,
   },
 });

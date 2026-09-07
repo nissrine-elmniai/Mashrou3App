@@ -1,8 +1,6 @@
 import { colors } from "../../constants/theme";
 import { JOUR_SEMAINE_VALUES } from "../../lib/seancesApi";
 
-export const TOTAL_QURAN_PAGES = 604;
-
 export const LEVEL_COLORS = {
   "مبتدئ": colors.gold,
   "متوسط": colors.blue,
@@ -60,19 +58,6 @@ export const JOUR_ENUM_TO_JS_WEEKDAY_INDEX = Object.fromEntries(
 export function isJourSemaineEnum(jourText) {
   return JOUR_SEMAINE_VALUES.includes(String(jourText || "").trim());
 }
-
-export const JUZ_STATUS_DEMO = Array.from({ length: 30 }, (_, i) => {
-  if (i < 3) return "memorized";
-  if (i < 5) return "inProgress";
-  return "notStarted";
-});
-
-export const WEEKLY_PROGRESS_DEMO = [
-  { week: "أسبوع 1", pages: 5 },
-  { week: "أسبوع 2", pages: 8 },
-  { week: "أسبوع 3", pages: 3 },
-  { week: "أسبوع 4", pages: 10 },
-];
 
 export function todayIso() {
   return new Date().toISOString().slice(0, 10).replace(/-/g, "/");

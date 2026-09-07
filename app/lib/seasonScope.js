@@ -9,6 +9,21 @@ export function getActiveRegularSeason(seasons = []) {
   );
 }
 
+/**
+ * Inscription membre ouverte uniquement si le musim est actif ET
+ * registrationOpen (ouvert par « انطلاق موسم جديد » / annonce été).
+ */
+export function isSeasonRegistrationAvailable(season) {
+  return !!(season && season.active && season.registrationOpen);
+}
+
+/** Musims d'un type ouverts à l'inscription membre. */
+export function getOpenRegistrationSeasons(seasons = [], type) {
+  return (seasons || []).filter(
+    (s) => s.type === type && isSeasonRegistrationAvailable(s)
+  );
+}
+
 export function filterBySeasonId(items = [], seasonId, getId = (x) => x?.seasonId) {
   if (!seasonId) return [];
   return items.filter((item) => getId(item) === seasonId);
