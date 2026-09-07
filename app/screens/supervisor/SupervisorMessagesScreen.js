@@ -189,6 +189,11 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
       contactAvatarLetter: row.avatarLetter,
       contactAvatarUrl: row.avatarUrl || null,
       contactRole: row.role,
+      // Membre : ancrer l'envoi sur la séance affichée (RLS exige seance_id).
+      seanceId:
+        row.role === "member"
+          ? row.seanceId || activeGroup?.id || seanceId || null
+          : null,
     });
   };
 

@@ -24,11 +24,15 @@ function supervisorContactFromSeance(seance) {
   if (!seance?.superviseur_id) return null;
   const s = seance.superviseur || {};
   const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
+  const email = String(s.email || "").trim();
+  // Pas de ligne fantôme « المشرف » si le profil n'est pas lisible (RLS / jointure).
+  if (!name && !email) return null;
+  const displayName = name || email;
   return {
     id: seance.superviseur_id,
-    name: name || "المشرف",
+    name: displayName,
     role: "supervisor",
-    avatarLetter: initials(s.first_name || name || "م"),
+    avatarLetter: initials(s.first_name || displayName || "م"),
     avatarUrl: resolvePublicAvatarUrl(seance.superviseur_id, s.avatar_url),
     seanceId: seance.id,
     highlighted: true,
@@ -64,10 +68,22 @@ export default function MemberChatInboxScreen({ navigation }) {
   );
 
   const rows = useMemo(() => {
+    // appendUnknown: le badge du FAB compte TOUS les non-lus ; la boîte doit
+    // afficher les mêmes fils (ex. superviseur d'une saison précédente), sinon
+    // le membre voit "3" sans aucune conversation.
     const merged = mergeInboxRows(contacts, threads, {
-      appendUnknown: false,
+      appendUnknown: true,
     });
-    return merged.filter((r) => r.role !== "admin");
+    return merged.filter((r) => {
+      if (r.role === "admin") return false;
+      // Contact fantôme « المشرف » (profil non joint) — pas un utilisateur.
+      if (r.name === "المشرف") return false;
+      // Ligne sans identité et sans historique
+      if (!r.lastAt && (r.name === "—" || !String(r.name || "").trim())) {
+        return false;
+      }
+      return true;
+    });
   }, [contacts, threads]);
 
   const openThread = (row) => {
@@ -100,7 +116,13 @@ export default function MemberChatInboxScreen({ navigation }) {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : rows.length === 0 ? (
-        <EmptyState text="لا توجد حصة نشطة للتواصل مع المشرف" />
+        <EmptyState
+          text={
+            supervisor
+              ? "لا توجد رسائل بعد"
+              : "لا توجد حصة نشطة للتواصل مع المشرف"
+          }
+        />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {rows.map((row) => (

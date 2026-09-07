@@ -131,10 +131,15 @@ export default function ChatConversationScreen({ navigation, route }) {
             otherId = contactId;
           }
         } else if (isSupervisor) {
-          // Chat superviseur <-> membre : séance active du superviseur
-          const seanceRes = await getSupervisorActiveSeance(authId);
-          seanceId =
-            seanceRes?.ok && seanceRes.seance ? seanceRes.seance.id : null;
+          // Chat superviseur <-> membre : séance passée depuis l'inbox
+          // (groupe sélectionné), sinon première séance active.
+          if (routeSeanceId) {
+            seanceId = routeSeanceId;
+          } else {
+            const seanceRes = await getSupervisorActiveSeance(authId);
+            seanceId =
+              seanceRes?.ok && seanceRes.seance ? seanceRes.seance.id : null;
+          }
           otherId = contactId;
         }
 
