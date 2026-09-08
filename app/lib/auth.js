@@ -2,6 +2,7 @@ import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase
 import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
 import { canonicalEmail } from "./authEmail";
 import { formatGenderLabel } from "./membersApi";
+import { markMemberApplicationActivated } from "./memberApplicationsApi";
 
 export { isSupabaseConfigured };
 
@@ -535,16 +536,10 @@ export async function signUpWithProfile({
 
   // Lier la demande d'inscription (si existante) tant que la session signup est active
   if (data.session && role === ROLES.MEMBER) {
-    await supabase
-      .from("member_applications")
-      .update({
-        status: "activated",
-        user_id: data.user.id,
-        activated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("email", mail)
-      .in("status", ["invited", "pending"]);
+    await markMemberApplicationActivated({
+      email: mail,
+      userId: data.user.id,
+    });
   }
 
   // Ne pas laisser une session "signup" ouverte : l'utilisateur se connecte ensuite

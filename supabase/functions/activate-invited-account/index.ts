@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
       const { data: apps, error: appErr } = await admin
         .from("member_applications")
         .select(
-          "id, email, full_name, first_name, last_name, status, genre, phone, school, level, hifz_amount"
+          "id, email, full_name, first_name, last_name, status, genre, phone, school, level, hifz_amount, kind"
         )
         .ilike("email", displayEmail)
         .order("updated_at", { ascending: false })
@@ -83,10 +83,14 @@ Deno.serve(async (req) => {
       }
 
       const list = apps || [];
-      const invited = list.find((a) => a.status === "invited");
+      const isJoinApp = (a) =>
+        !a.kind || a.kind === "join" || a.kind === null;
+      const invited = list.find((a) => a.status === "invited" && isJoinApp(a));
       if (!invited) {
-        const pending = list.find((a) => a.status === "pending");
-        const activated = list.find((a) => a.status === "activated");
+        const pending = list.find((a) => a.status === "pending" && isJoinApp(a));
+        const activated = list.find(
+          (a) => a.status === "activated" && isJoinApp(a)
+        );
         if (activated) {
           return json(
             {
@@ -238,6 +242,7 @@ Deno.serve(async (req) => {
     }
 
     if (role === "member") {
+      // Activer uniquement la demande d'intégration (join), pas un renouvellement saison
       await admin
         .from("member_applications")
         .update({
@@ -246,8 +251,7 @@ Deno.serve(async (req) => {
           activated_at: now,
           updated_at: now,
         })
-        .ilike("email", displayEmail)
-        .in("status", ["invited", "pending"]);
+        .eq("id", String(memberAppRow.id));
     } else {
       await admin
         .from("supervisor_invitations")

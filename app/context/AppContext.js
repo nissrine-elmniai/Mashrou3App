@@ -39,6 +39,7 @@ import {
   upsertMemberApplication,
   insertPendingMemberApplication,
   listMemberApplications,
+  markMemberApplicationActivated,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
 import { sendAlert as sendRemoteAlert } from "../lib/alertsApi";
@@ -193,6 +194,7 @@ export function AppProvider({ children }) {
   const skipNextSave = useRef(true);
   const programsSyncedRef = useRef(false);
   const applicationsSyncedRef = useRef(false);
+  const memberApplicationsSyncedRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -319,6 +321,7 @@ export function AppProvider({ children }) {
     if (!supabaseSession?.user?.id) {
       programsSyncedRef.current = false;
       applicationsSyncedRef.current = false;
+      memberApplicationsSyncedRef.current = null;
     }
   }, [supabaseSession?.user?.id]);
 
@@ -363,16 +366,36 @@ export function AppProvider({ children }) {
       const remote = res.applications || [];
       setRegistrations((prev) => {
         const remoteById = new Map(remote.map((r) => [r.id, r]));
-        const renewals = prev.filter(
-          (r) => getRegistrationKind(r) === REGISTRATION_KIND.SEASON_RENEWAL
-        );
-        const localJoinOnly = prev.filter((r) => {
-          const kind = getRegistrationKind(r);
-          return (
-            kind !== REGISTRATION_KIND.SEASON_RENEWAL && !remoteById.has(r.id)
-          );
-        });
-        return [...renewals, ...localJoinOnly, ...remote];
+        // Garder le local uniquement s'il n'est pas déjà revenu de Supabase
+        // (évite les doublons une fois les réinscriptions persistées).
+        const localOnly = prev.filter((r) => !remoteById.has(r.id));
+        return [...localOnly, ...remote];
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, supabaseSession?.user?.id, currentUser]);
+
+  // Membre : synchroniser ses propres demandes (réinscriptions incluses)
+  useEffect(() => {
+    if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
+    if (!currentUser || !userHasRole(currentUser, ROLES.MEMBER)) return;
+    if (userHasRole(currentUser, ROLES.ADMIN)) return;
+    if (memberApplicationsSyncedRef.current === supabaseSession.user.id) return;
+
+    let cancelled = false;
+    memberApplicationsSyncedRef.current = supabaseSession.user.id;
+    (async () => {
+      const res = await listMemberApplications();
+      if (cancelled || !res.ok || res.skipped) return;
+      const remote = res.applications || [];
+      if (!remote.length) return;
+      setRegistrations((prev) => {
+        const remoteById = new Map(remote.map((r) => [r.id, r]));
+        const localOnly = prev.filter((r) => !remoteById.has(r.id));
+        return [...localOnly, ...remote];
       });
     })();
 
@@ -863,7 +886,7 @@ export function AppProvider({ children }) {
       });
   };
 
-  const submitSeasonRegistration = ({
+  const submitSeasonRegistration = async ({
     seasonId,
     freeTimes = [],
     seanceId = null,
@@ -893,8 +916,18 @@ export function AppProvider({ children }) {
     }
 
     const boundSeasonId = season.id;
+    const member =
+      users.find((u) => u.id === userId || u.authId === userId) ||
+      (currentUser?.id === userId || currentUser?.authId === userId
+        ? currentUser
+        : null);
+    const authUserId = member?.authId || currentUser?.authId || null;
+    const matchIds = [userId, authUserId, member?.id].filter(Boolean);
     const exists = registrations.find(
-      (r) => r.userId === userId && r.seasonId === boundSeasonId
+      (r) =>
+        matchIds.includes(r.userId) &&
+        r.seasonId === boundSeasonId &&
+        r.status !== REGISTRATION_STATUS.REJECTED
     );
     if (exists) {
       return { ok: false, error: "لديك طلب تسجيل مسبقاً لهذا الموسم" };
@@ -910,11 +943,21 @@ export function AppProvider({ children }) {
         error: "أدخل المقدار الذي تطمح لحفظه هذا الموسم",
       };
     }
-    const member = users.find((u) => u.id === userId);
+    const email = String(member?.email || currentUser?.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email) {
+      return { ok: false, error: "البريد الإلكتروني للحساب غير متوفر" };
+    }
+    const { firstName, lastName } = splitFullName(
+      member
+        ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
+        : ""
+    );
     const registration = {
       id: uid("r"),
       kind: REGISTRATION_KIND.SEASON_RENEWAL,
-      userId,
+      userId: authUserId || userId,
       seasonId: boundSeasonId,
       freeTimes: Array.isArray(freeTimes) ? freeTimes : [],
       seanceId,
@@ -924,10 +967,24 @@ export function AppProvider({ children }) {
       fullName: member
         ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
         : "",
+      firstName: member?.firstName || firstName,
+      lastName: member?.lastName || lastName,
+      email,
+      phone: member?.phone || "",
+      school: member?.school || "",
+      level: member?.level || "",
       gender: member?.gender || "",
       status: REGISTRATION_STATUS.PENDING,
       createdAt: todayStr(),
     };
+
+    if (isSupabaseConfigured()) {
+      const sync = await insertPendingMemberApplication(registration);
+      if (!sync.ok && !sync.skipped) {
+        return { ok: false, error: sync.error || "تعذر حفظ طلب إعادة التسجيل" };
+      }
+    }
+
     setRegistrations((prev) => [...prev, registration]);
     pushNotification({
       title: "إعادة تسجيل موسم",
@@ -946,17 +1003,24 @@ export function AppProvider({ children }) {
       const isSeasonRenewal = kind === REGISTRATION_KIND.SEASON_RENEWAL;
 
       if (status === REGISTRATION_STATUS.REJECTED) {
-        if (!isSeasonRenewal) {
-          const sync = await upsertMemberApplication(
-            reg,
-            REGISTRATION_STATUS.REJECTED
-          );
-          if (!sync.ok) {
-            return {
-              ok: false,
-              error: sync.error || "تعذر حفظ الرفض في Supabase",
-            };
-          }
+        const memberForEmail = users.find(
+          (u) => u.id === reg.userId || u.authId === reg.userId
+        );
+        const sync = await upsertMemberApplication(
+          {
+            ...reg,
+            email:
+              reg.email ||
+              memberForEmail?.email ||
+              "",
+          },
+          REGISTRATION_STATUS.REJECTED
+        );
+        if (!sync.ok && !sync.skipped) {
+          return {
+            ok: false,
+            error: sync.error || "تعذر حفظ الرفض في Supabase",
+          };
         }
 
         setRegistrations((prev) =>
@@ -981,20 +1045,55 @@ export function AppProvider({ children }) {
         const acceptedAt = todayStr();
 
         if (isSeasonRenewal) {
-          setRegistrations((prev) =>
-            prev.map((r) =>
-              r.id === registrationId
-                ? { ...r, status: REGISTRATION_STATUS.ACCEPTED, acceptedAt }
-                : r
-            )
+          const member = users.find(
+            (u) => u.id === reg.userId || u.authId === reg.userId
           );
+          const authUserId = member?.authId || reg.userId;
+          const email = String(reg.email || member?.email || "")
+            .trim()
+            .toLowerCase();
           const goal = String(
             reg.hifzAmount || reg.formAnswers?.seasonGoal || ""
           ).trim();
-          if (reg.userId && goal) {
-            const authUserId =
-              users.find((u) => u.id === reg.userId)?.authId || reg.userId;
-            updateMemberInfo(authUserId, { hifzAmount: goal }).catch(() => {});
+
+          if (!email) {
+            return {
+              ok: false,
+              error: "تعذر قبول الطلب — البريد الإلكتروني غير متوفر",
+            };
+          }
+
+          const sync = await upsertMemberApplication(
+            {
+              ...reg,
+              email,
+              userId: authUserId,
+              hifzAmount: goal || reg.hifzAmount,
+              acceptedAt,
+            },
+            REGISTRATION_STATUS.ACTIVATED
+          );
+          if (!sync.ok && !sync.skipped) {
+            return {
+              ok: false,
+              error: sync.error || "تعذر حفظ قبول إعادة التسجيل في Supabase",
+            };
+          }
+
+          if (authUserId && goal) {
+            const profileSync = await updateMemberInfo(authUserId, {
+              hifzAmount: goal,
+            });
+            // Si l'upsert a réussi, le trigger sync_profile_from_member_application
+            // a déjà recopié hifz_amount — updateMemberInfo n'est qu'un filet.
+            if (!profileSync.ok && sync.skipped) {
+              return {
+                ok: false,
+                error:
+                  profileSync.error ||
+                  "تعذر تحديث مقدار الحفظ في الملف الشخصي",
+              };
+            }
             setUsers((prev) =>
               prev.map((u) =>
                 u.id === reg.userId || u.authId === reg.userId
@@ -1002,12 +1101,23 @@ export function AppProvider({ children }) {
                   : u
               )
             );
-            if (currentUser?.id === reg.userId || currentUser?.authId === reg.userId) {
+            if (
+              currentUser?.id === reg.userId ||
+              currentUser?.authId === reg.userId
+            ) {
               setCurrentUser((prev) =>
                 prev ? { ...prev, hifzAmount: goal } : prev
               );
             }
           }
+
+          setRegistrations((prev) =>
+            prev.map((r) =>
+              r.id === registrationId
+                ? { ...r, status: REGISTRATION_STATUS.ACCEPTED, acceptedAt }
+                : r
+            )
+          );
           if (reg.userId) {
             pushNotification({
               title: "قُبل تسجيلك للموسم",
@@ -1096,6 +1206,10 @@ export function AppProvider({ children }) {
           lastName: pendingUser.lastName,
         });
         if (!authResult.ok) return authResult;
+        await markMemberApplicationActivated({
+          email: pendingUser.email,
+          userId: authResult.authUser.id,
+        });
         setUsers((prev) =>
           prev.map((u) =>
             u.id === pendingUser.id
@@ -1219,6 +1333,10 @@ export function AppProvider({ children }) {
         if (!authResult.ok) return authResult;
         authId = authResult.authUser.id;
         needsEmailConfirmation = !!authResult.needsEmailConfirmation;
+        await markMemberApplicationActivated({
+          email: mail,
+          userId: authId,
+        });
       } else if (
         existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE &&
         existingUser.password &&
@@ -1290,6 +1408,10 @@ export function AppProvider({ children }) {
       if (!authResult.ok) return authResult;
       authId = authResult.authUser.id;
       needsEmailConfirmation = !!authResult.needsEmailConfirmation;
+      await markMemberApplicationActivated({
+        email: mail,
+        userId: authId,
+      });
     }
 
     const user = {

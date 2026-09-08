@@ -693,8 +693,8 @@ export default function MemberDashboardScreen({ navigation }) {
     ]);
   };
 
-  const handleRegister = async (payload) => {
-    const result = submitSeasonRegistration(payload);
+    const handleRegister = async (payload) => {
+    const result = await submitSeasonRegistration(payload);
     if (!result.ok) {
       Alert.alert("تنبيه", result.error);
       return result;

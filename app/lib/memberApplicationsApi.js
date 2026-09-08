@@ -35,6 +35,19 @@ function mapDbStatusToApp(status) {
   return REGISTRATION_STATUS.PENDING;
 }
 
+function resolveApplicationKind(row, answers = {}) {
+  const raw = String(row?.kind || answers?.kind || "").trim();
+  if (raw === REGISTRATION_KIND.SEASON_RENEWAL) {
+    return REGISTRATION_KIND.SEASON_RENEWAL;
+  }
+  if (raw === REGISTRATION_KIND.JOIN) return REGISTRATION_KIND.JOIN;
+  // Heuristique legacy : une demande déjà liée à un user sans kind explicite
+  if (row?.user_id && row?.status === "pending") {
+    return REGISTRATION_KIND.SEASON_RENEWAL;
+  }
+  return REGISTRATION_KIND.JOIN;
+}
+
 /** Mappe une ligne Supabase vers l'objet registration local. */
 export function mapMemberApplicationRow(row) {
   if (!row) return null;
@@ -42,9 +55,18 @@ export function mapMemberApplicationRow(row) {
     row.form_answers && typeof row.form_answers === "object"
       ? row.form_answers
       : {};
+  const kind = resolveApplicationKind(row, answers);
+  let status = mapDbStatusToApp(row.status);
+  // Renouvellement accepté stocké en « activated » côté DB (pas de nouveau compte)
+  if (
+    kind === REGISTRATION_KIND.SEASON_RENEWAL &&
+    status === REGISTRATION_STATUS.ACTIVATED
+  ) {
+    status = REGISTRATION_STATUS.ACCEPTED;
+  }
   return {
     id: String(row.id),
-    kind: REGISTRATION_KIND.JOIN,
+    kind,
     userId: row.user_id || null,
     seasonId: row.season_id || null,
     fullName: row.full_name || "",
@@ -62,8 +84,8 @@ export function mapMemberApplicationRow(row) {
     seanceId: row.seance_id || null,
     seanceName: row.requested_seance_name || "",
     formAnswers: answers,
-    freeTimes: [],
-    status: mapDbStatusToApp(row.status),
+    freeTimes: Array.isArray(answers.freeTimes) ? answers.freeTimes : [],
+    status,
     inviteToken: null,
     createdAt: row.created_at
       ? String(row.created_at).slice(0, 10)
@@ -117,16 +139,18 @@ export async function listMemberApplications() {
   }
 }
 
-/** Soumission publique d'une demande en attente (sans compte) */
-export async function insertPendingMemberApplication(reg) {
-  if (!isSupabaseConfigured()) {
-    return { ok: true, skipped: true };
-  }
-  if (!reg?.id || !reg?.email) {
-    return { ok: false, error: "بيانات الطلب غير مكتملة" };
-  }
-
-  const now = new Date().toISOString();
+function buildApplicationRow(reg, statusMapped, { now = new Date().toISOString() } = {}) {
+  const kind =
+    reg.kind === REGISTRATION_KIND.SEASON_RENEWAL
+      ? REGISTRATION_KIND.SEASON_RENEWAL
+      : REGISTRATION_KIND.JOIN;
+  const formAnswers = {
+    ...(reg.formAnswers && typeof reg.formAnswers === "object"
+      ? reg.formAnswers
+      : {}),
+    kind,
+    ...(Array.isArray(reg.freeTimes) ? { freeTimes: reg.freeTimes } : {}),
+  };
   const row = {
     id: String(reg.id),
     email: String(reg.email).trim().toLowerCase(),
@@ -144,29 +168,85 @@ export async function insertPendingMemberApplication(reg) {
     seance_id: reg.seanceId || null,
     requested_seance_name: reg.seanceName || reg.requestedSeanceName || null,
     genre: reg.gender || reg.genre || null,
-    form_answers: reg.formAnswers || {},
-    status: "pending",
-    created_at: now,
+    form_answers: formAnswers,
+    kind,
+    status: statusMapped,
     updated_at: now,
+  };
+  if (reg.userId) {
+    const uidVal = String(reg.userId);
+    // profiles / auth.users : uuid uniquement (ignorer les ids locaux u_…)
+    if (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        uidVal
+      )
+    ) {
+      row.user_id = uidVal;
+    }
+  }
+  if (statusMapped === "invited" || statusMapped === "activated") {
+    row.accepted_at = reg.acceptedAt || now;
+  }
+  if (statusMapped === "activated") {
+    row.activated_at = now;
+  }
+  if (statusMapped === "rejected") {
+    row.rejected_at = now;
+  }
+  return row;
+}
+
+async function insertApplicationRow(row, label) {
+  // Pas de .select() : le rôle anon n'a souvent que INSERT (pas SELECT).
+  let attempt = row;
+  let { error } = await withTimeout(
+    supabase.from("member_applications").insert(attempt),
+    SUPABASE_TIMEOUT_MS,
+    label
+  );
+
+  // Bases sans colonne kind (migration 0060 non exécutée)
+  if (error && /kind|column.*does not exist/i.test(error?.message || "")) {
+    const { kind: _k, ...rest } = attempt;
+    attempt = rest;
+    ({ error } = await withTimeout(
+      supabase.from("member_applications").insert(attempt),
+      SUPABASE_TIMEOUT_MS,
+      label
+    ));
+  }
+
+  // Bases sans colonne form_answers (migration 0048 non exécutée)
+  if (error && /form_answers|column.*does not exist/i.test(error?.message || "")) {
+    const { form_answers: _fa, ...rest } = attempt;
+    attempt = rest;
+    ({ error } = await withTimeout(
+      supabase.from("member_applications").insert(attempt),
+      SUPABASE_TIMEOUT_MS,
+      label
+    ));
+  }
+
+  return error;
+}
+
+/** Soumission d'une demande en attente (intégration ou réinscription saison) */
+export async function insertPendingMemberApplication(reg) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true };
+  }
+  if (!reg?.id || !reg?.email) {
+    return { ok: false, error: "بيانات الطلب غير مكتملة" };
+  }
+
+  const now = new Date().toISOString();
+  const row = {
+    ...buildApplicationRow(reg, "pending", { now }),
+    created_at: now,
   };
 
   try {
-    // Pas de .select() : le rôle anon n'a souvent que INSERT (pas SELECT).
-    let { error } = await withTimeout(
-      supabase.from("member_applications").insert(row),
-      SUPABASE_TIMEOUT_MS,
-      "إرسال طلب الانضمام"
-    );
-
-    // Bases sans colonne form_answers (migration 0048 non exécutée)
-    if (error && /form_answers|column.*does not exist/i.test(error?.message || "")) {
-      const { form_answers: _fa, ...rowWithoutAnswers } = row;
-      ({ error } = await withTimeout(
-        supabase.from("member_applications").insert(rowWithoutAnswers),
-        SUPABASE_TIMEOUT_MS,
-        "إرسال طلب الانضمام"
-      ));
-    }
+    const error = await insertApplicationRow(row, "إرسال طلب التسجيل");
     if (error) {
       const msg = error.message || "";
       if (/duplicate key|23505/i.test(msg)) {
@@ -203,54 +283,64 @@ export async function upsertMemberApplication(reg, status) {
     return { ok: false, error: "بيانات الطلب غير مكتملة" };
   }
 
-  const mapped = mapStatus(status);
-  const now = new Date().toISOString();
-  const row = {
-    id: String(reg.id),
-    email: String(reg.email).trim().toLowerCase(),
-    full_name: reg.fullName || null,
-    first_name: reg.firstName || null,
-    last_name: reg.lastName || null,
-    phone: reg.phone || null,
-    school: reg.school || null,
-    level: reg.level || null,
-    hifz_amount:
-      reg.hifzAmount ||
-      reg.formAnswers?.seasonGoal ||
-      null,
-    season_id: reg.seasonId || null,
-    seance_id: reg.seanceId || null,
-    requested_seance_name: reg.seanceName || reg.requestedSeanceName || null,
-    genre: reg.gender || reg.genre || null,
-    form_answers: reg.formAnswers || {},
-    status: mapped,
-    updated_at: now,
-  };
+  const isRenewal =
+    getRegistrationKindSafe(reg) === REGISTRATION_KIND.SEASON_RENEWAL;
+  // Renouvellement accepté → activated (compte déjà existant) pour déclencher
+  // sync_profile_from_member_application (hifz / séance).
+  let mapped = mapStatus(status);
+  if (
+    isRenewal &&
+    (status === REGISTRATION_STATUS.ACCEPTED ||
+      status === REGISTRATION_STATUS.ACTIVATED)
+  ) {
+    mapped = "activated";
+  }
 
-  if (mapped === "invited") {
-    row.accepted_at = now;
-  }
-  if (mapped === "rejected") {
-    row.rejected_at = now;
-  }
+  const now = new Date().toISOString();
+  const row = buildApplicationRow(
+    {
+      ...reg,
+      kind: isRenewal
+        ? REGISTRATION_KIND.SEASON_RENEWAL
+        : REGISTRATION_KIND.JOIN,
+    },
+    mapped,
+    { now }
+  );
 
   try {
+    let attempt = row;
     let { data, error } = await withTimeout(
       supabase
         .from("member_applications")
-        .upsert(row, { onConflict: "id" })
+        .upsert(attempt, { onConflict: "id" })
         .select("*")
         .single(),
       SUPABASE_TIMEOUT_MS,
       "حفظ الطلب في Supabase"
     );
 
-    if (error && /form_answers|column.*does not exist/i.test(error?.message || "")) {
-      const { form_answers: _fa, ...rowWithoutAnswers } = row;
+    if (error && /kind|column.*does not exist/i.test(error?.message || "")) {
+      const { kind: _k, ...rest } = attempt;
+      attempt = rest;
       ({ data, error } = await withTimeout(
         supabase
           .from("member_applications")
-          .upsert(rowWithoutAnswers, { onConflict: "id" })
+          .upsert(attempt, { onConflict: "id" })
+          .select("*")
+          .single(),
+        SUPABASE_TIMEOUT_MS,
+        "حفظ الطلب في Supabase"
+      ));
+    }
+
+    if (error && /form_answers|column.*does not exist/i.test(error?.message || "")) {
+      const { form_answers: _fa, ...rest } = attempt;
+      attempt = rest;
+      ({ data, error } = await withTimeout(
+        supabase
+          .from("member_applications")
+          .upsert(attempt, { onConflict: "id" })
           .select("*")
           .single(),
         SUPABASE_TIMEOUT_MS,
@@ -284,6 +374,15 @@ export async function upsertMemberApplication(reg, status) {
   }
 }
 
+function getRegistrationKindSafe(reg) {
+  if (reg?.kind === REGISTRATION_KIND.SEASON_RENEWAL) {
+    return REGISTRATION_KIND.SEASON_RENEWAL;
+  }
+  if (reg?.kind === REGISTRATION_KIND.JOIN) return REGISTRATION_KIND.JOIN;
+  if (reg?.userId) return REGISTRATION_KIND.SEASON_RENEWAL;
+  return REGISTRATION_KIND.JOIN;
+}
+
 /**
  * (Admin) Nombre de demandes d'inscription en attente (statistiques).
  * @returns { ok, count }
@@ -310,7 +409,7 @@ export async function countPendingApplications() {
   }
 }
 
-/** Lie la demande au compte Auth après création du mot de passe */
+/** Lie la demande d'intégration (join) au compte Auth après création du mot de passe */
 export async function markMemberApplicationActivated({ email, userId }) {
   if (!isSupabaseConfigured()) {
     return { ok: true, skipped: true };
@@ -321,22 +420,40 @@ export async function markMemberApplicationActivated({ email, userId }) {
   }
 
   const now = new Date().toISOString();
+  const payload = {
+    status: "activated",
+    user_id: userId,
+    activated_at: now,
+    updated_at: now,
+  };
+
   try {
-    const { data, error } = await withTimeout(
+    // Uniquement les demandes join — ne pas activer un renouvellement saison en attente
+    let { data, error } = await withTimeout(
       supabase
         .from("member_applications")
-        .update({
-          status: "activated",
-          user_id: userId,
-          activated_at: now,
-          updated_at: now,
-        })
+        .update(payload)
         .eq("email", mail)
         .in("status", ["invited", "pending"])
+        .or("kind.eq.join,kind.is.null")
         .select("*"),
       SUPABASE_TIMEOUT_MS,
       "تحديث حالة الطلب"
     );
+
+    // Colonne kind absente (migration 0060 non exécutée)
+    if (error && /kind|column.*does not exist/i.test(error?.message || "")) {
+      ({ data, error } = await withTimeout(
+        supabase
+          .from("member_applications")
+          .update(payload)
+          .eq("email", mail)
+          .in("status", ["invited", "pending"])
+          .select("*"),
+        SUPABASE_TIMEOUT_MS,
+        "تحديث حالة الطلب"
+      ));
+    }
 
     if (error) {
       return { ok: false, error: mapSupabaseAuthError(error) };
