@@ -164,8 +164,8 @@ export function StatCard({
     return (
       <View style={[styles.statCardInline, { borderColor }, shadows.card]}>
         {icon ? <Ionicons name={icon} size={22} color={iconColor} /> : null}
-        <Text style={[styles.statValueInline, { color: valueColor }]}>{value}</Text>
         <Text style={styles.statLabelInline}>{label}</Text>
+        <Text style={[styles.statValueInline, { color: valueColor }]}>{value}</Text>
       </View>
     );
   }
@@ -528,7 +528,7 @@ const styles = StyleSheet.create({
     ...rtlTextBold,
   },
   statValueInline: {
-    fontSize: 24,
+    fontSize: 20,
     fontFamily: fonts.bold,
     ...rtlTextBold,
     minWidth: 24,

@@ -41,6 +41,19 @@ function PaceLine({ delta, suffix }) {
   );
 }
 
+/** Libellé هدف الموسم : nb_hizb_cible de la table objectifs (pas le texte libre). */
+function formatObjectifLabel(objectif) {
+  if (objectif == null || objectif === "") return null;
+  if (typeof objectif === "object" && objectif.nbHizbCible != null) {
+    return `${objectif.nbHizbCible} حزب`;
+  }
+  const n = Number(objectif);
+  if (Number.isInteger(n) && n >= 1 && n <= TOTAL_HIZB) {
+    return `${n} حزب`;
+  }
+  return null;
+}
+
 function ProgressSectionContent({ progressState }) {
   if (progressState.loading) {
     return <ActivityIndicator color={colors.primary} style={styles.loader} />;
@@ -48,8 +61,24 @@ function ProgressSectionContent({ progressState }) {
   if (progressState.error) {
     return <Text style={styles.errorText}>{progressState.error}</Text>;
   }
+
+  const objectifLabel = formatObjectifLabel(progressState.objectif);
+
   if (!progressState.hasData) {
-    return <Text style={styles.emptyText}>لم يتم تسجيل أي تقدم بعد</Text>;
+    return (
+      <>
+        <Text style={styles.emptyText}>لم يتم تسجيل أي تقدم بعد</Text>
+        {objectifLabel ? (
+          <View style={styles.footerBlock}>
+            <ProfileFieldRow
+              icon="flag-outline"
+              label="هدف الموسم"
+              value={objectifLabel}
+            />
+          </View>
+        ) : null}
+      </>
+    );
   }
 
   const metrics = progressState.metrics;
@@ -63,7 +92,7 @@ function ProgressSectionContent({ progressState }) {
   const hasFooter = !!(
     metrics?.dateSaisie ||
     progressState.note ||
-    progressState.objectif
+    objectifLabel
   );
 
   return (
@@ -90,6 +119,13 @@ function ProgressSectionContent({ progressState }) {
       {hasFooter ? (
         <View style={styles.footerBlock}>
           <View style={styles.footerRule} />
+          {objectifLabel ? (
+            <ProfileFieldRow
+              icon="flag-outline"
+              label="هدف الموسم"
+              value={objectifLabel}
+            />
+          ) : null}
           {metrics?.dateSaisie ? (
             <ProfileFieldRow
               icon="calendar-outline"
@@ -105,13 +141,7 @@ function ProgressSectionContent({ progressState }) {
               valueStyle={styles.noteValue}
             />
           ) : null}
-          {progressState.objectif ? (
-            <ProfileFieldRow
-              icon="flag-outline"
-              label="هدف الموسم"
-              value={progressState.objectif}
-            />
-          ) : null}
+        
         </View>
       ) : null}
     </>

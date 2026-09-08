@@ -26,13 +26,14 @@ import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
 import SupervisorAttendanceScreen from "./SupervisorAttendanceScreen";
 import SupervisorProgressScreen from "./SupervisorProgressScreen";
+import SupervisorMessagesScreen from "./SupervisorMessagesScreen";
 import {
   registerSupervisorAttendanceSaved,
   unregisterSupervisorAttendanceSaved,
 } from "./supervisorAttendanceBridge";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
-import { formatUnreadBadge } from "../../lib/messagesApi";
+import { formatUnreadBadge, countUnseenConversations } from "../../lib/messagesApi";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -41,11 +42,17 @@ const NAV_TABS = [
   { key: "members", label: "الأعضاء", icon: "people-outline", iconActive: "people" },
   { key: "attendance", label: "الحضور", icon: "checkbox-outline", iconActive: "checkbox" },
   { key: "progress", label: "التقدم", icon: "bar-chart-outline", iconActive: "bar-chart" },
+  {
+    key: "messages",
+    label: "الرسائل",
+    icon: "chatbubble-ellipses-outline",
+    iconActive: "chatbubble-ellipses",
+  },
 ];
 
 /**
  * Conteneur léger : header + bottomBar communs, état `tab` pour basculer entre
- * les 4 écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
+ * les écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
 export default function SupervisorDashboard({ navigation }) {
   const { currentUser, logout } = useApp();
@@ -71,14 +78,11 @@ export default function SupervisorDashboard({ navigation }) {
   } = useSupervisorMembers(selectedGroupId);
 
   const { threads } = useInboxThreads();
-  const { totalUnread: groupsUnread } = useChatGroups();
-  const messagesUnread = useMemo(() => {
-    const dm = (threads || []).reduce(
-      (sum, t) => sum + (Number(t.unreadCount) || 0),
-      0
-    );
-    return dm + (Number(groupsUnread) || 0);
-  }, [threads, groupsUnread]);
+  const { groups: chatGroups } = useChatGroups();
+  const unseenConversations = useMemo(
+    () => countUnseenConversations(threads, chatGroups),
+    [threads, chatGroups]
+  );
 
   const fullName = currentUser?.firstName?.trim() || "";
 
@@ -138,17 +142,16 @@ export default function SupervisorDashboard({ navigation }) {
   }, [refetch]);
 
   const openAlerts = () => navigation.navigate("SupervisorAlerts");
-  const openMessages = () =>
-    navigation.navigate("SupervisorMessages", {
-      seanceId: selectedGroupId,
-      groupName: activeGroup?.name || null,
-      members: (members || []).map((m) => ({
+  const messageMembers = useMemo(
+    () =>
+      (members || []).map((m) => ({
         id: m.user?.id,
         firstName: m.user?.firstName,
         lastName: m.user?.lastName,
         avatarUrl: m.user?.avatarUrl || null,
       })),
-    });
+    [members]
+  );
 
   return (
     <SafeAreaView
@@ -215,7 +218,7 @@ export default function SupervisorDashboard({ navigation }) {
       ) : null}
 
       <View style={styles.body}>
-        {loading ? (
+        {loading && tab !== "messages" ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator size="large" color={colors.primary} />
           </View>
@@ -258,6 +261,16 @@ export default function SupervisorDashboard({ navigation }) {
                 avgProgress={avgProgress}
               />
             )}
+            {tab === "messages" && (
+              <SupervisorMessagesScreen
+                navigation={navigation}
+                embedded
+                seanceId={selectedGroupId}
+                groupName={activeGroup?.name || null}
+                members={messageMembers}
+                onBack={() => setTab("home")}
+              />
+            )}
           </>
         )}
       </View>
@@ -265,42 +278,40 @@ export default function SupervisorDashboard({ navigation }) {
       <View style={styles.bottomBar}>
         {NAV_TABS.map((t) => {
           const isActive = tab === t.key;
+          const showUnread = t.key === "messages" && unseenConversations > 0;
           return (
             <TouchableOpacity
               key={t.key}
               style={styles.bottomBarItem}
               onPress={() => setTab(t.key)}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={t.label}
             >
-              <Ionicons
-                name={isActive ? t.iconActive : t.icon}
-                size={22}
-                color={isActive ? colors.primary : colors.placeholder}
-              />
-              <Text style={[styles.bottomBarLabel, isActive && styles.bottomBarLabelActive]}>
+              <View style={styles.bottomBarIconWrap}>
+                <Ionicons
+                  name={isActive ? t.iconActive : t.icon}
+                  size={22}
+                  color={isActive ? colors.primary : colors.placeholder}
+                />
+                {showUnread ? (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>
+                      {formatUnreadBadge(unseenConversations)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text
+                style={[styles.bottomBarLabel, isActive && styles.bottomBarLabelActive]}
+                numberOfLines={1}
+              >
                 {t.label}
               </Text>
             </TouchableOpacity>
           );
         })}
       </View>
-
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={openMessages}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityLabel="الرسائل"
-      >
-        <Ionicons name="chatbubble-ellipses" size={28} color="white" />
-        {messagesUnread > 0 ? (
-          <View style={styles.fabBadge}>
-            <Text style={styles.fabBadgeText}>
-              {formatUnreadBadge(messagesUnread)}
-            </Text>
-          </View>
-        ) : null}
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -390,41 +401,24 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   bottomBarItem: { flex: 1, paddingVertical: 10, alignItems: "center", gap: 2 },
+  bottomBarIconWrap: { position: "relative" },
   bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
   bottomBarLabelActive: { color: colors.primary },
-
-  fab: {
+  tabBadge: {
     position: "absolute",
-    end: 16,
-    bottom: 96,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    zIndex: 10,
-  },
-  fabBadge: {
-    position: "absolute",
-    top: -2,
-    end: -2,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 4,
+    top: -6,
+    end: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
     backgroundColor: colors.gold,
     justifyContent: "center",
     alignItems: "center",
   },
-  fabBadgeText: {
+  tabBadgeText: {
     color: colors.text,
-    fontSize: 10,
+    fontSize: 9,
     fontFamily: fonts.bold,
   },
 });

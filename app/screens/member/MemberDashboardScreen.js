@@ -21,15 +21,16 @@ import {
   computeProgressMetrics,
   computeProgressPace,
   latestProgressionRow,
-  getMemberSeasonObjectif,
+  PROGRESS_TOTAL_TUMUN,
 } from "../../lib/progressApi";
 import {
   REGISTRATION_STATUS_LABELS,
   SEASON_TYPES,
 } from "../../constants/roles";
 import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
+import { getMyObjectif } from "../../lib/objectifsApi";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextBold, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
 import {
   StatCard,
   SectionCard,
@@ -51,7 +52,7 @@ import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { TOTAL_HIZB, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -97,21 +98,12 @@ function formatRingPercent(rawPct) {
   return { progress: one, label: `${LRI}${one.toFixed(1)}%${PDI}` };
 }
 
-/** Progression globale = Σ thumuns complétés / Σ thumuns des programmes. */
-function globalProgramsProgressPct(programs = []) {
-  let completed = 0;
-  let total = 0;
-  programs.forEach((p) => {
-    const maxT =
-      Number(p.totalTumuns) > 0
-        ? Number(p.totalTumuns)
-        : (Number(p.nbHizb) || 0) * TUMUNS_PER_HIZB;
-    if (maxT <= 0) return;
-    total += maxT;
-    completed += Math.min(maxT, Number(p.completedTumuns) || 0);
-  });
-  if (total <= 0) return 0;
-  return (completed / total) * 100;
+/** Position en أحزاب depuis les أثمان, sans arrondi à l'entier supérieur. */
+function formatHizbFromTumuns(tumunTotal) {
+  const h = (Number(tumunTotal) || 0) / TUMUNS_PER_HIZB;
+  const one = Math.round(h * 10) / 10;
+  if (one === Math.floor(one)) return `${one} حزب`;
+  return `${one.toFixed(1)} حزب`;
 }
 
 function parseActivityTimestamp(raw) {
@@ -183,7 +175,7 @@ export default function MemberDashboardScreen({ navigation }) {
   const [activityCutoffReady, setActivityCutoffReady] = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
   const [editInfoModal, setEditInfoModal] = useState(false);
-  const [seasonObjectif, setSeasonObjectif] = useState("");
+  const [seasonObjectif, setSeasonObjectif] = useState(null);
   const [contactFields, setContactFields] = useState({
     phone: currentUser?.phone || null,
     school: currentUser?.school || null,
@@ -296,17 +288,18 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const loadSeasonObjectif = useCallback(async () => {
     const memberId = currentUser?.authId || currentUser?.id;
-    if (!memberId || !activeRegular?.id) {
-      setSeasonObjectif("");
+    const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+    if (!memberId || !saisonId) {
+      setSeasonObjectif(null);
       return;
     }
-    const res = await getMemberSeasonObjectif(memberId, activeRegular.id);
+    const res = await getMyObjectif(saisonId);
     if (res.ok && res.objectif) {
       setSeasonObjectif(res.objectif);
     } else {
-      setSeasonObjectif("");
+      setSeasonObjectif(null);
     }
-  }, [currentUser?.authId, currentUser?.id, activeRegular?.id]);
+  }, [currentUser?.authId, currentUser?.id, seasons]);
 
   useFocusEffect(
     useCallback(() => {
@@ -378,9 +371,10 @@ export default function MemberDashboardScreen({ navigation }) {
       registrationDate: inscRes.ok ? inscRes.dateInscription : null,
     });
 
+    const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
     const [objRes, presRes] = await Promise.all([
-      saisonId
-        ? getMemberSeasonObjectif(authId, saisonId)
+      objectifSaisonId
+        ? getMyObjectif(objectifSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
       getMemberPresenceSummary(authId, seanceId),
     ]);
@@ -419,6 +413,7 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser?.school,
     currentUser?.level,
     currentUser?.hifzAmount,
+    seasons,
   ]);
 
   const handleProfileInfoSaved = useCallback(
@@ -464,7 +459,29 @@ export default function MemberDashboardScreen({ navigation }) {
     return latest ? computeProgressMetrics(latest) : null;
   }, [progressEntries]);
 
-  const totalAhzab = memorizationMetrics?.nbHizbCompletes ?? 0;
+  const homeGoal = useMemo(() => {
+    const goal = seasonObjectif || progressState.objectif;
+    const nbHizbCible = Number(goal?.nbHizbCible);
+    if (!Number.isInteger(nbHizbCible) || nbHizbCible < 1) {
+      return { hasObjectif: false };
+    }
+    const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
+    const denom = nbHizbCible * TUMUNS_PER_HIZB;
+    const rawPct = denom > 0 ? (tumunTotal / denom) * 100 : 0;
+    const ring = formatRingPercent(rawPct);
+    const pctWhole = Math.round(ring.progress * 10) / 10;
+    const pctStat =
+      pctWhole === Math.floor(pctWhole)
+        ? `${pctWhole}%`
+        : `${pctWhole.toFixed(1)}%`;
+    return {
+      hasObjectif: true,
+      pct: ring.progress,
+      pctStat,
+      tumunTotal,
+      nbHizbCible,
+    };
+  }, [seasonObjectif, progressState.objectif, memorizationMetrics]);
 
   const progressPace = useMemo(
     () =>
@@ -499,25 +516,17 @@ export default function MemberDashboardScreen({ navigation }) {
   );
 
   const homeProgress = useMemo(() => {
-    const pct = globalProgramsProgressPct(myMemberPrograms);
+    const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
+    const pct =
+      PROGRESS_TOTAL_TUMUN > 0 ? (tumunTotal / PROGRESS_TOTAL_TUMUN) * 100 : 0;
     const ring = formatRingPercent(pct);
-    const completedHizb = (myMemberPrograms || []).reduce(
-      (sum, p) => sum + (Number(p.hizbCompleted) || 0),
-      0
-    );
-    const targetHizb = (myMemberPrograms || []).reduce(
-      (sum, p) => sum + (Number(p.nbHizb) || 0),
-      0
-    );
+    const completedHizb = memorizationMetrics?.nbHizbCompletes ?? 0;
     return {
       memorizationPct: ring.progress,
       memorizationPctLabel: ring.label,
-      programsHizbLabel:
-        targetHizb > 0
-          ? `${completedHizb} من ${targetHizb} حزب`
-          : null,
+      programsHizbLabel: `${completedHizb} من ${TOTAL_HIZB} حزب`,
     };
-  }, [myMemberPrograms]);
+  }, [memorizationMetrics]);
 
   const { memorizationPct, memorizationPctLabel, programsHizbLabel } =
     homeProgress;
@@ -815,7 +824,7 @@ export default function MemberDashboardScreen({ navigation }) {
               onPress={() => setTab("programs")}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel="البرامج ونسبة الحفظ الكلية"
+              accessibilityLabel="نسبة الحفظ على 60 حزباً"
             >
               <ProgressRing
                 progress={memorizationPct}
@@ -825,33 +834,67 @@ export default function MemberDashboardScreen({ navigation }) {
               >
                 <View style={styles.ringInner} pointerEvents="none">
                   <Text style={styles.ringPct}>{memorizationPctLabel}</Text>
-                  <Text style={styles.ringSubLabel}>نسبة الحفظ الكلية</Text>
                 </View>
               </ProgressRing>
-              <Text style={styles.juzCount}>
-                {programsHizbLabel ||
-                  (activePrograms === 0
-                    ? "لا توجد برامج بعد"
-                    : `${activePrograms} برنامج`)}
-              </Text>
+              <Text style={styles.juzCount}>{programsHizbLabel}</Text>
             </TouchableOpacity>
+
+            {homeGoal.hasObjectif ? (
+              <TouchableOpacity
+                style={styles.goalCard}
+                onPress={openProgression}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="هدف الموسم"
+              >
+                <View style={styles.goalCardHead}>
+                  <Ionicons
+                    name="book-outline"
+                    size={22}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.goalCardLabel}>هدف الموسم</Text>
+                  <Text style={styles.goalCardValue}>{homeGoal.pctStat}</Text>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[styles.progressFill, { width: `${homeGoal.pct}%` }]}
+                  />
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.goalCard}
+                onPress={openProgression}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="تحديد هدف الموسم"
+              >
+                <View style={styles.goalCardHead}>
+                  <Ionicons
+                    name="book-outline"
+                    size={22}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.goalCardLabel}>هدف الموسم</Text>
+                  <Text style={styles.goalCardValue}>—</Text>
+                </View>
+                <Text style={styles.goalCardHint}>
+                  لم يُحدد هدف لهذا الموسم بعد. اضغط لتحديد عدد الأحزاب.
+                </Text>
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: "0%" }]} />
+                </View>
+              </TouchableOpacity>
+            )}
 
             <StatCard
               layout="inline"
               icon="folder-outline"
-              iconColor={colors.primary}
-              borderColor={colors.borderGreen}
-              label="البرامج النشطة"
-              value={activePrograms}
-              valueColor={colors.primary}
-            />
-            <StatCard
-              layout="inline"
-              icon="book-outline"
               iconColor={colors.gold}
               borderColor={colors.borderGold}
-              label="مجموع الأحزاب"
-              value={totalAhzab}
+              label="البرامج النشطة"
+              value={activePrograms}
               valueColor={colors.gold}
             />
 
@@ -1134,25 +1177,11 @@ const styles = StyleSheet.create({
     color: colors.primary,
     ...rtlTextCenter,
   },
-  ringSubLabel: {
-    fontSize: 11,
-    color: colors.muted,
-    marginTop: 2,
-    textAlign: "center",
-    ...rtlText,
-  },
   juzCount: {
     color: colors.muted,
     fontSize: 14,
     fontFamily: fonts.regular,
     marginTop: 10,
-    ...rtlText,
-  },
-  heroLabel: {
-    color: colors.muted,
-    fontSize: 14,
-    fontFamily: fonts.regular,
-    marginTop: 6,
     ...rtlText,
   },
 
@@ -1208,128 +1237,58 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
 
-  programCard: {
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
+  goalCard: {
+    backgroundColor: colors.card,
     borderRadius: radii.lg,
-    padding: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     marginBottom: 12,
-    backgroundColor: colors.soft,
-  },
-  programTop: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  programTitleWrap: {
-    flex: 1,
-    marginEnd: 8,
-  },
-  programName: {
-    color: colors.primary,
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    ...rtlText,
-  },
-  goalRow: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    gap: 8,
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  goalStat: {
-    flex: 1,
-    backgroundColor: colors.bg,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    alignItems: "center",
-  },
-  goalStatLabel: {
-    color: colors.muted,
-    fontSize: 11,
-    marginBottom: 4,
-    ...rtlText,
-  },
-  goalStatValue: {
-    color: colors.text,
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    textAlign: "center",
-    ...rtlText,
-  },
-  goalDoneValue: {
-    color: colors.primary,
-  },
-  goalRemainValue: {
-    color: colors.orange,
-  },
-  goalInput: {
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.borderGreen,
-    borderRadius: radii.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 10,
-    fontSize: 15,
-    color: colors.text,
-    backgroundColor: colors.bg,
-    ...rtlText,
+    ...shadows.card,
   },
-  programStatusBadge: {
-    alignSelf: "flex-start",
-    marginTop: 6,
-    borderRadius: radii.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderWidth: 1,
-  },
-  statusProgress: {
-    backgroundColor: "#FFF7E6",
-    borderColor: "#FDE68A",
-  },
-  programStatusText: {
-    fontSize: 11,
-    fontWeight: "600",
-    ...rtlText,
-  },
-  statusDoneText: { color: colors.primaryDark },
-  statusProgressText: { color: colors.orange },
-  progressHead: {
+  goalCardHead: {
     flexDirection: row,
-    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  goalCardValue: {
+    fontSize: 19,
+    fontFamily: fonts.bold,
+    ...rtlTextBold,
+    minWidth: 24,
+    textAlign: "center",
+    color: colors.primary,
+  },
+  goalCardLabel: {
+    color: colors.muted,
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    flex: 1,
+    ...rtlText,
+  },
+  goalCardHint: {
+    color: colors.muted,
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    flex: 1,
     marginTop: 10,
     marginBottom: 6,
+    ...rtlText,
   },
-  pct: { color: colors.primary, fontWeight: "bold", ...rtlText },
   progressTrack: {
-    height: 10,
+    height: 8,
     backgroundColor: colors.border,
     borderRadius: 8,
     overflow: "hidden",
+    direction: "rtl",
+    marginTop: 10,
   },
   progressFill: {
     height: "100%",
     backgroundColor: colors.primary,
     borderRadius: 8,
-    alignSelf: "flex-end",
-  },
-  programFooter: {
-    flexDirection: row,
-    alignItems: "center",
     alignSelf: "flex-start",
-    marginTop: 10,
-    gap: 4,
-  },
-  programOpen: {
-    color: colors.primary,
-    fontSize: 13,
-    fontFamily: fonts.semiBold,
-    ...rtlText,
   },
 
   notifItem: {
