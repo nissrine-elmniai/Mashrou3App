@@ -581,6 +581,12 @@ export async function getMemberSeasonObjectif(membreId, saisonId) {
  * @returns {number|null}
  */
 export function parseObjectifToTumuns(objectifText) {
+  if (objectifText && typeof objectifText === "object") {
+    const n = Number(objectifText.nbHizbCible);
+    if (Number.isInteger(n) && n >= 1) {
+      return n * TUMUNS_PER_HIZB;
+    }
+  }
   const text = String(objectifText || "").trim();
   if (!text) return null;
   const numMatch = text.match(/(\d+(?:[.,]\d+)?)/);
@@ -635,7 +641,10 @@ export function computeObjectifProgress(objectifText, seasonMemorizedTumuns) {
   const doneTumuns = Math.max(0, Number(seasonMemorizedTumuns) || 0);
   const pct = Math.min(100, Math.round((doneTumuns / targetTumuns) * 100));
   return {
-    label: String(objectifText || "").trim(),
+    label:
+      typeof objectifText === "object" && objectifText?.nbHizbCible != null
+        ? `${objectifText.nbHizbCible} حزب`
+        : String(objectifText || "").trim(),
     targetTumuns,
     doneTumuns,
     remainingTumuns: Math.max(0, targetTumuns - doneTumuns),
@@ -678,7 +687,10 @@ export function computeObjectifProgressFromPrograms(
   const pct = Math.min(100, Math.round((cappedDone / targetTumuns) * 100));
 
   return {
-    label: String(objectifText || "").trim(),
+    label:
+      typeof objectifText === "object" && objectifText?.nbHizbCible != null
+        ? `${objectifText.nbHizbCible} حزب`
+        : String(objectifText || "").trim(),
     targetTumuns,
     doneTumuns: cappedDone,
     plannedTumuns: Math.min(targetTumuns, plannedTumuns),

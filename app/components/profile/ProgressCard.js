@@ -48,6 +48,27 @@ function PaceLine({ delta, suffix }) {
   );
 }
 
+function ObjectifProgressBlock({ objectifProgress, objectif }) {
+  if (!objectifProgress) return null;
+  const title =
+    formatObjectifLabel(objectif) ||
+    formatObjectifLabel(objectifProgress.label) ||
+    null;
+  const pct = Math.min(100, Math.max(0, Number(objectifProgress.pct) || 0));
+  return (
+    <View style={styles.objectifBlock}>
+      <View style={styles.objectifHeader}>
+        <Text style={styles.objectifTitle}>هدف الموسم</Text>
+        <Text style={styles.objectifPct}>{formatPctLabel(pct)}</Text>
+      </View>
+      {title ? <Text style={styles.objectifLabel}>{title}</Text> : null}
+      <View style={styles.barTrack}>
+        <View style={[styles.barFill, { width: `${pct}%` }]} />
+      </View>
+    </View>
+  );
+}
+
 /** Libellé هدف الموسم : nb_hizb_cible de la table objectifs (pas le texte libre). */
 function formatObjectifLabel(objectif) {
   if (objectif == null || objectif === "") return null;
@@ -69,6 +90,9 @@ function ProgressSectionContent({ progressState }) {
     return <Text style={styles.errorText}>{progressState.error}</Text>;
   }
 
+  const metrics = progressState.metrics || null;
+  const objectifProgress = progressState.objectifProgress || null;
+  const hasMetrics = !!metrics;
   const objectifLabel = formatObjectifLabel(progressState.objectif);
 
   if (!progressState.hasData) {
@@ -95,17 +119,17 @@ function ProgressSectionContent({ progressState }) {
   const hasPace =
     (seasonDelta != null && seasonDelta !== 0) ||
     (weekDelta != null && weekDelta !== 0);
-  const hasFooter = !!(
+  const showFooter = !!(
+    (!objectifProgress && objectifLabel) ||
     metrics?.dateSaisie ||
-    progressState.note ||
-    objectifLabel
+    progressState.note
   );
 
   return (
     <>
       <ObjectifProgressBlock
         objectifProgress={objectifProgress}
-        objectifLabel={progressState.objectif}
+        objectif={progressState.objectif}
       />
 
       {hasMetrics ? (
@@ -129,10 +153,10 @@ function ProgressSectionContent({ progressState }) {
         </View>
       ) : null}
 
-      {metrics?.dateSaisie || progressState.note ? (
+      {showFooter ? (
         <View style={styles.footerBlock}>
           <View style={styles.footerRule} />
-          {objectifLabel ? (
+          {!objectifProgress && objectifLabel ? (
             <ProfileFieldRow
               icon="flag-outline"
               label="هدف الموسم"
@@ -218,11 +242,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     overflow: "hidden",
     marginTop: 4,
+    direction: "rtl",
   },
   barFill: {
     height: "100%",
     backgroundColor: colors.primary,
     borderRadius: 4,
+    alignSelf: "flex-start",
   },
   hizbBlock: {
     gap: radii.sm,
