@@ -425,7 +425,8 @@ const styles = StyleSheet.create({
   saveBtn: {
     backgroundColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: radii.md,
+    paddingVertical: 8,
+    paddingHorizontal: radii.md,
     alignItems: "center",
   },
   saveBtnDisabled: { opacity: 0.7 },

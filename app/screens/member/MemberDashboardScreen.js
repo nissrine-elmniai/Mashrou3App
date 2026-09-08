@@ -20,9 +20,7 @@ import {
   getMyProgress,
   computeProgressMetrics,
   computeProgressPace,
-  computeObjectifProgressFromPrograms,
   latestProgressionRow,
-  PROGRESS_TOTAL_TUMUN,
 } from "../../lib/progressApi";
 import {
   REGISTRATION_STATUS_LABELS,
@@ -31,7 +29,7 @@ import {
 import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
 import { getMyObjectif } from "../../lib/objectifsApi";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
 import {
   StatCard,
   SectionCard,
@@ -53,7 +51,7 @@ import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { TOTAL_HIZB, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -100,11 +98,11 @@ function formatRingPercent(rawPct) {
 }
 
 /** Position en أحزاب depuis les أثمان, sans arrondi à l'entier supérieur. */
-function formatHizbFromTumuns(tumunTotal) {
+function formatHizbAmount(tumunTotal) {
   const h = (Number(tumunTotal) || 0) / TUMUNS_PER_HIZB;
   const one = Math.round(h * 10) / 10;
-  if (one === Math.floor(one)) return `${one} حزب`;
-  return `${one.toFixed(1)} حزب`;
+  if (one === Math.floor(one)) return String(one);
+  return one.toFixed(1);
 }
 
 function parseActivityTimestamp(raw) {
@@ -460,29 +458,7 @@ export default function MemberDashboardScreen({ navigation }) {
     return latest ? computeProgressMetrics(latest) : null;
   }, [progressEntries]);
 
-  const homeGoal = useMemo(() => {
-    const goal = seasonObjectif || progressState.objectif;
-    const nbHizbCible = Number(goal?.nbHizbCible);
-    if (!Number.isInteger(nbHizbCible) || nbHizbCible < 1) {
-      return { hasObjectif: false };
-    }
-    const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
-    const denom = nbHizbCible * TUMUNS_PER_HIZB;
-    const rawPct = denom > 0 ? (tumunTotal / denom) * 100 : 0;
-    const ring = formatRingPercent(rawPct);
-    const pctWhole = Math.round(ring.progress * 10) / 10;
-    const pctStat =
-      pctWhole === Math.floor(pctWhole)
-        ? `${pctWhole}%`
-        : `${pctWhole.toFixed(1)}%`;
-    return {
-      hasObjectif: true,
-      pct: ring.progress,
-      pctStat,
-      tumunTotal,
-      nbHizbCible,
-    };
-  }, [seasonObjectif, progressState.objectif, memorizationMetrics]);
+  const totalAhzab = memorizationMetrics?.nbHizbCompletes ?? 0;
 
   const progressPace = useMemo(
     () =>
@@ -493,32 +469,15 @@ export default function MemberDashboardScreen({ navigation }) {
     [progressEntries, seasons]
   );
 
-  const objectifProgress = useMemo(() => {
-    return computeObjectifProgressFromPrograms(
-      progressState.objectif || seasonObjectif || contactFields.hifzAmount,
-      myMemberPrograms
-    );
-  }, [
-    myMemberPrograms,
-    progressState.objectif,
-    seasonObjectif,
-    contactFields.hifzAmount,
-  ]);
-
   const profileProgressState = useMemo(
     () => ({
       loading:
         !memorizationMetrics && (activitiesLoading || progressState.loading),
       error: progressState.error,
-      hasData: !!memorizationMetrics || !!objectifProgress,
+      hasData: !!memorizationMetrics,
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
-      objectif:
-        progressState.objectif ||
-        seasonObjectif ||
-        contactFields.hifzAmount ||
-        null,
-      objectifProgress,
+      objectif: progressState.objectif || seasonObjectif || null,
       seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
       weekDeltaTumuns: progressPace.weekDeltaTumuns,
     }),
@@ -529,26 +488,40 @@ export default function MemberDashboardScreen({ navigation }) {
       progressState.error,
       progressState.objectif,
       seasonObjectif,
-      contactFields.hifzAmount,
-      objectifProgress,
       progressPace,
     ]
   );
 
+  /** Anneau = avancement vers l'objectif de la saison active (أثمان / cible). */
   const homeProgress = useMemo(() => {
+    const goal = seasonObjectif || progressState.objectif;
+    const nbHizbCible = Number(goal?.nbHizbCible);
+    const hasObjectif = Number.isInteger(nbHizbCible) && nbHizbCible >= 1;
     const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
-    const pct =
-      PROGRESS_TOTAL_TUMUN > 0 ? (tumunTotal / PROGRESS_TOTAL_TUMUN) * 100 : 0;
-    const ring = formatRingPercent(pct);
-    const completedHizb = memorizationMetrics?.nbHizbCompletes ?? 0;
+
+    if (!hasObjectif) {
+      const ring = formatRingPercent(0);
+      return {
+        memorizationPct: ring.progress,
+        memorizationPctLabel: ring.label,
+        programsHizbLabel: "لم يُحدد هدف لهذا الموسم بعد",
+        ringA11y: "لم يُحدد هدف لهذا الموسم بعد. اضغط لتحديد عدد الأحزاب.",
+      };
+    }
+
+    const denom = nbHizbCible * TUMUNS_PER_HIZB;
+    const rawPct = denom > 0 ? (tumunTotal / denom) * 100 : 0;
+    const ring = formatRingPercent(rawPct);
+    const positionLabel = formatHizbAmount(tumunTotal);
     return {
       memorizationPct: ring.progress,
       memorizationPctLabel: ring.label,
-      programsHizbLabel: `${completedHizb} من ${TOTAL_HIZB} حزب`,
+      programsHizbLabel: `${positionLabel} من ${nbHizbCible} حزب`,
+      ringA11y: `تقدم هدف الموسم: ${positionLabel} من ${nbHizbCible} حزب`,
     };
-  }, [memorizationMetrics]);
+  }, [seasonObjectif, progressState.objectif, memorizationMetrics]);
 
-  const { memorizationPct, memorizationPctLabel, programsHizbLabel } =
+  const { memorizationPct, memorizationPctLabel, programsHizbLabel, ringA11y } =
     homeProgress;
 
   const userNotifications = useMemo(
@@ -841,10 +814,10 @@ export default function MemberDashboardScreen({ navigation }) {
           <>
             <TouchableOpacity
               style={styles.heroCard}
-              onPress={() => setTab("programs")}
+              onPress={openProgression}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel="نسبة الحفظ على 60 حزباً"
+              accessibilityLabel={ringA11y}
             >
               <ProgressRing
                 progress={memorizationPct}
@@ -854,59 +827,23 @@ export default function MemberDashboardScreen({ navigation }) {
               >
                 <View style={styles.ringInner} pointerEvents="none">
                   <Text style={styles.ringPct}>{memorizationPctLabel}</Text>
+                  <Text style={styles.juzCount} numberOfLines={2}>
+                    {programsHizbLabel}
+                  </Text>
                 </View>
               </ProgressRing>
-              <Text style={styles.juzCount}>{programsHizbLabel}</Text>
+              <Text style={styles.ringTitle}>هدفي لهذا الموسم</Text>
             </TouchableOpacity>
 
-            {homeGoal.hasObjectif ? (
-              <TouchableOpacity
-                style={styles.goalCard}
-                onPress={openProgression}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="هدف الموسم"
-              >
-                <View style={styles.goalCardHead}>
-                  <Ionicons
-                    name="book-outline"
-                    size={22}
-                    color={colors.primary}
-                  />
-                  <Text style={styles.goalCardLabel}>هدف الموسم</Text>
-                  <Text style={styles.goalCardValue}>{homeGoal.pctStat}</Text>
-                </View>
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[styles.progressFill, { width: `${homeGoal.pct}%` }]}
-                  />
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.goalCard}
-                onPress={openProgression}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="تحديد هدف الموسم"
-              >
-                <View style={styles.goalCardHead}>
-                  <Ionicons
-                    name="book-outline"
-                    size={22}
-                    color={colors.primary}
-                  />
-                  <Text style={styles.goalCardLabel}>هدف الموسم</Text>
-                  <Text style={styles.goalCardValue}>—</Text>
-                </View>
-                <Text style={styles.goalCardHint}>
-                  لم يُحدد هدف لهذا الموسم بعد. اضغط لتحديد عدد الأحزاب.
-                </Text>
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: "0%" }]} />
-                </View>
-              </TouchableOpacity>
-            )}
+            <StatCard
+              layout="inline"
+              icon="book-outline"
+              iconColor={colors.primary}
+              borderColor={colors.borderGreen}
+              label="مجموع الأحزاب المكتملة"
+              value={totalAhzab}
+              valueColor={colors.primary}
+            />
 
             <StatCard
               layout="inline"
@@ -1197,12 +1134,20 @@ const styles = StyleSheet.create({
     color: colors.primary,
     ...rtlTextCenter,
   },
+  ringTitle: {
+    color: colors.primary,
+    fontSize: 13,
+    fontFamily: fonts.bold,
+    marginTop: 10,
+    ...rtlTextCenter,
+  },
   juzCount: {
     color: colors.muted,
-    fontSize: 14,
+    fontSize: 11,
     fontFamily: fonts.regular,
-    marginTop: 10,
-    ...rtlText,
+    marginTop: 2,
+    textAlign: "center",
+    ...rtlTextCenter,
   },
 
   activityLoading: {
@@ -1255,60 +1200,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 13,
     ...rtlText,
-  },
-
-  goalCard: {
-    backgroundColor: colors.card,
-    borderRadius: radii.lg,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: 1.5,
-    borderColor: colors.borderGreen,
-    ...shadows.card,
-  },
-  goalCardHead: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 10,
-  },
-  goalCardValue: {
-    fontSize: 19,
-    fontFamily: fonts.bold,
-    ...rtlTextBold,
-    minWidth: 24,
-    textAlign: "center",
-    color: colors.primary,
-  },
-  goalCardLabel: {
-    color: colors.muted,
-    fontSize: 14,
-    fontFamily: fonts.regular,
-    flex: 1,
-    ...rtlText,
-  },
-  goalCardHint: {
-    color: colors.muted,
-    fontSize: 14,
-    fontFamily: fonts.regular,
-    flex: 1,
-    marginTop: 10,
-    marginBottom: 6,
-    ...rtlText,
-  },
-  progressTrack: {
-    height: 8,
-    backgroundColor: colors.border,
-    borderRadius: 8,
-    overflow: "hidden",
-    direction: "rtl",
-    marginTop: 10,
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: colors.primary,
-    borderRadius: 8,
-    alignSelf: "flex-start",
   },
 
   notifItem: {
