@@ -14,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, fonts, arrowBack, row } from "../../constants/rtl";
+import { rtlText, fonts, arrowBack, row, isRTL } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import {
   getVisibleAlertsWithAckStatus,
@@ -94,11 +94,8 @@ export default function MemberAlertsScreen({ navigation }) {
             </TouchableOpacity>
             <View style={styles.headerTextWrap}>
               <Text style={styles.headerTitle}>الإشعارات</Text>
-              <Text style={styles.headerSubtitle}>
-                تنبيهات الإدارة منذ تاريخ تسجيلك
-              </Text>
+           
             </View>
-            <View style={styles.headerBtn} />
           </View>
         </LinearGradient>
       </View>
@@ -188,6 +185,8 @@ export default function MemberAlertsScreen({ navigation }) {
   );
 }
 
+const alignEdge = isRTL ? "flex-start" : "flex-end";
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   headerWrap: {
@@ -205,6 +204,8 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: row,
     alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 8,
   },
   headerBtn: {
     width: 36,
@@ -213,13 +214,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTextWrap: {
-    flex: 1,
-    alignItems: "center",
+    flexShrink: 1,
+    alignItems: alignEdge,
   },
   headerTitle: {
     color: "#fff",
     fontSize: 18,
     fontFamily: fonts.bold,
+    textAlign: "right",
     ...rtlText,
   },
   headerSubtitle: {
@@ -227,6 +229,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     fontFamily: fonts.regular,
+    textAlign: "right",
     ...rtlText,
   },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },

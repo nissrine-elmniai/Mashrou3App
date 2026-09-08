@@ -26,8 +26,8 @@ import {
   computeProgressPace,
   computeObjectifProgressFromPrograms,
   latestProgressionRow,
-  getMemberSeasonObjectif,
 } from "../../lib/progressApi";
+import { getMyObjectif } from "../../lib/objectifsApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
@@ -172,13 +172,17 @@ export default function MemberProfileScreen({ navigation }) {
       registrationDate: inscRes.ok ? inscRes.dateInscription : null,
     });
 
+    const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
     const [progRes, objRes, presRes] = await Promise.all([
       getMyProgress(),
-      saisonId
-        ? getMemberSeasonObjectif(authId, saisonId)
+      objectifSaisonId
+        ? getMyObjectif(objectifSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
       getMemberPresenceSummary(authId, seanceId),
     ]);
+
+    const objectif =
+      objRes.ok && objRes.objectif ? objRes.objectif : null;
 
     if (!progRes.ok) {
       setProgressState({
@@ -187,7 +191,7 @@ export default function MemberProfileScreen({ navigation }) {
         hasData: false,
         metrics: null,
         note: null,
-        objectif: null,
+        objectif,
         seasonDeltaTumuns: null,
         weekDeltaTumuns: null,
       });

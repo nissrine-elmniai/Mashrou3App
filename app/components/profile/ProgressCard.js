@@ -48,33 +48,17 @@ function PaceLine({ delta, suffix }) {
   );
 }
 
-function ObjectifProgressBlock({ objectifProgress, objectifLabel }) {
-  if (!objectifProgress && !objectifLabel) return null;
-  const pct = objectifProgress?.pct ?? 0;
-
-  return (
-    <View style={styles.objectifBlock}>
-      <View style={styles.objectifHeader}>
-        <Text style={styles.objectifTitle}>هدف الموسم</Text>
-        {objectifProgress ? (
-          <Text style={styles.objectifPct}>{formatPctLabel(pct)}</Text>
-        ) : null}
-      </View>
-      <Text style={styles.objectifLabel}>
-        {objectifProgress?.label || objectifLabel}
-      </Text>
-      {objectifProgress ? (
-        <View style={styles.barTrack}>
-          <View
-            style={[
-              styles.barFill,
-              { width: `${Math.min(100, Math.max(0, pct))}%` },
-            ]}
-          />
-        </View>
-      ) : null}
-    </View>
-  );
+/** Libellé هدف الموسم : nb_hizb_cible de la table objectifs (pas le texte libre). */
+function formatObjectifLabel(objectif) {
+  if (objectif == null || objectif === "") return null;
+  if (typeof objectif === "object" && objectif.nbHizbCible != null) {
+    return `${objectif.nbHizbCible} حزب`;
+  }
+  const n = Number(objectif);
+  if (Number.isInteger(n) && n >= 1 && n <= TOTAL_HIZB) {
+    return `${n} حزب`;
+  }
+  return null;
 }
 
 function ProgressSectionContent({ progressState }) {
@@ -85,13 +69,23 @@ function ProgressSectionContent({ progressState }) {
     return <Text style={styles.errorText}>{progressState.error}</Text>;
   }
 
-  const metrics = progressState.metrics;
-  const objectifProgress = progressState.objectifProgress;
-  const hasMetrics = !!metrics;
-  const hasObjectif = !!(progressState.objectif || objectifProgress);
+  const objectifLabel = formatObjectifLabel(progressState.objectif);
 
-  if (!hasMetrics && !hasObjectif) {
-    return <Text style={styles.emptyText}>لم يتم تسجيل أي تقدم بعد</Text>;
+  if (!progressState.hasData) {
+    return (
+      <>
+        <Text style={styles.emptyText}>لم يتم تسجيل أي تقدم بعد</Text>
+        {objectifLabel ? (
+          <View style={styles.footerBlock}>
+            <ProfileFieldRow
+              icon="flag-outline"
+              label="هدف الموسم"
+              value={objectifLabel}
+            />
+          </View>
+        ) : null}
+      </>
+    );
   }
 
   const nbHizb = metrics?.nbHizbCompletes ?? 0;
@@ -101,6 +95,11 @@ function ProgressSectionContent({ progressState }) {
   const hasPace =
     (seasonDelta != null && seasonDelta !== 0) ||
     (weekDelta != null && weekDelta !== 0);
+  const hasFooter = !!(
+    metrics?.dateSaisie ||
+    progressState.note ||
+    objectifLabel
+  );
 
   return (
     <>
@@ -133,6 +132,13 @@ function ProgressSectionContent({ progressState }) {
       {metrics?.dateSaisie || progressState.note ? (
         <View style={styles.footerBlock}>
           <View style={styles.footerRule} />
+          {objectifLabel ? (
+            <ProfileFieldRow
+              icon="flag-outline"
+              label="هدف الموسم"
+              value={objectifLabel}
+            />
+          ) : null}
           {metrics?.dateSaisie ? (
             <ProfileFieldRow
               icon="calendar-outline"

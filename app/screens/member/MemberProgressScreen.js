@@ -33,6 +33,7 @@ import {
   getMyProgress,
   latestProgressionRow,
 } from "../../lib/progressApi";
+import { getMyObjectif, setMyObjectif } from "../../lib/objectifsApi";
 import {
   TOTAL_HIZB,
   TUMUN_UI_MAX,
@@ -65,22 +66,50 @@ function parseTumunInput(raw) {
   return { ok: true, value: n };
 }
 
+function parseObjectifInput(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (trimmed === "") {
+    return { ok: false, error: "أدخل عدد الأحزاب المستهدفة (1 إلى 60)" };
+  }
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 1 || n > TOTAL_HIZB) {
+    return { ok: false, error: "عدد الأحزاب المستهدفة يجب أن يكون بين 1 و 60" };
+  }
+  return { ok: true, value: n };
+}
+
 export default function MemberProgressScreen({ navigation }) {
   const { seasons } = useApp();
   const [hizb, setHizb] = useState("");
   const [tumun, setTumun] = useState("");
   const [notes, setNotes] = useState("");
+  const [goalHizb, setGoalHizb] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingObjectif, setSavingObjectif] = useState(false);
   const [entries, setEntries] = useState([]);
   const [loadError, setLoadError] = useState(null);
+
+  const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     await flushMemberProgressDelta();
-    const res = await getMyProgress();
+    const activeSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
+    const [res, objRes] = await Promise.all([
+      getMyProgress(),
+      activeSaisonId
+        ? getMyObjectif(activeSaisonId)
+        : Promise.resolve({ ok: true, objectif: null }),
+    ]);
     setLoading(false);
+    if (objRes.ok) {
+      const n = objRes.objectif?.nbHizbCible;
+      setGoalHizb(n != null ? String(n) : "");
+    } else {
+      setGoalHizb("");
+    }
     if (!res.ok) {
       setLoadError(res.error);
       return;
@@ -102,7 +131,7 @@ export default function MemberProgressScreen({ navigation }) {
       setTumun("");
       setNotes("");
     }
-  }, []);
+  }, [seasons]);
 
   useFocusEffect(
     useCallback(() => {
@@ -143,6 +172,23 @@ export default function MemberProgressScreen({ navigation }) {
     ]);
   };
 
+  const handleSaveObjectif = async () => {
+    if (!saisonId) return;
+    const parsed = parseObjectifInput(goalHizb);
+    if (!parsed.ok) {
+      Alert.alert("تنبيه", parsed.error);
+      return;
+    }
+    setSavingObjectif(true);
+    const result = await setMyObjectif(saisonId, parsed.value);
+    setSavingObjectif(false);
+    if (!result.ok) {
+      Alert.alert("تنبيه", result.error || "تعذر حفظ الهدف");
+      return;
+    }
+    Alert.alert("تم", "تم حفظ هدف الموسم");
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
       <StatusBar style="light" />
@@ -168,10 +214,7 @@ export default function MemberProgressScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.lead}>
-            هذا موضعك في القرآن، مستقل عن برامج الحفظ والمراجعة. يمكنك تصحيحه في
-            أي وقت.
-          </Text>
+         
 
           {loading ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />
@@ -179,6 +222,10 @@ export default function MemberProgressScreen({ navigation }) {
             <Text style={styles.errorText}>{loadError}</Text>
           ) : (
             <View style={[styles.card, shadows.card]}>
+               <Text style={styles.lead}>
+            هذا مقدار حفظك الكامل في القرآن الكريم، مستقل عن برامج الحفظ
+            والمراجعة. يمكنك تصحيحه في أي وقت.
+          </Text>
               <View style={styles.fieldsRow}>
                 <View style={styles.fieldCol}>
                   <Text style={styles.fieldLabel}>الأحزاب المكتملة (0–60)</Text>
@@ -230,6 +277,38 @@ export default function MemberProgressScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           )}
+
+          {!loading && saisonId ? (
+            <View style={[styles.card, shadows.card]}>
+              <Text style={styles.historyTitle}>هدف الموسم</Text>
+              <Text style={styles.objectifHint}>
+                عدد الأحزاب التي تطمح لحفظها خلال هذا الموسم (1 إلى 60).
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={goalHizb}
+                onChangeText={setGoalHizb}
+                keyboardType="number-pad"
+                placeholder="مثال : 2"
+                placeholderTextColor={colors.placeholder}
+                textAlign={textAlignStart}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.saveBtn,
+                  savingObjectif && styles.saveBtnDisabled,
+                ]}
+                onPress={savingObjectif ? undefined : handleSaveObjectif}
+                activeOpacity={0.85}
+              >
+                {savingObjectif ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.saveBtnText}>حفظ الهدف</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {!loading && entries.length > 0 ? (
             <View style={[styles.card, shadows.card]}>
@@ -362,6 +441,14 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: radii.sm,
     ...rtlTextBold,
+  },
+  objectifHint: {
+    fontSize: radii.md,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    marginBottom: radii.md,
+    lineHeight: radii.lg + radii.sm,
+    ...rtlText,
   },
   historyRow: { paddingVertical: radii.sm },
   historyRowBorder: {

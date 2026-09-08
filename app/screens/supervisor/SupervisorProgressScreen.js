@@ -21,6 +21,7 @@ import {
   computeProgressPace,
   getMemberProgressEntries,
 } from "../../lib/progressApi";
+import { getMemberObjectif } from "../../lib/objectifsApi";
 import { formatHizbTumunDelta, tumunStoredToUi } from "../../lib/tumun";
 import {
   ACTIVITY_DAY_COUNT,
@@ -45,7 +46,7 @@ function formatHizbTumunPosition(entry, metrics) {
   return `${hizb} حزب · الثمن ${tumunStoredToUi(entry?.tumun_courant)}`;
 }
 
-function progressStateFromMember(member, progressLoading, pace) {
+function progressStateFromMember(member, progressLoading, pace, objectif) {
   if (progressLoading) {
     return {
       loading: true,
@@ -65,7 +66,7 @@ function progressStateFromMember(member, progressLoading, pace) {
     hasData: !!metrics,
     metrics,
     note: metrics?.notes || null,
-    objectif: null,
+    objectif: objectif || null,
     seasonDeltaTumuns: pace?.seasonDeltaTumuns ?? null,
     weekDeltaTumuns: pace?.weekDeltaTumuns ?? null,
   };
@@ -115,6 +116,7 @@ export default function SupervisorProgressScreen({
     entries: [],
     loading: false,
   });
+  const [objectif, setObjectif] = useState(null);
 
   useEffect(() => {
     if (members.length === 0) {
@@ -187,6 +189,22 @@ export default function SupervisorProgressScreen({
   }, [members, query]);
 
   const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+
+  useEffect(() => {
+    if (!selectedMemberId || !saisonId) {
+      setObjectif(null);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await getMemberObjectif(selectedMemberId, saisonId);
+      if (cancelled) return;
+      setObjectif(res.ok && res.objectif ? res.objectif : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMemberId, saisonId]);
   const historyReady =
     history.memberId === selectedMemberId && !history.loading;
   const pace = useMemo(() => {
@@ -204,7 +222,8 @@ export default function SupervisorProgressScreen({
   const progressState = progressStateFromMember(
     selectedMember,
     progressLoading,
-    pace
+    pace,
+    objectif
   );
 
   const currentPositionLabel = selectedMember?.prog?.metrics

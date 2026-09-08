@@ -694,6 +694,17 @@ export function mergeInboxRows(contacts, threads, options = {}) {
   return rows;
 }
 
+/** Nombre de conversations (DM + groupes) avec au moins un message non lu. */
+export function countUnseenConversations(threads = [], groups = []) {
+  const dm = (threads || []).filter(
+    (t) => t.unread || Number(t.unreadCount) > 0
+  ).length;
+  const groupCount = (groups || []).filter(
+    (g) => g.unread || Number(g.unreadCount) > 0
+  ).length;
+  return dm + groupCount;
+}
+
 /** Libellé latin du badge non lu : vide, "1"…"9", ou "9+". */
 export function formatUnreadBadge(count) {
   const n = Number(count) || 0;

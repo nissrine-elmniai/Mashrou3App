@@ -17,7 +17,7 @@ import { rtlText, rtlTextBold, row, textAlignStart, fonts, arrowBack } from "../
 import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { initials } from "./supervisorHelpers";
-import { mergeInboxRows, listAdminProfiles } from "../../lib/messagesApi";
+import { mergeInboxRows, listAdminProfiles, countUnseenConversations } from "../../lib/messagesApi";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
@@ -34,31 +34,55 @@ function adminDisplayName(admin) {
   return name || admin.email || "الإدارة";
 }
 
-export default function SupervisorMessagesScreen({ navigation, route }) {
+function normalizeMemberList(list) {
+  return (list || []).map((m) => ({
+    user: {
+      id: m.id || m.user?.id,
+      firstName: m.firstName || m.user?.firstName,
+      lastName: m.lastName || m.user?.lastName,
+      avatarUrl: m.avatarUrl || m.user?.avatarUrl || null,
+    },
+  }));
+}
+
+export default function SupervisorMessagesScreen({
+  navigation,
+  route,
+  embedded = false,
+  seanceId: seanceIdProp,
+  groupName: groupNameProp,
+  members: membersProp,
+  onBack,
+}) {
   const { currentUser, supabaseSession } = useApp();
   const authId = supabaseSession?.user?.id || currentUser?.authId || null;
-  const seanceId = route?.params?.seanceId || null;
-  const paramMembers = route?.params?.members;
-  const paramGroupName = route?.params?.groupName || null;
+  const seanceId = seanceIdProp || route?.params?.seanceId || null;
+  const paramMembers = membersProp || route?.params?.members;
+  const paramGroupName = groupNameProp || route?.params?.groupName || null;
   const { threads } = useInboxThreads();
   const { groups: chatGroups, reload: reloadChatGroups } = useChatGroups();
   const [admins, setAdmins] = useState([]);
   const [search, setSearch] = useState("");
   const [members, setMembers] = useState(() =>
-    (paramMembers || []).map((m) => ({
-      user: {
-        id: m.id,
-        firstName: m.firstName,
-        lastName: m.lastName,
-        avatarUrl: m.avatarUrl || null,
-      },
-    }))
+    normalizeMemberList(paramMembers)
   );
   const [activeGroup, setActiveGroup] = useState(
     paramGroupName ? { id: seanceId, name: paramGroupName } : null
   );
   const [seanceChatGroup, setSeanceChatGroup] = useState(null);
   const [loading, setLoading] = useState(!paramMembers);
+
+  useEffect(() => {
+    if (membersProp) setMembers(normalizeMemberList(membersProp));
+  }, [membersProp]);
+
+  useEffect(() => {
+    if (paramGroupName) {
+      setActiveGroup((prev) =>
+        seanceId ? { id: seanceId, name: paramGroupName } : prev
+      );
+    }
+  }, [paramGroupName, seanceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -232,18 +256,43 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
     });
   };
 
+  const unseenConversations = useMemo(
+    () => countUnseenConversations(threads, chatGroups),
+    [threads, chatGroups]
+  );
+
+  const handleBack = () => {
+    if (onBack) {
+      onBack();
+      return;
+    }
+    navigation.goBack();
+  };
+
+  const Wrapper = embedded ? View : SafeAreaView;
+  const wrapperProps = embedded
+    ? { style: styles.container }
+    : { style: styles.container, edges: ["top", "bottom"] };
+
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+    <Wrapper {...wrapperProps}>
+      {embedded ? null : (
+        <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+      )}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
-          onPress={() => navigation.goBack()}
+          onPress={handleBack}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="رجوع"
         >
           <Ionicons name={arrowBack} size={22} color="white" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>الرسائل</Text>
+        {unseenConversations > 0 ? (
+          <Text style={styles.headerCount}>({unseenConversations})</Text>
+        ) : null}
       </View>
 
       {loading ? (
@@ -251,14 +300,13 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
-        <View style={styles.flexFill}>
+        <ScrollView
+          style={styles.flexFill}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.topBlock}>
-            {activeGroup ? (
-              <Text style={styles.groupName} numberOfLines={1}>
-                {activeGroup.name}
-              </Text>
-            ) : null}
-
             <View style={styles.searchWrapper}>
               <Ionicons name="search-outline" size={20} color={colors.placeholder} />
               <TextInput
@@ -315,42 +363,41 @@ export default function SupervisorMessagesScreen({ navigation, route }) {
             <Text style={styles.messagesDividerText}>أعضاء الحصة</Text>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {filteredMemberRows.length === 0 ? (
-              <EmptyState
-                text={
-                  search.trim()
-                    ? "لا يوجد عضو بهذا الاسم في مجموعاتك"
-                    : "لا يوجد أعضاء بعد"
-                }
+          {filteredMemberRows.length === 0 ? (
+            <EmptyState
+              text={
+                search.trim()
+                  ? "لا يوجد عضو بهذا الاسم في مجموعاتك"
+                  : "لا يوجد أعضاء بعد"
+              }
+            />
+          ) : (
+            filteredMemberRows.map((row) => (
+              <ChatThreadRow
+                key={`member-${row.id}`}
+                name={row.name}
+                preview={row.lastMessage}
+                time={row.time}
+                userId={row.id}
+                avatarLetter={row.avatarLetter}
+                avatarUrl={row.avatarUrl}
+                highlighted={!!row.unread}
+                unread={row.unread}
+                unreadCount={row.unreadCount}
+                onPress={() => openThread(row)}
               />
-            ) : (
-              filteredMemberRows.map((row) => (
-                <ChatThreadRow
-                  key={`member-${row.id}`}
-                  name={row.name}
-                  preview={row.lastMessage}
-                  time={row.time}
-                  userId={row.id}
-                  avatarLetter={row.avatarLetter}
-                  avatarUrl={row.avatarUrl}
-                  highlighted={!!row.unread}
-                  unread={row.unread}
-                  unreadCount={row.unreadCount}
-                  onPress={() => openThread(row)}
-                />
-              ))
-            )}
-          </ScrollView>
-        </View>
+            ))
+          )}
+        </ScrollView>
       )}
-    </SafeAreaView>
+    </Wrapper>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flexFill: { flex: 1 },
+  scrollContent: { paddingBottom: 24, flexGrow: 1 },
   header: {
     flexDirection: row,
     alignItems: "center",
@@ -361,11 +408,15 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 2 },
   headerTitle: {
-    flex: 1,
     color: "white",
     fontSize: 18,
     fontFamily: fonts.bold,
     ...rtlTextBold,
+  },
+  headerCount: {
+    color: "white",
+    fontSize: 16,
+    fontFamily: fonts.medium,
   },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
   topBlock: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
