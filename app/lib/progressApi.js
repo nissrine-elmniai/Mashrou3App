@@ -644,6 +644,54 @@ export function computeObjectifProgress(objectifText, seasonMemorizedTumuns) {
 }
 
 /**
+ * Progression globale = Σ progrès des programmes حفظ / objectif global (début de saison).
+ * Ex. objectif 10 أحزاب + programmes 3+2+2 → le % utilise les أثمان complétés
+ * de ces programmes, dénominateur = 10 أحزاب.
+ */
+export function computeObjectifProgressFromPrograms(
+  objectifText,
+  programs = []
+) {
+  const targetTumuns = parseObjectifToTumuns(objectifText);
+  if (!targetTumuns || targetTumuns <= 0) return null;
+
+  const hifzPrograms = (programs || []).filter((p) => {
+    const t = String(p?.type || "hifz").toLowerCase();
+    return t !== "mouraja3a" && t !== "مراجعة";
+  });
+
+  let doneTumuns = 0;
+  let plannedTumuns = 0;
+  hifzPrograms.forEach((p) => {
+    const nb = Math.max(0, Number(p.nbHizb) || 0);
+    const total =
+      Number(p.totalTumuns) > 0
+        ? Number(p.totalTumuns)
+        : nb * TUMUNS_PER_HIZB;
+    const done = Math.min(total, Math.max(0, Number(p.completedTumuns) || 0));
+    plannedTumuns += total;
+    doneTumuns += done;
+  });
+
+  // Ne pas dépasser l'objectif global
+  const cappedDone = Math.min(targetTumuns, doneTumuns);
+  const pct = Math.min(100, Math.round((cappedDone / targetTumuns) * 100));
+
+  return {
+    label: String(objectifText || "").trim(),
+    targetTumuns,
+    doneTumuns: cappedDone,
+    plannedTumuns: Math.min(targetTumuns, plannedTumuns),
+    remainingTumuns: Math.max(0, targetTumuns - cappedDone),
+    pct,
+    programCount: hifzPrograms.length,
+    targetHizb: targetTumuns / TUMUNS_PER_HIZB,
+    doneHizb: cappedDone / TUMUNS_PER_HIZB,
+    plannedHizb: Math.min(targetTumuns, plannedTumuns) / TUMUNS_PER_HIZB,
+  };
+}
+
+/**
  * (Admin) Toutes les progressions, avec le profil de chaque membre joint.
  * RLS : progression_admin_select (lecture globale admin uniquement).
  * @returns { ok, entries }

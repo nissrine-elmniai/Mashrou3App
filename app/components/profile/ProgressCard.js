@@ -51,6 +51,7 @@ function PaceLine({ delta, suffix }) {
 function ObjectifProgressBlock({ objectifProgress, objectifLabel }) {
   if (!objectifProgress && !objectifLabel) return null;
   const pct = objectifProgress?.pct ?? 0;
+
   return (
     <View style={styles.objectifBlock}>
       <View style={styles.objectifHeader}>
@@ -63,19 +64,14 @@ function ObjectifProgressBlock({ objectifProgress, objectifLabel }) {
         {objectifProgress?.label || objectifLabel}
       </Text>
       {objectifProgress ? (
-        <>
-          <View style={styles.barTrack}>
-            <View
-              style={[
-                styles.barFill,
-                { width: `${Math.min(100, Math.max(0, pct))}%` },
-              ]}
-            />
-          </View>
-          <Text style={styles.objectifHint}>
-            تقدم الموسم نحو هدفك — يُحدَّث مع كل تسجيل للتقدم
-          </Text>
-        </>
+        <View style={styles.barTrack}>
+          <View
+            style={[
+              styles.barFill,
+              { width: `${Math.min(100, Math.max(0, pct))}%` },
+            ]}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -221,12 +217,6 @@ const styles = StyleSheet.create({
     height: "100%",
     backgroundColor: colors.primary,
     borderRadius: 4,
-  },
-  objectifHint: {
-    fontSize: 11,
-    color: colors.muted,
-    fontFamily: fonts.regular,
-    ...rtlText,
   },
   hizbBlock: {
     gap: radii.sm,

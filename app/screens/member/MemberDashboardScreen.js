@@ -20,8 +20,7 @@ import {
   getMyProgress,
   computeProgressMetrics,
   computeProgressPace,
-  computeSeasonMemorizedTumuns,
-  computeObjectifProgress,
+  computeObjectifProgressFromPrograms,
   latestProgressionRow,
   getMemberSeasonObjectif,
 } from "../../lib/progressApi";
@@ -478,15 +477,12 @@ export default function MemberDashboardScreen({ navigation }) {
   );
 
   const objectifProgress = useMemo(() => {
-    const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
-    const memorized = computeSeasonMemorizedTumuns(progressEntries, saisonId);
-    return computeObjectifProgress(
+    return computeObjectifProgressFromPrograms(
       progressState.objectif || seasonObjectif || contactFields.hifzAmount,
-      memorized
+      myMemberPrograms
     );
   }, [
-    progressEntries,
-    seasons,
+    myMemberPrograms,
     progressState.objectif,
     seasonObjectif,
     contactFields.hifzAmount,
