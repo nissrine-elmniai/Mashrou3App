@@ -45,8 +45,29 @@ export function sortSeancesByJour(seances = []) {
   });
 }
 
+/** Normalise le genre sans importer membersApi (évite import circulaire). */
+function normalizeGenre(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const key = text.toLowerCase();
+  if (key === "m" || key === "male" || key === "homme" || text === "ذكر") {
+    return "ذكر";
+  }
+  if (
+    key === "f" ||
+    key === "female" ||
+    key === "femme" ||
+    text === "أنثى" ||
+    text === "انثى"
+  ) {
+    return "أنثى";
+  }
+  return text;
+}
+
 function isValidGenre(genre) {
-  return genre === "ذكر" || genre === "أنثى";
+  const normalized = normalizeGenre(genre);
+  return normalized === "ذكر" || normalized === "أنثى";
 }
 
 function isValidJourSemaine(jour) {
@@ -70,24 +91,26 @@ export function formatPgTimeLabel(value) {
 }
 
 /**
- * (Public) Séances actives filtrées par sexe — formulaire d'intégration.
+ * (Public) Séances actives filtrées par sexe — formulaire d'intégration / renouvellement.
  * RLS : seances_select_active_public.
- * @param {string} genre 'ذكر' | 'أنثى'
- * @returns {{ ok, seances }}
+ * @param {string} genre 'ذكر' | 'أنثى' (ou variante normalisée)
+ * @param {string|null} saisonId musim actif — exclut les séances d'autres musims
+ * @returns {{ ok, seances, reason?: string }}
  */
 export async function getActiveSeancesByGenre(genre, saisonId = null) {
   if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
+    return { ok: false, error: "Supabase غير مفعّل", seances: [] };
   }
-  if (!isValidGenre(genre)) {
-    return { ok: true, seances: [] };
+  const normalized = normalizeGenre(genre);
+  if (!isValidGenre(normalized)) {
+    return { ok: true, seances: [], reason: "invalid_genre" };
   }
   try {
+    // Pas de filtre genre strict SQL (variantes unicode / legacy) — filtrage client
     let query = supabase
       .from("seances")
       .select("id, nom, jour, heure_debut, heure_fin, genre, statut, saison_id")
-      .eq("statut", "active")
-      .eq("genre", genre);
+      .eq("statut", "active");
     if (saisonId) {
       query = query.or(`saison_id.eq.${saisonId},saison_id.is.null`);
     }
@@ -97,11 +120,51 @@ export async function getActiveSeancesByGenre(genre, saisonId = null) {
       "قراءة الحصص المتاحة"
     );
     if (error) {
-      return { ok: false, error: mapTableError(error, "seances") };
+      return {
+        ok: false,
+        error: mapTableError(error, "seances"),
+        seances: [],
+      };
     }
-    return { ok: true, seances: sortSeancesByJour(data || []) };
+
+    const allActive = data || [];
+    const forGenre = allActive.filter(
+      (s) => normalizeGenre(s.genre) === normalized
+    );
+
+    // Diagnostic : des séances du genre existent mais hors musim (archivées / autre saison)
+    if (forGenre.length === 0 && saisonId) {
+      const { data: anySeason } = await withTimeout(
+        supabase
+          .from("seances")
+          .select("id, genre, statut, saison_id")
+          .eq("statut", "active"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة الحصص"
+      );
+      const elsewhere = (anySeason || []).filter(
+        (s) => normalizeGenre(s.genre) === normalized
+      );
+      if (elsewhere.length > 0) {
+        return {
+          ok: true,
+          seances: [],
+          reason: "wrong_season",
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      seances: sortSeancesByJour(forGenre),
+      reason: forGenre.length === 0 ? "none" : null,
+    };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      seances: [],
+    };
   }
 }
 

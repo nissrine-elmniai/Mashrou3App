@@ -53,7 +53,10 @@ export function mapMemberApplicationRow(row) {
     school: row.school || "",
     level: row.level || "",
     phone: row.phone || "",
-    hifzAmount: row.hifz_amount || "",
+    hifzAmount:
+      answers.seasonGoal ||
+      row.hifz_amount ||
+      "",
     email: row.email || "",
     gender: row.genre || "",
     seanceId: row.seance_id || null,
@@ -133,7 +136,10 @@ export async function insertPendingMemberApplication(reg) {
     phone: reg.phone || null,
     school: reg.school || null,
     level: reg.level || null,
-    hifz_amount: reg.hifzAmount || null,
+    hifz_amount:
+      reg.hifzAmount ||
+      reg.formAnswers?.seasonGoal ||
+      null,
     season_id: reg.seasonId || null,
     seance_id: reg.seanceId || null,
     requested_seance_name: reg.seanceName || reg.requestedSeanceName || null,
@@ -208,7 +214,10 @@ export async function upsertMemberApplication(reg, status) {
     phone: reg.phone || null,
     school: reg.school || null,
     level: reg.level || null,
-    hifz_amount: reg.hifzAmount || null,
+    hifz_amount:
+      reg.hifzAmount ||
+      reg.formAnswers?.seasonGoal ||
+      null,
     season_id: reg.seasonId || null,
     seance_id: reg.seanceId || null,
     requested_seance_name: reg.seanceName || reg.requestedSeanceName || null,

@@ -26,6 +26,13 @@ function formatCardPercent(tumunTotal) {
   return `${LRI}${one.toFixed(1)}%${PDI}`;
 }
 
+function formatPctLabel(pct) {
+  const n = Math.min(100, Math.max(0, Number(pct) || 0));
+  if (n <= 0) return `${LRI}0%${PDI}`;
+  if (n >= 100) return `${LRI}100%${PDI}`;
+  return `${LRI}${n}%${PDI}`;
+}
+
 function PaceLine({ delta, suffix }) {
   const label = formatHizbTumunDelta(delta, suffix);
   if (!label) return null;
@@ -81,7 +88,6 @@ function ProgressSectionContent({ progressState }) {
     );
   }
 
-  const metrics = progressState.metrics;
   const nbHizb = metrics?.nbHizbCompletes ?? 0;
   const pctLabel = formatCardPercent(metrics?.tumunTotal);
   const seasonDelta = progressState.seasonDeltaTumuns;
@@ -97,17 +103,24 @@ function ProgressSectionContent({ progressState }) {
 
   return (
     <>
-      <View style={styles.hizbBlock}>
-        <Text style={styles.hizbLabel}>الأحزاب المكتملة</Text>
-        <View style={styles.hizbRow}>
-          <Text style={styles.hizbValue}>{nbHizb}</Text>
-          <Text style={styles.hizbDenom}>/ {TOTAL_HIZB}</Text>
+      <ObjectifProgressBlock
+        objectifProgress={objectifProgress}
+        objectifLabel={progressState.objectif}
+      />
+
+      {hasMetrics ? (
+        <View style={styles.hizbBlock}>
+          <Text style={styles.hizbLabel}>الأحزاب المكتملة</Text>
+          <View style={styles.hizbRow}>
+            <Text style={styles.hizbValue}>{nbHizb}</Text>
+            <Text style={styles.hizbDenom}>/ {TOTAL_HIZB}</Text>
+          </View>
+          <View style={styles.pctRow}>
+            <Text style={styles.pctCaption}>التقدم الكلي</Text>
+            <Text style={styles.pctValue}>{pctLabel}</Text>
+          </View>
         </View>
-        <View style={styles.pctRow}>
-          <Text style={styles.pctCaption}>التقدم الكلي</Text>
-          <Text style={styles.pctValue}>{pctLabel}</Text>
-        </View>
-      </View>
+      ) : null}
 
       {hasPace ? (
         <View style={styles.paceBlock}>
@@ -116,7 +129,7 @@ function ProgressSectionContent({ progressState }) {
         </View>
       ) : null}
 
-      {hasFooter ? (
+      {metrics?.dateSaisie || progressState.note ? (
         <View style={styles.footerBlock}>
           <View style={styles.footerRule} />
           {objectifLabel ? (
@@ -141,7 +154,6 @@ function ProgressSectionContent({ progressState }) {
               valueStyle={styles.noteValue}
             />
           ) : null}
-        
         </View>
       ) : null}
     </>
@@ -167,6 +179,50 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: radii.xl,
     padding: radii.lg,
+  },
+  objectifBlock: {
+    backgroundColor: colors.soft,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    padding: radii.md,
+    marginBottom: radii.lg,
+    gap: radii.sm,
+  },
+  objectifHeader: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  objectifTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: radii.md,
+    color: colors.primary,
+    ...rtlText,
+  },
+  objectifPct: {
+    fontFamily: fonts.bold,
+    fontSize: radii.lg,
+    color: colors.primary,
+    ...rtlTextBold,
+  },
+  objectifLabel: {
+    fontFamily: fonts.regular,
+    fontSize: radii.md,
+    color: colors.text,
+    ...rtlText,
+  },
+  barTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.card,
+    overflow: "hidden",
+    marginTop: 4,
+  },
+  barFill: {
+    height: "100%",
+    backgroundColor: colors.primary,
+    borderRadius: 4,
   },
   hizbBlock: {
     gap: radii.sm,

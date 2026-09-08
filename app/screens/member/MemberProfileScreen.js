@@ -24,6 +24,7 @@ import {
   getMyProgress,
   computeProgressMetrics,
   computeProgressPace,
+  computeObjectifProgressFromPrograms,
   latestProgressionRow,
 } from "../../lib/progressApi";
 import { getMyObjectif } from "../../lib/objectifsApi";
@@ -47,7 +48,13 @@ function displayGenderFromUser(gender) {
  * Props conceptuelles : showRemove=false, headerLeft="logout".
  */
 export default function MemberProfileScreen({ navigation }) {
-  const { currentUser, logout, seasons, updateCurrentUserAvatar } = useApp();
+  const {
+    currentUser,
+    logout,
+    seasons,
+    updateCurrentUserAvatar,
+    getMemberPrograms,
+  } = useApp();
   const authId = currentUser?.authId || currentUser?.id || null;
 
   const [contactFields, setContactFields] = useState({
@@ -192,17 +199,25 @@ export default function MemberProfileScreen({ navigation }) {
       const entries = progRes.entries || [];
       const latest = latestProgressionRow(entries);
       const metrics = latest ? computeProgressMetrics(latest) : null;
-      const pace = computeProgressPace(
-        entries,
-        getActiveRegularSeason(seasons)?.id ?? null
+      const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+      const pace = computeProgressPace(entries, saisonId);
+      const objectif =
+        (objRes.ok && objRes.objectif) ||
+        fieldsRes.quantiteHifz ||
+        currentUser?.hifzAmount ||
+        null;
+      const objectifProgress = computeObjectifProgressFromPrograms(
+        objectif,
+        getMemberPrograms()
       );
       setProgressState({
         loading: false,
         error: null,
-        hasData: !!metrics,
+        hasData: !!metrics || !!objectifProgress,
         metrics,
         note: metrics?.notes || null,
         objectif,
+        objectifProgress,
         seasonDeltaTumuns: pace.seasonDeltaTumuns,
         weekDeltaTumuns: pace.weekDeltaTumuns,
       });
@@ -229,7 +244,7 @@ export default function MemberProfileScreen({ navigation }) {
         records: presRes.records || [],
       });
     }
-  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount, seasons]);
+  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount, seasons, getMemberPrograms]);
 
   useFocusEffect(
     useCallback(() => {

@@ -20,6 +20,7 @@ import {
   getMyProgress,
   computeProgressMetrics,
   computeProgressPace,
+  computeObjectifProgressFromPrograms,
   latestProgressionRow,
   PROGRESS_TOTAL_TUMUN,
 } from "../../lib/progressApi";
@@ -492,15 +493,32 @@ export default function MemberDashboardScreen({ navigation }) {
     [progressEntries, seasons]
   );
 
+  const objectifProgress = useMemo(() => {
+    return computeObjectifProgressFromPrograms(
+      progressState.objectif || seasonObjectif || contactFields.hifzAmount,
+      myMemberPrograms
+    );
+  }, [
+    myMemberPrograms,
+    progressState.objectif,
+    seasonObjectif,
+    contactFields.hifzAmount,
+  ]);
+
   const profileProgressState = useMemo(
     () => ({
       loading:
         !memorizationMetrics && (activitiesLoading || progressState.loading),
       error: progressState.error,
-      hasData: !!memorizationMetrics,
+      hasData: !!memorizationMetrics || !!objectifProgress,
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
-      objectif: progressState.objectif || seasonObjectif || null,
+      objectif:
+        progressState.objectif ||
+        seasonObjectif ||
+        contactFields.hifzAmount ||
+        null,
+      objectifProgress,
       seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
       weekDeltaTumuns: progressPace.weekDeltaTumuns,
     }),
@@ -511,6 +529,8 @@ export default function MemberDashboardScreen({ navigation }) {
       progressState.error,
       progressState.objectif,
       seasonObjectif,
+      contactFields.hifzAmount,
+      objectifProgress,
       progressPace,
     ]
   );

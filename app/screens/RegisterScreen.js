@@ -163,16 +163,17 @@ export default function RegisterScreen({ navigation }) {
         ? form.graduateSchool.trim()
         : "";
     const level = form.universityStatus || "";
-    const hizfAmount =
+    const experienceHizb =
       form.hasExperience === "نعم" ? form.hizbCount.trim() : "";
+    const seasonGoal = form.seasonGoal.trim();
 
     const formAnswers = {
       universityStatus: form.universityStatus,
       studentDetails: isStudent ? form.studentDetails.trim() : "",
       graduateSchool: isGraduate ? form.graduateSchool.trim() : "",
       hasExperience: form.hasExperience,
-      hizbCount: hizfAmount,
-      seasonGoal: form.seasonGoal.trim(),
+      hizbCount: experienceHizb,
+      seasonGoal,
       difficulties: form.difficulties.trim(),
       desiredActivities: form.desiredActivities.trim(),
     };
@@ -184,7 +185,8 @@ export default function RegisterScreen({ navigation }) {
       gender: form.gender,
       school,
       level,
-      hifzAmount: hizfAmount,
+      // هدف الموسم (سؤال المقدار المطموح) — pas تجربة الحفظ السابقة
+      hifzAmount: seasonGoal,
       seanceId: form.seanceId,
       seanceName: selectedSeance
         ? formatSeanceScheduleLabel(selectedSeance)
@@ -317,11 +319,11 @@ export default function RegisterScreen({ navigation }) {
                   value={submitted.school}
                 />
               ) : null}
-              {submitted.hifzAmount ? (
+              {answers.hizbCount ? (
                 <InfoRow
                   icon="book-outline"
-                  label="عدد الأحزاب"
-                  value={submitted.hifzAmount}
+                  label="أحزاب محفوظة سابقاً"
+                  value={answers.hizbCount}
                 />
               ) : null}
               {submitted.seanceName ? (
@@ -331,11 +333,11 @@ export default function RegisterScreen({ navigation }) {
                   value={submitted.seanceName}
                 />
               ) : null}
-              {answers.seasonGoal ? (
+              {(answers.seasonGoal || submitted.hifzAmount) ? (
                 <InfoRow
                   icon="flag-outline"
                   label="هدف الموسم"
-                  value={answers.seasonGoal}
+                  value={answers.seasonGoal || submitted.hifzAmount}
                 />
               ) : null}
             </View>
