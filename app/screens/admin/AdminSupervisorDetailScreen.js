@@ -423,12 +423,11 @@ const styles = StyleSheet.create({
   topBar: {
     backgroundColor: "#fff",
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
     flexDirection: row,
     alignItems: "center",
     gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.border,
   },
   topBarTitle: {
     flex: 1,
@@ -441,6 +440,7 @@ const styles = StyleSheet.create({
     flexDirection: row,
     backgroundColor: "#fff",
     paddingHorizontal: 16,
+    paddingTop: 0,
     paddingBottom: 10,
     gap: 8,
     borderBottomWidth: 1,
