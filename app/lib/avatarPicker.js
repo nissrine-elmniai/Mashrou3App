@@ -1,3 +1,5 @@
+import { requireOptionalNativeModule } from "expo-modules-core";
+
 const REBUILD_MESSAGE =
   "ميزة اختيار الصورة تتطلب إعادة تثبيت تطبيق التطوير (dev client) بعد إضافة expo-image-picker.\n\n" +
   "على جهاز Android متصل:\n" +
@@ -10,8 +12,20 @@ function isMissingNativeModuleError(error) {
   return /ExponentImagePicker|native module|NativeModule/i.test(msg);
 }
 
+function isImagePickerNativeAvailable() {
+  try {
+    return requireOptionalNativeModule("ExponentImagePicker") != null;
+  } catch {
+    return false;
+  }
+}
+
 /** Charge expo-image-picker à la demande (évite le crash au montage si le dev client est ancien). */
 async function loadImagePickerModule() {
+  if (!isImagePickerNativeAvailable()) {
+    return { ok: false, error: REBUILD_MESSAGE, needsRebuild: true };
+  }
+
   try {
     return await import("expo-image-picker");
   } catch (error) {
