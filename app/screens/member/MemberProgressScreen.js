@@ -30,10 +30,16 @@ import {
   addProgressEntry,
   computeProgressMetrics,
   flushMemberProgressDelta,
+  getMemberDeclaredHizbCount,
+  getMemberSeasonObjectif,
   getMyProgress,
   latestProgressionRow,
 } from "../../lib/progressApi";
-import { getMyObjectif, setMyObjectif } from "../../lib/objectifsApi";
+import {
+  getMyObjectif,
+  parseObjectifInput,
+  setMyObjectif,
+} from "../../lib/objectifsApi";
 import {
   TOTAL_HIZB,
   TUMUN_UI_MAX,
@@ -66,24 +72,16 @@ function parseTumunInput(raw) {
   return { ok: true, value: n };
 }
 
-function parseObjectifInput(raw) {
-  const trimmed = String(raw ?? "").trim();
-  if (trimmed === "") {
-    return { ok: false, error: "أدخل عدد الأحزاب المستهدفة (1 إلى 60)" };
-  }
-  const n = Number(trimmed);
-  if (!Number.isInteger(n) || n < 1 || n > TOTAL_HIZB) {
-    return { ok: false, error: "عدد الأحزاب المستهدفة يجب أن يكون بين 1 و 60" };
-  }
-  return { ok: true, value: n };
-}
-
 export default function MemberProgressScreen({ navigation }) {
-  const { seasons } = useApp();
+  const { seasons, currentUser } = useApp();
   const [hizb, setHizb] = useState("");
   const [tumun, setTumun] = useState("");
   const [notes, setNotes] = useState("");
   const [goalHizb, setGoalHizb] = useState("");
+  const [goalSuggestedFromInscription, setGoalSuggestedFromInscription] =
+    useState(false);
+  const [hizbSuggestedFromInscription, setHizbSuggestedFromInscription] =
+    useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingObjectif, setSavingObjectif] = useState(false);
@@ -91,6 +89,7 @@ export default function MemberProgressScreen({ navigation }) {
   const [loadError, setLoadError] = useState(null);
 
   const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+  const authId = currentUser?.authId || null;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,20 +103,39 @@ export default function MemberProgressScreen({ navigation }) {
         : Promise.resolve({ ok: true, objectif: null }),
     ]);
     setLoading(false);
-    if (objRes.ok) {
-      const n = objRes.objectif?.nbHizbCible;
-      setGoalHizb(n != null ? String(n) : "");
+    // Ligne objectifs existante prioritaire ; sinon suggestion d'inscription, sans écriture
+    if (!objRes.ok) {
+      setGoalHizb("");
+      setGoalSuggestedFromInscription(false);
+    } else if (objRes.objectif?.nbHizbCible != null) {
+      setGoalHizb(String(objRes.objectif.nbHizbCible));
+      setGoalSuggestedFromInscription(false);
+    } else if (activeSaisonId && authId) {
+      const declared = await getMemberSeasonObjectif(authId, activeSaisonId);
+      const parsed = declared.ok
+        ? parseObjectifInput(declared.objectif)
+        : { ok: false };
+      if (parsed.ok) {
+        setGoalHizb(String(parsed.value));
+        setGoalSuggestedFromInscription(true);
+      } else {
+        setGoalHizb("");
+        setGoalSuggestedFromInscription(false);
+      }
     } else {
       setGoalHizb("");
+      setGoalSuggestedFromInscription(false);
     }
     if (!res.ok) {
       setLoadError(res.error);
+      setHizbSuggestedFromInscription(false);
       return;
     }
     const list = res.entries || [];
     setEntries(list);
     const latest = latestProgressionRow(list);
     if (latest) {
+      // Position réelle : jamais de suggestion inférieure à la progression
       const metrics = computeProgressMetrics(latest);
       setHizb(String(metrics?.nbHizbCompletes ?? latest.nb_hizb_completes ?? ""));
       const tumunVal =
@@ -126,12 +144,33 @@ export default function MemberProgressScreen({ navigation }) {
           : 0;
       setTumun(String(tumunStoredToUi(Number.isFinite(tumunVal) ? tumunVal : 0)));
       setNotes("");
+      setHizbSuggestedFromInscription(false);
     } else {
-      setHizb("");
+      // Aucune ligne progression : suggestion hizbCount, الثمن inchangé (vide)
       setTumun("");
       setNotes("");
+      if (activeSaisonId && authId) {
+        const declared = await getMemberDeclaredHizbCount(
+          authId,
+          activeSaisonId
+        );
+        const parsed =
+          declared.ok && declared.hizbCount != null
+            ? parseHizbInput(declared.hizbCount)
+            : { ok: false };
+        if (parsed.ok) {
+          setHizb(String(parsed.value));
+          setHizbSuggestedFromInscription(true);
+        } else {
+          setHizb("");
+          setHizbSuggestedFromInscription(false);
+        }
+      } else {
+        setHizb("");
+        setHizbSuggestedFromInscription(false);
+      }
     }
-  }, [seasons]);
+  }, [seasons, authId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -167,6 +206,7 @@ export default function MemberProgressScreen({ navigation }) {
       Alert.alert("تنبيه", result.error || "تعذر حفظ التقدم");
       return;
     }
+    setHizbSuggestedFromInscription(false);
     Alert.alert("تم", "تم حفظ موضعك في القرآن", [
       { text: "حسناً", onPress: () => navigation.goBack() },
     ]);
@@ -186,6 +226,7 @@ export default function MemberProgressScreen({ navigation }) {
       Alert.alert("تنبيه", result.error || "تعذر حفظ الهدف");
       return;
     }
+    setGoalSuggestedFromInscription(false);
     Alert.alert("تم", "تم حفظ هدف الموسم");
   };
 
@@ -252,6 +293,11 @@ export default function MemberProgressScreen({ navigation }) {
                   />
                 </View>
               </View>
+              {hizbSuggestedFromInscription ? (
+                <Text style={styles.hizbSuggestHint}>
+                  قيمة مقترحة من أحزابك المحفوظة عند التسجيل — لم تُحفظ بعد
+                </Text>
+              ) : null}
 
               <Text style={styles.fieldLabel}>ملاحظة (اختياري)</Text>
               <TextInput
@@ -284,6 +330,12 @@ export default function MemberProgressScreen({ navigation }) {
               <Text style={styles.objectifHint}>
                 عدد الأحزاب التي تطمح لحفظها خلال هذا الموسم (1 إلى 60).
               </Text>
+              {goalSuggestedFromInscription ? (
+                <Text style={styles.objectifSuggestHint}>
+                  قيمة مقترحة من استمارتك عند التسجيل — لم تُحفظ بعد كهدف
+                  للموسم.
+                </Text>
+              ) : null}
               <TextInput
                 style={styles.input}
                 value={goalHizb}
@@ -425,8 +477,8 @@ const styles = StyleSheet.create({
   saveBtn: {
     backgroundColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: 8,
-    paddingHorizontal: radii.md,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
     alignItems: "center",
   },
   saveBtnDisabled: { opacity: 0.7 },
@@ -449,6 +501,24 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     marginBottom: radii.md,
     lineHeight: radii.lg + radii.sm,
+    ...rtlText,
+  },
+  objectifSuggestHint: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    marginTop: -radii.sm,
+    marginBottom: radii.md,
+    lineHeight: radii.lg,
+    ...rtlText,
+  },
+  hizbSuggestHint: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    marginTop: -radii.sm,
+    marginBottom: radii.md,
+    lineHeight: radii.lg,
     ...rtlText,
   },
   historyRow: { paddingVertical: radii.sm },

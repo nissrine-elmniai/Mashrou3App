@@ -514,6 +514,46 @@ export async function getMemberProgressionSummary(membreId) {
 }
 
 /**
+ * Demande d'inscription (membre, saison) : form_answers + hifz_amount.
+ * RLS / ligne absente / saison manquante → answers vides, sans erreur.
+ */
+async function fetchMemberApplicationFormAnswers(membreId, saisonId) {
+  if (!membreId || !saisonId) {
+    return { ok: true, answers: {}, hifzAmount: null };
+  }
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("hifz_amount, level, form_answers")
+        .eq("user_id", membreId)
+        .eq("season_id", saisonId)
+        .order("updated_at", { ascending: false })
+        .limit(1),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة استمارة التسجيل"
+    );
+    if (error) {
+      // RLS ou lecture refusée : même silence que getMemberSeasonObjectif
+      return { ok: true, answers: {}, hifzAmount: null };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      return { ok: true, answers: {}, hifzAmount: null };
+    }
+    const answers =
+      row.form_answers && typeof row.form_answers === "object"
+        ? row.form_answers
+        : {};
+    const hifzAmount = String(row.hifz_amount || "").trim() || null;
+    return { ok: true, answers, hifzAmount };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
  * Objectif de saison : form_answers.seasonGoal (سؤال المقدار المطموح)
  * puis hifz_amount, puis profiles.hifz_amount.
  */
@@ -527,36 +567,19 @@ export async function getMemberSeasonObjectif(membreId, saisonId) {
 
   try {
     if (saisonId) {
-      const { data, error } = await withTimeout(
-        supabase
-          .from("member_applications")
-          .select("hifz_amount, level, form_answers")
-          .eq("user_id", membreId)
-          .eq("season_id", saisonId)
-          .order("updated_at", { ascending: false })
-          .limit(1),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة هدف العضو"
+      const fetched = await fetchMemberApplicationFormAnswers(
+        membreId,
+        saisonId
       );
-      if (error) {
-        const msg = error?.message || "";
-        if (!/permission|row-level security|RLS|42501/i.test(msg)) {
-          // continuer vers profiles
+      if (fetched.ok) {
+        const fromAnswers = String(fetched.answers.seasonGoal || "").trim();
+        const fromHifz = String(fetched.hifzAmount || "").trim();
+        const objectif = fromAnswers || fromHifz || null;
+        if (objectif) {
+          return { ok: true, objectif };
         }
       } else {
-        const row = Array.isArray(data) ? data[0] : data;
-        if (row) {
-          const answers =
-            row.form_answers && typeof row.form_answers === "object"
-              ? row.form_answers
-              : {};
-          const fromAnswers = String(answers.seasonGoal || "").trim();
-          const fromHifz = String(row.hifz_amount || "").trim();
-          const objectif = fromAnswers || fromHifz || null;
-          if (objectif) {
-            return { ok: true, objectif };
-          }
-        }
+        return fetched;
       }
     }
 
@@ -574,6 +597,26 @@ export async function getMemberSeasonObjectif(membreId, saisonId) {
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+/**
+ * Acquis déclaré à l'inscription (form_answers.hizbCount), pas la position courante.
+ * RLS / absence → { ok: true, hizbCount: null }. Pas de repli sur profiles.
+ */
+export async function getMemberDeclaredHizbCount(membreId, saisonId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!membreId) {
+    return { ok: true, hizbCount: null };
+  }
+
+  const fetched = await fetchMemberApplicationFormAnswers(membreId, saisonId);
+  if (!fetched.ok) {
+    return { ok: true, hizbCount: null };
+  }
+  const raw = String(fetched.answers.hizbCount ?? "").trim();
+  return { ok: true, hizbCount: raw || null };
 }
 
 /**
