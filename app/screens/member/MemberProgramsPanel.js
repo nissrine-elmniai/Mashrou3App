@@ -123,11 +123,11 @@ export default function MemberProgramsPanel({ navigation }) {
     setForm(EMPTY_FORM);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const existing = editingId
       ? programs.find((program) => program.id === editingId)
       : null;
-    const result = saveMemberProgram({
+    const result = await saveMemberProgram({
       id: editingId || undefined,
       title: form.title,
       nbHizb: form.nbHizb,
@@ -152,9 +152,9 @@ export default function MemberProgramsPanel({ navigation }) {
     setProgressModal(program);
   };
 
-  const handleAdjustInModal = (delta) => {
+  const handleAdjustInModal = async (delta) => {
     if (!progressModal) return;
-    const result = adjustMemberProgramTumuns(progressModal.id, delta);
+    const result = await adjustMemberProgramTumuns(progressModal.id, delta);
     if (!result.ok || result.unchanged) return;
     if (isHifzProgram(result.program)) {
       scheduleMemberProgressDelta({

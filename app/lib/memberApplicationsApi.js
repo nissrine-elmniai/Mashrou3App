@@ -230,6 +230,58 @@ async function insertApplicationRow(row, label) {
   return error;
 }
 
+/** Cherche une réinscription ouverte (pending / activated) pour email+saison */
+export async function findOpenSeasonRenewal({ email, seasonId, userId = null }) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, application: null };
+  }
+  const mail = String(email || "").trim().toLowerCase();
+  const season = String(seasonId || "").trim();
+  if (!mail || !season) {
+    return { ok: false, error: "بيانات البحث غير مكتملة" };
+  }
+
+  try {
+    let query = supabase
+      .from("member_applications")
+      .select("*")
+      .eq("season_id", season)
+      .neq("status", "rejected")
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    // kind peut manquer si 0060 non appliquée — on filtre côté JS aussi
+    const { data, error } = await withTimeout(
+      query.ilike("email", mail),
+      SUPABASE_TIMEOUT_MS,
+      "التحقق من طلب إعادة التسجيل"
+    );
+
+    if (error) {
+      return { ok: false, error: mapTableError(error, "member_applications") };
+    }
+
+    const rows = (data || [])
+      .map(mapMemberApplicationRow)
+      .filter(Boolean)
+      .filter((r) => {
+        if (getRegistrationKindSafe(r) !== REGISTRATION_KIND.SEASON_RENEWAL) {
+          return false;
+        }
+        if (r.status === REGISTRATION_STATUS.REJECTED) return false;
+        if (userId) {
+          const uid = String(userId);
+          if (r.userId && r.userId !== uid) return false;
+        }
+        return true;
+      });
+
+    return { ok: true, application: rows[0] || null };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
 /** Soumission d'une demande en attente (intégration ou réinscription saison) */
 export async function insertPendingMemberApplication(reg) {
   if (!isSupabaseConfigured()) {
@@ -250,7 +302,14 @@ export async function insertPendingMemberApplication(reg) {
     if (error) {
       const msg = error.message || "";
       if (/duplicate key|23505/i.test(msg)) {
-        return { ok: false, error: "لديك طلب تسجيل مسبقاً بهذا البريد" };
+        const isRenewal =
+          getRegistrationKindSafe(reg) === REGISTRATION_KIND.SEASON_RENEWAL;
+        return {
+          ok: false,
+          error: isRenewal
+            ? "لديك طلب إعادة تسجيل مسبقاً لهذا الموسم"
+            : "لديك طلب تسجيل مسبقاً بهذا البريد",
+        };
       }
       if (/relation.*does not exist|Could not find the table/i.test(msg)) {
         return {

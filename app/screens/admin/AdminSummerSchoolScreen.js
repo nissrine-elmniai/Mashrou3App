@@ -32,13 +32,13 @@ export default function AdminSummerSchoolScreen({ navigation }) {
   const [version, setVersion] = useState("");
   const [announceNow, setAnnounceNow] = useState(true);
 
-  const handleCreateAndAnnounce = () => {
+  const handleCreateAndAnnounce = async () => {
     const versionNum = Number.parseInt(String(version).trim(), 10);
     if (!name || !startDate || !Number.isFinite(versionNum) || versionNum < 1) {
       Alert.alert("تنبيه", "املأ جميع الحقول");
       return;
     }
-    const season = createSeason({
+    const result = await createSeason({
       name,
       type: SEASON_TYPES.SUMMER,
       startDate,
@@ -47,19 +47,23 @@ export default function AdminSummerSchoolScreen({ navigation }) {
       openRegistration: announceNow,
       activate: announceNow,
     });
+    if (!result?.ok) {
+      Alert.alert("خطأ", result?.error || "تعذر إنشاء المدرسة الصيفية");
+      return;
+    }
     setName("");
     setStartDate("");
     setVersion("");
     Alert.alert(
       announceNow ? "تم إعلان الاستمارة الصيفية" : "تم إنشاء المدرسة الصيفية",
       announceNow
-        ? `تم إنشاء «${season.name}» وفتح استمارة التسجيل الصيفي.\nيمكن للأعضاء الحاليين التسجيل من تبويب «التسجيل».`
-        : `تم إنشاء «${season.name}». يمكنك لاحقاً إعلان استمارة التسجيل.`
+        ? `تم إنشاء «${result.season.name}» وفتح استمارة التسجيل الصيفي.\nيمكن للأعضاء الحاليين التسجيل من تبويب «التسجيل».`
+        : `تم إنشاء «${result.season.name}». يمكنك لاحقاً إعلان استمارة التسجيل.`
     );
   };
 
-  const handleAnnounce = (seasonId, seasonName) => {
-    const result = announceRegistrationForm(seasonId);
+  const handleAnnounce = async (seasonId, seasonName) => {
+    const result = await announceRegistrationForm(seasonId);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
@@ -165,8 +169,12 @@ export default function AdminSummerSchoolScreen({ navigation }) {
                 color={colors.primaryDark}
                 icon="close-circle-outline"
                 label="إغلاق استمارة التسجيل"
-                onPress={() => {
-                  setRegistrationOpen(season.id, false);
+                onPress={async () => {
+                  const result = await setRegistrationOpen(season.id, false);
+                  if (!result?.ok) {
+                    Alert.alert("خطأ", result?.error || "تعذر إغلاق التسجيل");
+                    return;
+                  }
                   Alert.alert("تم", "تم إغلاق استمارة التسجيل الصيفي");
                 }}
               />
@@ -177,7 +185,12 @@ export default function AdminSummerSchoolScreen({ navigation }) {
                 color={colors.primary}
                 icon="checkmark-circle-outline"
                 label="تعيين كمدرسة صيفية نشطة"
-                onPress={() => activateSeason(season.id)}
+                onPress={async () => {
+                  const result = await activateSeason(season.id);
+                  if (!result?.ok) {
+                    Alert.alert("خطأ", result?.error || "تعذر تفعيل الموسم");
+                  }
+                }}
               />
             ) : (
               <Text style={styles.activeBadge}>المدرسة الصيفية الحالية</Text>

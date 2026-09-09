@@ -243,7 +243,7 @@ Deno.serve(async (req) => {
 
     if (role === "member") {
       // Activer uniquement la demande d'intégration (join), pas un renouvellement saison
-      await admin
+      const { error: appUpdateErr } = await admin
         .from("member_applications")
         .update({
           status: "activated",
@@ -252,12 +252,35 @@ Deno.serve(async (req) => {
           updated_at: now,
         })
         .eq("id", String(memberAppRow.id));
+
+      if (appUpdateErr) {
+        console.error("member_applications activate:", appUpdateErr.message);
+        return json(
+          {
+            ok: false,
+            error:
+              "تم إنشاء الحساب لكن تعذر تفعيل طلب الانضمام — أعد المحاولة أو راجع الإدارة",
+          },
+          200
+        );
+      }
     } else {
-      await admin
+      const { error: invUpdateErr } = await admin
         .from("supervisor_invitations")
         .update({ status: "activated", updated_at: now })
         .ilike("email", displayEmail)
         .eq("status", "pending");
+      if (invUpdateErr) {
+        console.error("supervisor_invitations activate:", invUpdateErr.message);
+        return json(
+          {
+            ok: false,
+            error:
+              "تم إنشاء الحساب لكن تعذر تحديث دعوة المشرف — أعد المحاولة",
+          },
+          200
+        );
+      }
     }
 
     return json({

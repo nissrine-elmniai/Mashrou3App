@@ -179,12 +179,23 @@ export async function syncMemberProgramsWithSupabase(localPrograms = [], memberI
     (p) => p.userId === memberId || !p.userId
   );
   if (mine.length > 0) {
-    await Promise.all(
-      mine.map((p) =>
-        upsertMemberProgram({ ...p, userId: memberId }).catch(() => {})
-      )
+    const results = await Promise.all(
+      mine.map((p) => upsertMemberProgram({ ...p, userId: memberId }))
     );
-    return { ok: true, programs: mine.map((p) => ({ ...p, userId: memberId })), source: "pushed" };
+    const failed = results.find((r) => !r.ok);
+    if (failed) {
+      return {
+        ok: false,
+        programs: localPrograms,
+        error: failed.error || "تعذر مزامنة البرامج المحلية",
+        source: "push_failed",
+      };
+    }
+    return {
+      ok: true,
+      programs: mine.map((p) => ({ ...p, userId: memberId })),
+      source: "pushed",
+    };
   }
   return { ok: true, programs: [], source: "empty" };
 }

@@ -51,7 +51,10 @@ export default function ActivateAccountScreen({ navigation, route }) {
       const message = result.needsEmailConfirmation
         ? "تم إنشاء الحساب. أكّد بريدك الإلكتروني ثم سجّل الدخول."
         : "تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.";
-      Alert.alert("نجاح", message, [
+      const fullMessage = result.warning
+        ? `${message}\n\nتنبيه: ${result.warning}`
+        : message;
+      Alert.alert("نجاح", fullMessage, [
         {
           text: "تسجيل الدخول",
           onPress: () => navigation.navigate("Login"),

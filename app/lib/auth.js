@@ -535,11 +535,15 @@ export async function signUpWithProfile({
   });
 
   // Lier la demande d'inscription (si existante) tant que la session signup est active
+  let linkWarning = null;
   if (data.session && role === ROLES.MEMBER) {
-    await markMemberApplicationActivated({
+    const linked = await markMemberApplicationActivated({
       email: mail,
       userId: data.user.id,
     });
+    if (!linked.ok && !linked.skipped) {
+      linkWarning = linked.error || "تعذر ربط طلب الانضمام";
+    }
   }
 
   // Ne pas laisser une session "signup" ouverte : l'utilisateur se connecte ensuite
@@ -553,7 +557,7 @@ export async function signUpWithProfile({
       ok: true,
       authUser: data.user,
       profile: null,
-      warning: profileResult.error,
+      warning: profileResult.error || linkWarning,
       needsEmailConfirmation: !data.session,
     };
   }
@@ -563,6 +567,7 @@ export async function signUpWithProfile({
     authUser: data.user,
     profile: profileResult.profile,
     needsEmailConfirmation: !data.session,
+    warning: linkWarning || undefined,
   };
 }
 

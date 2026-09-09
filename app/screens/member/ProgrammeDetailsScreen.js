@@ -177,7 +177,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   const confirmDelete = async () => {
     try {
       if (programData.id) {
-        const result = deleteMemberProgram(programData.id);
+        const result = await deleteMemberProgram(programData.id);
         if (!result.ok) {
           Alert.alert("خطأ", result.error);
           return;

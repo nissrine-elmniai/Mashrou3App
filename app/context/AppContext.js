@@ -40,6 +40,7 @@ import {
   insertPendingMemberApplication,
   listMemberApplications,
   markMemberApplicationActivated,
+  findOpenSeasonRenewal,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
 import { sendAlert as sendRemoteAlert } from "../lib/alertsApi";
@@ -127,6 +128,15 @@ function splitFullName(fullName) {
     firstName: parts.slice(0, -1).join(" "),
     lastName: parts[parts.length - 1],
   };
+}
+
+/** Lie la demande join après Auth ; retourne un message d'avertissement ou null. */
+async function linkApplicationAfterAuth(email, userId) {
+  const linked = await markMemberApplicationActivated({ email, userId });
+  if (!linked.ok && !linked.skipped) {
+    return linked.error || "تعذر ربط طلب الانضمام بالحساب";
+  }
+  return null;
 }
 
 /** Union des rôles Supabase (profiles.role) et mock locaux pour le routing multi-rôle. */
@@ -352,22 +362,24 @@ export function AppProvider({ children }) {
     };
   }, [hydrated, supabaseSession?.user?.id, currentUser?.id]);
 
-  // Admin : synchroniser les demandes d'intégration depuis Supabase (form_answers inclus)
+  // Admin : synchroniser les demandes depuis Supabase (réessaie si échec)
   useEffect(() => {
     if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
     if (!currentUser || !userHasRole(currentUser, ROLES.ADMIN)) return;
     if (applicationsSyncedRef.current) return;
 
     let cancelled = false;
-    applicationsSyncedRef.current = true;
     (async () => {
       const res = await listMemberApplications();
-      if (cancelled || !res.ok || res.skipped) return;
+      if (cancelled) return;
+      if (!res.ok || res.skipped) {
+        // Ne pas verrouiller : un prochain rendu / reconnexion réessayera
+        return;
+      }
+      applicationsSyncedRef.current = true;
       const remote = res.applications || [];
       setRegistrations((prev) => {
         const remoteById = new Map(remote.map((r) => [r.id, r]));
-        // Garder le local uniquement s'il n'est pas déjà revenu de Supabase
-        // (évite les doublons une fois les réinscriptions persistées).
         const localOnly = prev.filter((r) => !remoteById.has(r.id));
         return [...localOnly, ...remote];
       });
@@ -378,7 +390,7 @@ export function AppProvider({ children }) {
     };
   }, [hydrated, supabaseSession?.user?.id, currentUser]);
 
-  // Membre : synchroniser ses propres demandes (réinscriptions incluses)
+  // Membre : synchroniser ses propres demandes (réessaie si échec)
   useEffect(() => {
     if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
     if (!currentUser || !userHasRole(currentUser, ROLES.MEMBER)) return;
@@ -386,13 +398,16 @@ export function AppProvider({ children }) {
     if (memberApplicationsSyncedRef.current === supabaseSession.user.id) return;
 
     let cancelled = false;
-    memberApplicationsSyncedRef.current = supabaseSession.user.id;
+    const authId = supabaseSession.user.id;
     (async () => {
       const res = await listMemberApplications();
-      if (cancelled || !res.ok || res.skipped) return;
+      if (cancelled) return;
+      if (!res.ok || res.skipped) return;
+      memberApplicationsSyncedRef.current = authId;
       const remote = res.applications || [];
-      if (!remote.length) return;
+      // Même liste vide : on marque la sync OK (évite de bloquer sur un 1er SELECT vide)
       setRegistrations((prev) => {
+        if (!remote.length) return prev;
         const remoteById = new Map(remote.map((r) => [r.id, r]));
         const localOnly = prev.filter((r) => !remoteById.has(r.id));
         return [...localOnly, ...remote];
@@ -686,26 +701,52 @@ export function AppProvider({ children }) {
     return confirmPasswordResetWithOtp(email, token, newPassword);
   };
 
-  const createSeason = (payload) => {
+  const createSeason = async (payload) => {
     const { openRegistration = false, activate = false, ...rest } = payload;
     const season = {
       id: uid("s"),
       registrationOpen: !!openRegistration,
-      active: false,
+      active: !!activate,
       remote: rest.type === "summer" || !!rest.remote,
       ...rest,
     };
+
+    const previousSameType = activate
+      ? seasons.filter((s) => s.type === season.type && s.id !== season.id)
+      : [];
+
     setSeasons((prev) => {
       let next = [...prev, season];
       if (activate) {
         next = next.map((s) =>
           s.type === season.type
-            ? { ...s, active: s.id === season.id }
+            ? {
+                ...s,
+                active: s.id === season.id,
+                registrationOpen:
+                  s.id === season.id
+                    ? !!openRegistration
+                    : false,
+              }
             : s
         );
       }
       return next;
     });
+
+    if (isSupabaseConfigured()) {
+      const upsert = await upsertSaison(season);
+      if (!upsert.ok) {
+        setSeasons((prev) => prev.filter((s) => s.id !== season.id));
+        return { ok: false, error: upsert.error || "تعذر حفظ الموسم" };
+      }
+      await Promise.all(
+        previousSameType.map((s) =>
+          upsertSaison({ ...s, active: false, registrationOpen: false })
+        )
+      );
+    }
+
     if (openRegistration) {
       pushNotification({
         title: "فتح باب التسجيل",
@@ -713,7 +754,7 @@ export function AppProvider({ children }) {
         audience: "members",
       });
     }
-    return season;
+    return { ok: true, season };
   };
 
   const startNewSeason = async ({
@@ -733,7 +774,6 @@ export function AppProvider({ children }) {
       .filter((s) => s.type === SEASON_TYPES.REGULAR)
       .map((s) => s.id);
 
-    // انطلاق موسم جديد ⇒ الموسم نشط + باب التسجيل مفتوح للأعضاء
     const registrationOpens = openRegistration !== false;
 
     const season = {
@@ -747,8 +787,9 @@ export function AppProvider({ children }) {
       remote: false,
     };
 
+    const previousSeasonsSnapshot = seasons;
+
     setSeasons((prev) => {
-      // إغلاق المواسم العادية السابقة ⇒ تعطيل التسجيل تلقائياً
       const closed = prev.map((s) =>
         s.type === SEASON_TYPES.REGULAR
           ? { ...s, registrationOpen: false, active: false }
@@ -757,10 +798,23 @@ export function AppProvider({ children }) {
       return [...closed, season];
     });
 
-    await snapshotSeasonsBeforeClose(previousRegularIds).catch(() => {});
-    await archiveSeancesForSaisonIds(previousRegularIds).catch(() => {});
-    await closeRegularSaisons(previousRegularIds).catch(() => {});
-    await upsertSaison(season).catch(() => {});
+    if (isSupabaseConfigured()) {
+      const closeRes = await closeRegularSaisons(previousRegularIds);
+      if (!closeRes.ok && !closeRes.skipped) {
+        setSeasons(previousSeasonsSnapshot);
+        return {
+          ok: false,
+          error: closeRes.error || "تعذر إغلاق المواسم السابقة",
+        };
+      }
+      await snapshotSeasonsBeforeClose(previousRegularIds);
+      await archiveSeancesForSaisonIds(previousRegularIds);
+      const upsert = await upsertSaison(season);
+      if (!upsert.ok) {
+        setSeasons(previousSeasonsSnapshot);
+        return { ok: false, error: upsert.error || "تعذر حفظ الموسم الجديد" };
+      }
+    }
 
     const alertMessage = registrationOpens
       ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`
@@ -787,10 +841,9 @@ export function AppProvider({ children }) {
     return { ok: true, season, alertOk, alertError };
   };
 
-  const announceRegistrationForm = (seasonId) => {
+  const announceRegistrationForm = async (seasonId) => {
     const season = seasons.find((s) => s.id === seasonId);
     if (!season) return { ok: false, error: "الموسم غير موجود" };
-    // الموسم العادي: باب التسجيل يُفتح مع «انطلاق موسم جديد» فقط
     if (season.type === SEASON_TYPES.REGULAR) {
       return {
         ok: false,
@@ -802,6 +855,7 @@ export function AppProvider({ children }) {
       registrationOpen: true,
       active: true,
     };
+    const previous = seasons;
     setSeasons((prev) =>
       prev.map((s) => {
         if (s.id === seasonId) {
@@ -813,14 +867,24 @@ export function AppProvider({ children }) {
         return s;
       })
     );
-    upsertSaison(next).catch(() => {});
+    if (isSupabaseConfigured()) {
+      const upsert = await upsertSaison(next);
+      if (!upsert.ok) {
+        setSeasons(previous);
+        return { ok: false, error: upsert.error || "تعذر حفظ فتح التسجيل" };
+      }
+    }
     const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
     pushNotification({
       title: "فتح باب التسجيل",
       body: alertMessage,
       audience: "members",
     });
-    sendRemoteAlert(alertMessage, "members").catch(() => {});
+    try {
+      await sendRemoteAlert(alertMessage, "members");
+    } catch {
+      /* alerte non bloquante */
+    }
     return { ok: true, season: next };
   };
 
@@ -830,11 +894,10 @@ export function AppProvider({ children }) {
     );
   };
 
-  const setRegistrationOpen = (seasonId, open) => {
+  const setRegistrationOpen = async (seasonId, open) => {
     const season = seasons.find((s) => s.id === seasonId);
     if (!season) return { ok: false, error: "الموسم غير موجود" };
 
-    // موسم عادي مغلق/غير نشط: لا إعادة فتح إلا عبر انطلاق موسم جديد
     if (
       open &&
       season.type === SEASON_TYPES.REGULAR &&
@@ -848,7 +911,13 @@ export function AppProvider({ children }) {
 
     const next = { ...season, registrationOpen: !!open };
     updateSeason(seasonId, { registrationOpen: !!open });
-    upsertSaison(next).catch(() => {});
+    if (isSupabaseConfigured()) {
+      const upsert = await upsertSaison(next);
+      if (!upsert.ok) {
+        updateSeason(seasonId, { registrationOpen: season.registrationOpen });
+        return { ok: false, error: upsert.error || "تعذر حفظ حالة التسجيل" };
+      }
+    }
 
     if (open) {
       const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
@@ -857,33 +926,47 @@ export function AppProvider({ children }) {
         body: alertMessage,
         audience: "members",
       });
-      sendRemoteAlert(alertMessage, "members").catch(() => {});
+      try {
+        await sendRemoteAlert(alertMessage, "members");
+      } catch {
+        /* alerte non bloquante */
+      }
     }
     return { ok: true, season: next };
   };
 
-  const activateSeason = (seasonId) => {
+  const activateSeason = async (seasonId) => {
     const target = seasons.find((s) => s.id === seasonId);
-    if (!target) return;
+    if (!target) return { ok: false, error: "الموسم غير موجود" };
+
+    const previous = seasons;
+    const siblings = seasons.filter(
+      (s) => s.type === target.type && s.id !== seasonId
+    );
 
     setSeasons((prev) =>
       prev.map((s) => {
         if (s.type !== target.type) return s;
         if (s.id === seasonId) return { ...s, active: true };
-        // désactiver l'ancien musim du même type ⇒ fermer son inscription
         return { ...s, active: false, registrationOpen: false };
       })
     );
 
-    upsertSaison({ ...target, active: true }).catch(() => {});
-    seasons
-      .filter((s) => s.type === target.type && s.id !== seasonId)
-      .forEach((s) => {
-        if (!s.active && !s.registrationOpen) return;
-        upsertSaison({ ...s, active: false, registrationOpen: false }).catch(
-          () => {}
-        );
-      });
+    if (isSupabaseConfigured()) {
+      const upsert = await upsertSaison({ ...target, active: true });
+      if (!upsert.ok) {
+        setSeasons(previous);
+        return { ok: false, error: upsert.error || "تعذر تفعيل الموسم" };
+      }
+      await Promise.all(
+        siblings
+          .filter((s) => s.active || s.registrationOpen)
+          .map((s) =>
+            upsertSaison({ ...s, active: false, registrationOpen: false })
+          )
+      );
+    }
+    return { ok: true };
   };
 
   const submitSeasonRegistration = async ({
@@ -949,6 +1032,24 @@ export function AppProvider({ children }) {
     if (!email) {
       return { ok: false, error: "البريد الإلكتروني للحساب غير متوفر" };
     }
+
+    if (isSupabaseConfigured()) {
+      const remoteDup = await findOpenSeasonRenewal({
+        email,
+        seasonId: boundSeasonId,
+        userId: authUserId,
+      });
+      if (!remoteDup.ok && !remoteDup.skipped) {
+        return {
+          ok: false,
+          error: remoteDup.error || "تعذر التحقق من طلبات إعادة التسجيل",
+        };
+      }
+      if (remoteDup.application) {
+        return { ok: false, error: "لديك طلب تسجيل مسبقاً لهذا الموسم" };
+      }
+    }
+
     const { firstName, lastName } = splitFullName(
       member
         ? `${member.firstName || ""} ${member.lastName || ""}`.trim()
@@ -1084,14 +1185,12 @@ export function AppProvider({ children }) {
             const profileSync = await updateMemberInfo(authUserId, {
               hifzAmount: goal,
             });
-            // Si l'upsert a réussi, le trigger sync_profile_from_member_application
-            // a déjà recopié hifz_amount — updateMemberInfo n'est qu'un filet.
-            if (!profileSync.ok && sync.skipped) {
+            if (!profileSync.ok && !profileSync.skipped) {
               return {
                 ok: false,
                 error:
                   profileSync.error ||
-                  "تعذر تحديث مقدار الحفظ في الملف الشخصي",
+                  "قُبل الطلب في القاعدة لكن تعذر تحديث مقدار الحفظ في الملف الشخصي",
               };
             }
             setUsers((prev) =>
@@ -1206,10 +1305,10 @@ export function AppProvider({ children }) {
           lastName: pendingUser.lastName,
         });
         if (!authResult.ok) return authResult;
-        await markMemberApplicationActivated({
-          email: pendingUser.email,
-          userId: authResult.authUser.id,
-        });
+        const linkWarning = await linkApplicationAfterAuth(
+          pendingUser.email,
+          authResult.authUser.id
+        );
         setUsers((prev) =>
           prev.map((u) =>
             u.id === pendingUser.id
@@ -1239,6 +1338,7 @@ export function AppProvider({ children }) {
           },
           role: pendingUser.role,
           needsEmailConfirmation: authResult.needsEmailConfirmation,
+          warning: linkWarning || authResult.warning || undefined,
         };
       }
 
@@ -1282,6 +1382,76 @@ export function AppProvider({ children }) {
             confirmPassword,
           });
         }
+
+        // Activation cross-device : pas besoin d'une ligne locale « invited ».
+        // L'Edge Function vérifie member_applications.status = invited.
+        const authResult = await signUpWithProfile({
+          email: mail,
+          password,
+          role: ROLES.MEMBER,
+          firstName: "",
+          lastName: "",
+        });
+        if (!authResult.ok) return authResult;
+
+        const authId = authResult.authUser.id;
+        const linkWarning = await linkApplicationAfterAuth(mail, authId);
+
+        const profile = authResult.profile || {};
+        const firstName =
+          profile.first_name || profile.firstName || splitFullName(profile.full_name || "").firstName || "";
+        const lastName =
+          profile.last_name || profile.lastName || splitFullName(profile.full_name || "").lastName || "";
+        const genderRaw = profile.genre || profile.gender || "";
+        const gender =
+          genderRaw === "ذكر" || genderRaw === "أنثى" ? genderRaw : "";
+
+        const user = {
+          id: uid("u"),
+          authId,
+          email: mail,
+          password: null,
+          firstName,
+          lastName,
+          birthDate: "2000/01/01",
+          school: profile.school || "",
+          level: profile.level || "",
+          phone: profile.phone || "",
+          hifzAmount: profile.hifz_amount || profile.hifzAmount || "",
+          gender,
+          role: ROLES.MEMBER,
+          roles: [ROLES.MEMBER],
+          accountStatus: ACCOUNT_STATUS.ACTIVE,
+          seasonId: null,
+        };
+        setUsers((prev) => [...prev, user]);
+        setRegistrations((prev) =>
+          prev.map((r) =>
+            r.email?.toLowerCase() === mail &&
+            (r.status === REGISTRATION_STATUS.INVITED ||
+              r.status === REGISTRATION_STATUS.PENDING)
+              ? {
+                  ...r,
+                  status: REGISTRATION_STATUS.ACTIVATED,
+                  userId: user.id,
+                  inviteToken: null,
+                }
+              : r
+          )
+        );
+        pushNotification({
+          title: "تم إنشاء الحساب",
+          body: `مرحباً ${firstName || mail}، يمكنك تسجيل الدخول الآن`,
+          audience: "user",
+          userId: user.id,
+        });
+        return {
+          ok: true,
+          user,
+          role: ROLES.MEMBER,
+          needsEmailConfirmation: !!authResult.needsEmailConfirmation,
+          warning: linkWarning || authResult.warning || undefined,
+        };
       }
       return {
         ok: false,
@@ -1310,6 +1480,7 @@ export function AppProvider({ children }) {
     if (existingUser) {
       let authId = existingUser.authId || null;
       let needsEmailConfirmation = false;
+      let linkWarning = null;
 
       if (isSupabaseConfigured()) {
         // L'écran demande de choisir un nouveau mot de passe. Même si une fiche
@@ -1333,10 +1504,10 @@ export function AppProvider({ children }) {
         if (!authResult.ok) return authResult;
         authId = authResult.authUser.id;
         needsEmailConfirmation = !!authResult.needsEmailConfirmation;
-        await markMemberApplicationActivated({
-          email: mail,
-          userId: authId,
-        });
+        linkWarning = await linkApplicationAfterAuth(mail, authId);
+        if (authResult.warning) {
+          linkWarning = linkWarning || authResult.warning;
+        }
       } else if (
         existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE &&
         existingUser.password &&
@@ -1392,11 +1563,13 @@ export function AppProvider({ children }) {
         user: merged,
         role: ROLES.MEMBER,
         needsEmailConfirmation,
+        warning: linkWarning || undefined,
       };
     }
 
     let authId = null;
     let needsEmailConfirmation = false;
+    let linkWarning = null;
     if (isSupabaseConfigured()) {
       const authResult = await signUpWithProfile({
         email: mail,
@@ -1408,10 +1581,10 @@ export function AppProvider({ children }) {
       if (!authResult.ok) return authResult;
       authId = authResult.authUser.id;
       needsEmailConfirmation = !!authResult.needsEmailConfirmation;
-      await markMemberApplicationActivated({
-        email: mail,
-        userId: authId,
-      });
+      linkWarning = await linkApplicationAfterAuth(mail, authId);
+      if (authResult.warning) {
+        linkWarning = linkWarning || authResult.warning;
+      }
     }
 
     const user = {
@@ -1426,7 +1599,8 @@ export function AppProvider({ children }) {
       level: reg.level,
       phone: reg.phone,
       hifzAmount: reg.hifzAmount || "",
-      gender: "غير محدد",
+      gender:
+        reg.gender === "ذكر" || reg.gender === "أنثى" ? reg.gender : "",
       role: ROLES.MEMBER,
       roles: [ROLES.MEMBER],
       accountStatus: ACCOUNT_STATUS.ACTIVE,
@@ -1456,6 +1630,7 @@ export function AppProvider({ children }) {
       user,
       role: ROLES.MEMBER,
       needsEmailConfirmation,
+      warning: linkWarning || undefined,
     };
   };
 
@@ -2000,12 +2175,14 @@ export function AppProvider({ children }) {
       .filter((p) => p.userId === memberId)
       .map(enrichMemberProgram);
 
-  const persistMemberProgramRemote = (row) => {
-    if (!isSupabaseConfigured() || !supabaseSession?.user?.id) return;
-    upsertMemberProgram(row).catch(() => {});
+  const persistMemberProgramRemote = async (row) => {
+    if (!isSupabaseConfigured() || !supabaseSession?.user?.id) {
+      return { ok: true, skipped: true };
+    }
+    return upsertMemberProgram(row);
   };
 
-  const saveMemberProgram = (program, memberId = currentUser?.id) => {
+  const saveMemberProgram = async (program, memberId = currentUser?.id) => {
     if (!memberId) return { ok: false, error: "يجب تسجيل الدخول" };
     const title = String(program.title || "").trim();
     const nbHizb = Number(program.nbHizb);
@@ -2037,6 +2214,11 @@ export function AppProvider({ children }) {
       type: normalizeProgramType(program.type ?? existing?.type),
     };
 
+    const sync = await persistMemberProgramRemote(row);
+    if (!sync.ok && !sync.skipped) {
+      return { ok: false, error: sync.error || "تعذر حفظ البرنامج" };
+    }
+
     setMemberPrograms((prev) => {
       const exists = prev.some((p) => p.id === row.id);
       if (exists) {
@@ -2044,22 +2226,26 @@ export function AppProvider({ children }) {
       }
       return [...prev, row];
     });
-    persistMemberProgramRemote(row);
     return { ok: true, program: enrichMemberProgram(row) };
   };
 
-  const deleteMemberProgram = (programId, memberId = currentUser?.id) => {
+  const deleteMemberProgram = async (programId, memberId = currentUser?.id) => {
     if (!memberId || !programId) {
       return { ok: false, error: "معرّف البرنامج مفقود" };
+    }
+    if (isSupabaseConfigured() && supabaseSession?.user?.id) {
+      const sync = await deleteMemberProgramRemote(programId);
+      if (!sync.ok && !sync.skipped) {
+        return { ok: false, error: sync.error || "تعذر حذف البرنامج" };
+      }
     }
     setMemberPrograms((prev) =>
       prev.filter((p) => !(p.id === programId && p.userId === memberId))
     );
-    deleteMemberProgramRemote(programId).catch(() => {});
     return { ok: true };
   };
 
-  const setMemberProgramTumuns = (
+  const setMemberProgramTumuns = async (
     programId,
     completedTumuns,
     memberId = currentUser?.id
@@ -2072,7 +2258,7 @@ export function AppProvider({ children }) {
     return saveMemberProgram({ ...target, completedTumuns: clamped }, memberId);
   };
 
-  const adjustMemberProgramTumuns = (
+  const adjustMemberProgramTumuns = async (
     programId,
     delta,
     memberId = currentUser?.id
@@ -2082,9 +2268,9 @@ export function AppProvider({ children }) {
     );
     if (!target) return { ok: false, error: "البرنامج غير موجود" };
     const current = clampTumuns(target.completedTumuns ?? 0, target.nbHizb);
-    const next = clampTumuns(current + Number(delta), target.nbHizb);
+    const next = clampTumuns(current + Number(delta || 0), target.nbHizb);
     if (next === current) {
-      return { ok: true, program: enrichMemberProgram({ ...target, completedTumuns: current }), unchanged: true };
+      return { ok: true, unchanged: true, program: enrichMemberProgram(target) };
     }
     return saveMemberProgram({ ...target, completedTumuns: next }, memberId);
   };
