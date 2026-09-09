@@ -25,6 +25,7 @@ import {
   formatSeanceScheduleLabel,
 } from "../lib/seancesApi";
 import { getActiveRegularSeason } from "../lib/seasonScope";
+import { parseObjectifInput } from "../lib/objectifsApi";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
@@ -165,7 +166,9 @@ export default function RegisterScreen({ navigation }) {
     const level = form.universityStatus || "";
     const experienceHizb =
       form.hasExperience === "نعم" ? form.hizbCount.trim() : "";
-    const seasonGoal = form.seasonGoal.trim();
+    // Toujours une string parsable (« 5 ») — colonnes texte inchangées
+    const parsedGoal = parseObjectifInput(form.seasonGoal);
+    const seasonGoal = parsedGoal.ok ? String(parsedGoal.value) : "";
 
     const formAnswers = {
       universityStatus: form.universityStatus,
@@ -239,8 +242,9 @@ export default function RegisterScreen({ navigation }) {
       Alert.alert("تنبيه", "اختر الحصة المناسبة لجنسك");
       return;
     }
-    if (!String(form.seasonGoal || "").trim()) {
-      Alert.alert("تنبيه", "أدخل المقدار الذي تطمح لحفظه هذا الموسم");
+    const parsedGoal = parseObjectifInput(form.seasonGoal);
+    if (!parsedGoal.ok) {
+      Alert.alert("تنبيه", parsedGoal.error);
       return;
     }
 
@@ -337,7 +341,7 @@ export default function RegisterScreen({ navigation }) {
                 <InfoRow
                   icon="flag-outline"
                   label="هدف الموسم"
-                  value={answers.seasonGoal || submitted.hifzAmount}
+                  value={`${answers.seasonGoal || submitted.hifzAmount} حزب`}
                 />
               ) : null}
             </View>
@@ -555,18 +559,17 @@ export default function RegisterScreen({ navigation }) {
 
             <View style={styles.inputGroup}>
               <FieldLabel required>
-                ما هو المقدار الذي تطمح لحفظه من كتاب الله خلال هذا الموسم؟
+                ما هو عدد الأحزاب الذي تطمح لحفظه من كتاب الله خلال هذا الموسم؟
               </FieldLabel>
               <View style={styles.inputWrapper}>
                 <TextInput
-                  style={[styles.input, styles.multiline]}
-                  placeholder="مثال: 5 أحزاب"
+                  style={styles.input}
+                  placeholder="مثال: 5"
                   placeholderTextColor={colors.placeholder}
                   value={form.seasonGoal}
                   onChangeText={(v) => setField("seasonGoal", v)}
-                  multiline
+                  keyboardType="number-pad"
                   textAlign={textAlignStart}
-                  textAlignVertical="top"
                 />
               </View>
             </View>

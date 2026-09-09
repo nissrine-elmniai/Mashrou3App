@@ -42,8 +42,16 @@ function isNonEmptySaisonId(saisonId) {
   return saisonId != null && String(saisonId).trim() !== "";
 }
 
-function parseNbHizbCible(raw) {
-  const n = Number(raw);
+/**
+ * Saisie d'un objectif de saison : entier 1–60 (hizb).
+ * Chaîne vide ou texte non numérique (ex. « جزء عم ») → ok: false, sans valeur inventée.
+ */
+export function parseObjectifInput(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (trimmed === "") {
+    return { ok: false, error: "أدخل عدد الأحزاب المستهدفة (1 إلى 60)" };
+  }
+  const n = Number(trimmed);
   if (!Number.isInteger(n) || n < 1 || n > TOTAL_HIZB) {
     return {
       ok: false,
@@ -51,6 +59,10 @@ function parseNbHizbCible(raw) {
     };
   }
   return { ok: true, value: n };
+}
+
+function parseNbHizbCible(raw) {
+  return parseObjectifInput(raw);
 }
 
 function mapObjectifRow(row) {
