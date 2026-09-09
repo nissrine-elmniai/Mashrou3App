@@ -12,6 +12,7 @@ import {
   getActiveSeancesByGenre,
   formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
+import { parseObjectifInput } from "../../lib/objectifsApi";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, textAlignStart } from "../../constants/rtl";
 import { SectionCard, QuickButton, EmptyState } from "../../components/ui";
@@ -116,11 +117,9 @@ function RegistrationBlock({
   })();
 
   const handleSubmit = async (seasonId) => {
-    if (!String(answers.seasonGoal || "").trim()) {
-      Alert.alert(
-        "تنبيه",
-        "أدخل المقدار الذي تطمح لحفظه من كتاب الله خلال هذا الموسم"
-      );
+    const parsedGoal = parseObjectifInput(answers.seasonGoal);
+    if (!parsedGoal.ok) {
+      Alert.alert("تنبيه", parsedGoal.error);
       return;
     }
     if (!answers.seanceId) {
@@ -128,6 +127,7 @@ function RegistrationBlock({
       return;
     }
 
+    const seasonGoal = String(parsedGoal.value);
     setSubmitting(true);
     const result = await onSubmit({
       seasonId,
@@ -135,9 +135,9 @@ function RegistrationBlock({
       seanceName: selectedSeance
         ? formatSeanceScheduleLabel(selectedSeance)
         : "",
-      hifzAmount: answers.seasonGoal.trim(),
+      hifzAmount: seasonGoal,
       formAnswers: {
-        seasonGoal: answers.seasonGoal.trim(),
+        seasonGoal,
         difficulties: answers.difficulties.trim(),
         desiredActivities: answers.desiredActivities.trim(),
       },
@@ -177,18 +177,17 @@ function RegistrationBlock({
 
       <View style={styles.inputGroup}>
         <FieldLabel required>
-          ما هو المقدار الذي تطمح لحفظه من كتاب الله خلال هذا الموسم؟
+          ما هو عدد الأحزاب الذي تطمح لحفظه من كتاب الله خلال هذا الموسم؟
         </FieldLabel>
         <View style={styles.inputWrapper}>
           <TextInput
-            style={[styles.input, styles.multiline]}
-            placeholder="مثال: 5 أحزاب"
+            style={styles.input}
+            placeholder="مثال: 5"
             placeholderTextColor={colors.placeholder}
             value={answers.seasonGoal}
             onChangeText={(v) => setField("seasonGoal", v)}
-            multiline
+            keyboardType="number-pad"
             textAlign={textAlignStart}
-            textAlignVertical="top"
           />
         </View>
       </View>
