@@ -17,19 +17,24 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, textAlignStart, fonts, row } from "../../constants/rtl";
 import { updateMemberInfo } from "../../lib/membersApi";
+import { formatBirthDateLabel } from "../../lib/auth";
+import { PROFILE_COLUMN_LABELS as L } from "./profileColumnLabels";
 
 /**
  * Édition des infos personnelles par le membre lui-même.
  * Colonnes écrites : profiles.phone / school / level (policy profiles_update_own).
- * Email (auth Supabase), genre (profiles.genre) et مقدار الحفظ restent en lecture seule.
+ * Email, first_name, last_name, genre, date_naissance et hifz_amount restent en lecture seule.
  */
 export default function EditProfileInfoModal({
   visible,
   onClose,
   onSaved,
   authId,
+  firstName,
+  lastName,
   email,
   gender,
+  birthDate,
   hifzAmount,
   phone,
   school,
@@ -143,7 +148,7 @@ export default function EditProfileInfoModal({
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.label}>رقم الهاتف</Text>
+            <Text style={styles.label}>{L.phone}</Text>
             <TextInput
               style={styles.input}
               value={form.phone}
@@ -155,7 +160,7 @@ export default function EditProfileInfoModal({
               returnKeyType="next"
             />
 
-            <Text style={styles.label}>المدرسة</Text>
+            <Text style={styles.label}>{L.school}</Text>
             <TextInput
               style={styles.input}
               value={form.school}
@@ -166,7 +171,7 @@ export default function EditProfileInfoModal({
               returnKeyType="next"
             />
 
-            <Text style={styles.label}>المستوى التعليمي</Text>
+            <Text style={styles.label}>{L.level}</Text>
             <TextInput
               style={styles.input}
               value={form.level}
@@ -182,9 +187,17 @@ export default function EditProfileInfoModal({
               <Text style={styles.readOnlyHint}>
                 هذه المعلومات غير قابلة للتعديل من هنا
               </Text>
-              <ReadOnlyRow label="البريد الإلكتروني" value={email} />
-              <ReadOnlyRow label="الجنس" value={gender} />
-              <ReadOnlyRow label="مقدار الحفظ" value={hifzAmount} />
+              <ReadOnlyRow
+                label={L.full_name}
+                value={`${firstName || ""} ${lastName || ""}`.trim()}
+              />
+              <ReadOnlyRow label={L.email} value={email} />
+              <ReadOnlyRow label={L.genre} value={gender} />
+              <ReadOnlyRow
+                label={L.date_naissance}
+                value={formatBirthDateLabel(birthDate)}
+              />
+              <ReadOnlyRow label={L.hifz_amount} value={hifzAmount} />
             </View>
 
             <View style={styles.actions}>

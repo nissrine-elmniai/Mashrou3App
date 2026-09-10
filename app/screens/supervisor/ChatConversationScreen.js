@@ -20,7 +20,7 @@ import { useApp } from "../../context/AppContext";
 import { ROLES } from "../../constants/roles";
 import { getSupervisorActiveSeance } from "../../lib/membersApi";
 import {
-  getMySeance,
+  getMyAcceptedSeance,
   resolveAdminProfile,
   getConversation,
   markConversationRead,
@@ -89,11 +89,11 @@ export default function ChatConversationScreen({ navigation, route }) {
             // Conversation permanente avec le superviseur assigné (même sans
             // historique). On ancre l'envoi sur la séance où ce superviseur
             // est réellement lié, sinon RLS refuse le message.
-            const mySeance = await getMySeance({
-              preferSuperviseurId: contactId || null,
-              preferSeanceId: routeSeanceId || null,
+            const assignedRes = await getMyAcceptedSeance({
+              seanceId: routeSeanceId || null,
+              superviseurId: contactId || null,
             });
-            const assigned = mySeance?.ok ? mySeance.seance : null;
+            const assigned = assignedRes?.ok ? assignedRes.seance : null;
             if (assigned?.superviseur_id) {
               seanceId = assigned.id;
               otherId = assigned.superviseur_id;
@@ -101,7 +101,8 @@ export default function ChatConversationScreen({ navigation, route }) {
               seanceId = routeSeanceId;
               otherId = contactId;
             } else {
-              failReason = mySeance?.error || "لم يتم العثور على حصة مرتبطة بالمشرف";
+              failReason =
+                assignedRes?.error || "لم يتم العثور على حصة مرتبطة بالمشرف";
             }
           }
         } else if (isAdmin && isSupervisor) {

@@ -25,6 +25,7 @@ import {
   dateToIsoLocal,
 } from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
+import { PROFILE_COLUMN_LABELS as L } from "./profileColumnLabels";
 
 const DEFAULT_BIRTH = new Date(2000, 0, 1);
 
@@ -171,7 +172,7 @@ export default function EditSupervisorProfileModal({
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.label}>الاسم</Text>
+            <Text style={styles.label}>{L.first_name}</Text>
             <TextInput
               style={styles.input}
               value={form.firstName}
@@ -182,7 +183,7 @@ export default function EditSupervisorProfileModal({
               returnKeyType="next"
             />
 
-            <Text style={styles.label}>النسب</Text>
+            <Text style={styles.label}>{L.last_name}</Text>
             <TextInput
               style={styles.input}
               value={form.lastName}
@@ -193,7 +194,7 @@ export default function EditSupervisorProfileModal({
               returnKeyType="next"
             />
 
-            <Text style={styles.label}>رقم الهاتف</Text>
+            <Text style={styles.label}>{L.phone}</Text>
             <TextInput
               style={styles.input}
               value={form.phone}
@@ -205,7 +206,7 @@ export default function EditSupervisorProfileModal({
               returnKeyType="done"
             />
 
-            <Text style={styles.label}>تاريخ الميلاد</Text>
+            <Text style={styles.label}>{L.date_naissance}</Text>
             <TouchableOpacity
               style={styles.dateField}
               onPress={() => setShowDatePicker(true)}
@@ -242,7 +243,7 @@ export default function EditSupervisorProfileModal({
               </TouchableOpacity>
             ) : null}
 
-            <Text style={styles.label}>الجنس</Text>
+            <Text style={styles.label}>{L.genre}</Text>
             <View style={styles.chipsRow}>
               {GENDER_OPTIONS.map((opt) => {
                 const active = form.genre === opt.value;
@@ -267,7 +268,7 @@ export default function EditSupervisorProfileModal({
               <Text style={styles.readOnlyHint}>
                 هذه المعلومات غير قابلة للتعديل من هنا
               </Text>
-              <ReadOnlyRow label="البريد الإلكتروني" value={email} />
+              <ReadOnlyRow label={L.email} value={email} />
             </View>
 
             <View style={styles.actions}>

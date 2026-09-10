@@ -29,6 +29,7 @@ export default function SessionCard({
   heureDebut,
   groupSchedule,
   registrationDate,
+  emptyText = "لم يتم تعيينك في حصة لهذا الموسم",
 }) {
   const scheduleLabel = useMemo(() => {
     if (jour || heureDebut) return formatSessionSchedule(jour, heureDebut);
@@ -38,18 +39,32 @@ export default function SessionCard({
   const registrationDateOnly = registrationDate
     ? String(registrationDate).slice(0, 10)
     : null;
+  const unassigned = !groupName;
 
   return (
     <View style={[styles.card, shadows.card]}>
       <ProfileCardHeader title="الحصة" />
-      <ProfileFieldRow icon="people-outline" label="الحصة" value={groupName || "—"} />
-      <ProfileFieldRow icon="time-outline" label="التوقيت" value={scheduleLabel} hideIfEmpty />
       <ProfileFieldRow
-        icon="calendar-clear-outline"
-        label="تاريخ التسجيل"
-        value={registrationDateOnly}
-        hideIfEmpty
+        icon="people-outline"
+        label="الحصة"
+        value={unassigned ? emptyText : groupName}
       />
+      {unassigned ? null : (
+        <>
+          <ProfileFieldRow
+            icon="time-outline"
+            label="التوقيت"
+            value={scheduleLabel}
+            hideIfEmpty
+          />
+          <ProfileFieldRow
+            icon="calendar-clear-outline"
+            label="تاريخ التسجيل"
+            value={registrationDateOnly}
+            hideIfEmpty
+          />
+        </>
+      )}
     </View>
   );
 }

@@ -15,7 +15,7 @@ import { colors } from "../../constants/theme";
 import { rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { EmptyState } from "../../components/ui";
-import { getMySeance, mergeInboxRows } from "../../lib/messagesApi";
+import { getMyCurrentInscription, mergeInboxRows } from "../../lib/messagesApi";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
@@ -51,8 +51,10 @@ export default function MemberChatInboxScreen({ navigation }) {
       let cancelled = false;
       (async () => {
         setSeanceLoading(true);
-        const res = await getMySeance();
+        const res = await getMyCurrentInscription();
         if (cancelled) return;
+        // Sans inscription du musim actif : pas de ligne superviseur.
+        // Les anciens fils restent via useInboxThreads + appendUnknown.
         setSupervisor(
           res.ok ? supervisorContactFromSeance(res.seance) : null
         );

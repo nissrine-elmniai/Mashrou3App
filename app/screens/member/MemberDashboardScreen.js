@@ -47,11 +47,11 @@ import {
   getMemberProfileFields,
   formatGenderLabel,
 } from "../../lib/membersApi";
-import { getMySeance, getMyInscriptionDate, formatUnreadBadge } from "../../lib/messagesApi";
+import { getMyCurrentInscription, formatUnreadBadge } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { formatHizbCount, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -196,7 +196,6 @@ export default function MemberDashboardScreen({ navigation }) {
     hasData: false,
     metrics: null,
     note: null,
-    objectif: null,
   });
   const [presenceState, setPresenceState] = useState({
     loading: false,
@@ -323,7 +322,6 @@ export default function MemberDashboardScreen({ navigation }) {
         hasData: false,
         metrics: null,
         note: null,
-        objectif: null,
       });
       setPresenceState({
         loading: false,
@@ -341,10 +339,9 @@ export default function MemberDashboardScreen({ navigation }) {
     setPresenceState((s) => ({ ...s, loading: true, error: null }));
     setSessionState((s) => ({ ...s, loading: true }));
 
-    const [fieldsRes, seanceRes, inscRes] = await Promise.all([
+    const [fieldsRes, currentInscRes] = await Promise.all([
       getMemberProfileFields(authId),
-      getMySeance(),
-      getMyInscriptionDate(authId),
+      getMyCurrentInscription(authId),
     ]);
 
     if (fieldsRes.ok) {
@@ -356,9 +353,10 @@ export default function MemberDashboardScreen({ navigation }) {
       });
     }
 
-    const seance = seanceRes.ok ? seanceRes.seance : null;
+    const seance = currentInscRes.ok ? currentInscRes.seance : null;
+    const inscription = currentInscRes.ok ? currentInscRes.inscription : null;
     const seanceId = seance?.id || null;
-    const saisonId = seance?.saison_id || null;
+    const saisonId = seance?.saison_id || inscription?.saisonId || null;
 
     setSessionState({
       loading: false,
@@ -367,23 +365,30 @@ export default function MemberDashboardScreen({ navigation }) {
       heureDebut: seance?.heure_debut || null,
       seanceId,
       saisonId,
-      registrationDate: inscRes.ok ? inscRes.dateInscription : null,
+      registrationDate: inscription?.dateInscription || null,
     });
-
-    const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
-    const [objRes, presRes] = await Promise.all([
-      objectifSaisonId
-        ? getMyObjectif(objectifSaisonId)
-        : Promise.resolve({ ok: true, objectif: null }),
-      getMemberPresenceSummary(authId, seanceId),
-    ]);
 
     setProgressState((s) => ({
       ...s,
       loading: false,
       error: null,
-      objectif: objRes.ok && objRes.objectif ? objRes.objectif : null,
     }));
+
+    // Pas de séance du musim courant : ne pas charger la présence.
+    if (!seanceId) {
+      setPresenceState({
+        loading: false,
+        error: null,
+        hasData: false,
+        rate: null,
+        presentCount: 0,
+        absentCount: 0,
+        records: [],
+      });
+      return;
+    }
+
+    const presRes = await getMemberPresenceSummary(authId, seanceId);
 
     if (!presRes.ok) {
       setPresenceState({
@@ -412,7 +417,6 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser?.school,
     currentUser?.level,
     currentUser?.hifzAmount,
-    seasons,
   ]);
 
   const handleProfileInfoSaved = useCallback(
@@ -477,7 +481,7 @@ export default function MemberDashboardScreen({ navigation }) {
       hasData: !!memorizationMetrics,
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
-      objectif: progressState.objectif || seasonObjectif || null,
+      objectif: seasonObjectif,
       seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
       weekDeltaTumuns: progressPace.weekDeltaTumuns,
     }),
@@ -486,15 +490,14 @@ export default function MemberDashboardScreen({ navigation }) {
       activitiesLoading,
       progressState.loading,
       progressState.error,
-      progressState.objectif,
       seasonObjectif,
       progressPace,
     ]
   );
 
-  /** Anneau = avancement vers l'objectif de la saison active (أثمان / cible). */
+  /** Anneau = incrément saison (position actuelle − départ) / objectif visé. */
   const homeProgress = useMemo(() => {
-    const goal = seasonObjectif || progressState.objectif;
+    const goal = seasonObjectif;
     const nbHizbCible = Number(goal?.nbHizbCible);
     const hasObjectif = Number.isInteger(nbHizbCible) && nbHizbCible >= 1;
     const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
@@ -509,17 +512,25 @@ export default function MemberDashboardScreen({ navigation }) {
       };
     }
 
+    const departRaw = Number(goal?.nbHizbDepart);
+    const nbHizbDepart =
+      Number.isInteger(departRaw) && departRaw >= 0 ? departRaw : 0;
+    const numerateur = Math.max(
+      0,
+      tumunTotal - nbHizbDepart * TUMUNS_PER_HIZB
+    );
     const denom = nbHizbCible * TUMUNS_PER_HIZB;
-    const rawPct = denom > 0 ? (tumunTotal / denom) * 100 : 0;
+    const rawPct = denom > 0 ? (numerateur / denom) * 100 : 0;
     const ring = formatRingPercent(rawPct);
-    const positionLabel = formatHizbAmount(tumunTotal);
+    const gainedLabel = formatHizbAmount(numerateur);
+    const cibleLabel = formatHizbCount(nbHizbCible);
     return {
       memorizationPct: ring.progress,
       memorizationPctLabel: ring.label,
-      programsHizbLabel: `${positionLabel} من ${nbHizbCible} حزب`,
-      ringA11y: `تقدم هدف الموسم: ${positionLabel} من ${nbHizbCible} حزب`,
+      programsHizbLabel: `${gainedLabel} من ${cibleLabel}`,
+      ringA11y: `تقدم هدف الموسم: ${gainedLabel} من ${cibleLabel}`,
     };
-  }, [seasonObjectif, progressState.objectif, memorizationMetrics]);
+  }, [seasonObjectif, memorizationMetrics]);
 
   const { memorizationPct, memorizationPctLabel, programsHizbLabel, ringA11y } =
     homeProgress;
@@ -548,7 +559,7 @@ export default function MemberDashboardScreen({ navigation }) {
 
     progressEntries.forEach((entry, idx) => {
       const metrics = computeProgressMetrics(entry);
-      let body = metrics?.notes || `${metrics?.nbHizbCompletes ?? 0} حزب مكتمل`;
+      let body = metrics?.notes || formatHizbCount(metrics?.nbHizbCompletes ?? 0);
       if (metrics?.tumunCourant != null) {
         body += ` — الثمن ${metrics.tumunCourant}`;
       }
@@ -827,7 +838,12 @@ export default function MemberDashboardScreen({ navigation }) {
               >
                 <View style={styles.ringInner} pointerEvents="none">
                   <Text style={styles.ringPct}>{memorizationPctLabel}</Text>
-                  <Text style={styles.juzCount} numberOfLines={2}>
+                  <Text
+                    style={styles.juzCount}
+                    numberOfLines={2}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
+                  >
                     {programsHizbLabel}
                   </Text>
                 </View>
@@ -933,9 +949,12 @@ export default function MemberDashboardScreen({ navigation }) {
 
             <View style={styles.profileCards}>
               <ProfileInfoCard
+                firstName={currentUser?.firstName}
+                lastName={currentUser?.lastName}
                 email={currentUser?.email || null}
                 gender={displayGenderFromUser(currentUser?.gender)}
                 phone={contactFields.phone}
+                birthDate={currentUser?.birthDate}
                 school={contactFields.school}
                 level={contactFields.level}
                 hifzAmount={contactFields.hifzAmount}
@@ -996,7 +1015,10 @@ export default function MemberDashboardScreen({ navigation }) {
         authId={authId}
         email={currentUser?.email || null}
         gender={displayGenderFromUser(currentUser?.gender)}
+        birthDate={currentUser?.birthDate}
         hifzAmount={contactFields.hifzAmount}
+        firstName={currentUser?.firstName}
+        lastName={currentUser?.lastName}
         phone={contactFields.phone}
         school={contactFields.school}
         level={contactFields.level}
@@ -1124,9 +1146,9 @@ const styles = StyleSheet.create({
     ...shadows.card,
   },
   ringInner: {
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: radii.sm,
   },
   ringPct: {
     fontSize: radii.lg + radii.sm,
@@ -1142,6 +1164,7 @@ const styles = StyleSheet.create({
     ...rtlTextCenter,
   },
   juzCount: {
+    width: "100%",
     color: colors.muted,
     fontSize: 11,
     fontFamily: fonts.regular,

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -31,6 +31,7 @@ import {
   computeProgressMetrics,
   flushMemberProgressDelta,
   getMemberDeclaredHizbCount,
+  getMemberHizbCompletesBeforeDate,
   getMemberSeasonObjectif,
   getMyProgress,
   latestProgressionRow,
@@ -44,6 +45,7 @@ import {
   TOTAL_HIZB,
   TUMUN_UI_MAX,
   TUMUN_UI_MIN,
+  formatHizbCount,
   tumunStoredToUi,
   tumunUiToStored,
 } from "../../lib/tumun";
@@ -72,6 +74,29 @@ function parseTumunInput(raw) {
   return { ok: true, value: n };
 }
 
+/** nb_hizb_completes de la dernière ligne progression, 0 si aucune. */
+function departFromEntries(list) {
+  const latest = latestProgressionRow(list);
+  if (!latest) return 0;
+  const metrics = computeProgressMetrics(latest);
+  const n = Number(metrics?.nbHizbCompletes ?? latest.nb_hizb_completes ?? 0);
+  if (!Number.isInteger(n) || n < 0) return 0;
+  return Math.min(n, TOTAL_HIZB);
+}
+
+/**
+ * `saisons.start_date` déjà chargé via le contexte (startDate).
+ * YYYY-MM-DD, ou YYYY/MM/DD des placeholders admin. Sinon null (illisible).
+ */
+function seasonStartDateIso(season) {
+  const raw = String(season?.startDate || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const slash = raw.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (!slash) return null;
+  return `${slash[1]}-${slash[2].padStart(2, "0")}-${slash[3].padStart(2, "0")}`;
+}
+
 export default function MemberProgressScreen({ navigation }) {
   const { seasons, currentUser } = useApp();
   const [hizb, setHizb] = useState("");
@@ -87,30 +112,48 @@ export default function MemberProgressScreen({ navigation }) {
   const [savingObjectif, setSavingObjectif] = useState(false);
   const [entries, setEntries] = useState([]);
   const [loadError, setLoadError] = useState(null);
+  /** Ligne objectifs déjà persistée (départ figé). Null = pas encore créée. */
+  const [objectifRow, setObjectifRow] = useState(null);
+  /** Position au début de saison ; null = repli sur la position du jour. */
+  const [seasonStartDepart, setSeasonStartDepart] = useState(null);
 
-  const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
+  const activeSeason = getActiveRegularSeason(seasons);
+  const saisonId = activeSeason?.id ?? null;
   const authId = currentUser?.authId || null;
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     await flushMemberProgressDelta();
-    const activeSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
-    const [res, objRes] = await Promise.all([
+    const season = getActiveRegularSeason(seasons);
+    const activeSaisonId = season?.id ?? null;
+    const startIso = seasonStartDateIso(season);
+    const [res, objRes, departRes] = await Promise.all([
       getMyProgress(),
       activeSaisonId
         ? getMyObjectif(activeSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
+      authId && startIso
+        ? getMemberHizbCompletesBeforeDate(authId, startIso)
+        : Promise.resolve(null),
     ]);
+    if (departRes && departRes.ok) {
+      setSeasonStartDepart(departRes.nbHizbCompletes);
+    } else {
+      setSeasonStartDepart(null);
+    }
     setLoading(false);
     // Ligne objectifs existante prioritaire ; sinon suggestion d'inscription, sans écriture
     if (!objRes.ok) {
       setGoalHizb("");
       setGoalSuggestedFromInscription(false);
+      setObjectifRow(null);
     } else if (objRes.objectif?.nbHizbCible != null) {
       setGoalHizb(String(objRes.objectif.nbHizbCible));
       setGoalSuggestedFromInscription(false);
+      setObjectifRow(objRes.objectif);
     } else if (activeSaisonId && authId) {
+      setObjectifRow(null);
       const declared = await getMemberSeasonObjectif(authId, activeSaisonId);
       const parsed = declared.ok
         ? parseObjectifInput(declared.objectif)
@@ -125,6 +168,7 @@ export default function MemberProgressScreen({ navigation }) {
     } else {
       setGoalHizb("");
       setGoalSuggestedFromInscription(false);
+      setObjectifRow(null);
     }
     if (!res.ok) {
       setLoadError(res.error);
@@ -220,15 +264,43 @@ export default function MemberProgressScreen({ navigation }) {
       return;
     }
     setSavingObjectif(true);
-    const result = await setMyObjectif(saisonId, parsed.value);
+    // Départ figé à la création uniquement ; l'API ignore aussi le 3e argument si la ligne existe.
+    const isCreate = !objectifRow;
+    let nbHizbDepart;
+    if (isCreate) {
+      const startIso = seasonStartDateIso(getActiveRegularSeason(seasons));
+      if (startIso && authId) {
+        const before = await getMemberHizbCompletesBeforeDate(authId, startIso);
+        nbHizbDepart = before.ok
+          ? before.nbHizbCompletes
+          : departFromEntries(entries);
+      } else {
+        // date_debut absente / illisible : même repli que l'ancien comportement
+        nbHizbDepart = departFromEntries(entries);
+      }
+    }
+    const result = await setMyObjectif(saisonId, parsed.value, nbHizbDepart);
     setSavingObjectif(false);
     if (!result.ok) {
       Alert.alert("تنبيه", result.error || "تعذر حفظ الهدف");
       return;
     }
     setGoalSuggestedFromInscription(false);
+    setObjectifRow(result.objectif || objectifRow);
     Alert.alert("تم", "تم حفظ هدف الموسم");
   };
+
+  const objectifMeaning = useMemo(() => {
+    const parsed = parseObjectifInput(goalHizb);
+    if (!parsed.ok) return null;
+    const depart = objectifRow
+      ? Number(objectifRow.nbHizbDepart) || 0
+      : seasonStartDepart != null
+        ? seasonStartDepart
+        : departFromEntries(entries);
+    const cibleFinale = depart + parsed.value;
+    return `موضعك في بداية الموسم ${formatHizbCount(depart)} + الهدف ${formatHizbCount(parsed.value)} = ${formatHizbCount(cibleFinale)} في نهاية الموسم`;
+  }, [goalHizb, objectifRow, entries, seasonStartDepart]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
@@ -328,7 +400,7 @@ export default function MemberProgressScreen({ navigation }) {
             <View style={[styles.card, shadows.card]}>
               <Text style={styles.historyTitle}>هدف الموسم</Text>
               <Text style={styles.objectifHint}>
-                عدد الأحزاب التي تطمح لحفظها خلال هذا الموسم (1 إلى 60).
+                عدد الأحزاب الإضافية التي تطمح لحفظها خلال هذا الموسم (1 إلى 60).
               </Text>
               {goalSuggestedFromInscription ? (
                 <Text style={styles.objectifSuggestHint}>
@@ -345,6 +417,9 @@ export default function MemberProgressScreen({ navigation }) {
                 placeholderTextColor={colors.placeholder}
                 textAlign={textAlignStart}
               />
+              {objectifMeaning ? (
+                <Text style={styles.objectifMeaning}>{objectifMeaning}</Text>
+              ) : null}
               <TouchableOpacity
                 style={[
                   styles.saveBtn,
@@ -377,7 +452,7 @@ export default function MemberProgressScreen({ navigation }) {
                   >
                     <View style={styles.historyMain}>
                       <Text style={styles.historyBody}>
-                        {metrics?.nbHizbCompletes ?? 0} حزب
+                        {formatHizbCount(metrics?.nbHizbCompletes ?? 0)}
                         {` · الثمن ${tumunStoredToUi(entry.tumun_courant)}`}
                         {metrics?.globalPct != null
                           ? ` · ${metrics.globalPct}%`
@@ -501,6 +576,15 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     marginBottom: radii.md,
     lineHeight: radii.lg + radii.sm,
+    ...rtlText,
+  },
+  objectifMeaning: {
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.regular,
+    marginTop: -radii.sm,
+    marginBottom: radii.md,
+    lineHeight: radii.lg + 2,
     ...rtlText,
   },
   objectifSuggestHint: {

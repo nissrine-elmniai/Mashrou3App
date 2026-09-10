@@ -118,6 +118,26 @@ const TUMUN_FORMS = {
   counted: "ثمنا",
 };
 
+/**
+ * Compte d'أحزاب : le chiffre est toujours affiché.
+ * 0 / 1 / 11+ → حزب ؛ 2 → حزبين ؛ 3–10 → أحزاب.
+ * Les décimales restent au singulier (حزب).
+ */
+export function formatHizbCount(count) {
+  const n = Number(count);
+  if (!Number.isFinite(n) || n < 0) {
+    return `${wrapLtr(0)} حزب`;
+  }
+  if (!Number.isInteger(n)) {
+    const one = Math.round(n * 10) / 10;
+    const label = one === Math.floor(one) ? String(one) : one.toFixed(1);
+    return `${wrapLtr(label)} حزب`;
+  }
+  if (n === 2) return `${wrapLtr(2)} حزبين`;
+  if (n >= 3 && n <= 10) return `${wrapLtr(n)} أحزاب`;
+  return `${wrapLtr(n)} حزب`;
+}
+
 function formatUnitChunk(phrase, sign) {
   if (phrase.leadingNum != null) {
     const head = sign != null ? `${sign}${phrase.leadingNum}` : String(phrase.leadingNum);

@@ -3,6 +3,7 @@ import {
   TUMUNS_PER_HIZB,
   TOTAL_HIZB,
   clampMemberTumuns,
+  formatHizbCount,
   positionFromMemberTumuns,
 } from "./tumun";
 
@@ -36,6 +37,11 @@ function mapTableError(error, tableLabel) {
     return "سجل مكرر — هذه العملية مسجلة مسبقاً";
   }
   return mapSupabaseAuthError(error);
+}
+
+function isRlsDenied(error) {
+  const msg = error?.message || "";
+  return /permission|row-level security|RLS|42501|violates row/i.test(msg);
 }
 
 /**
@@ -119,6 +125,55 @@ export async function getMyProgress() {
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
   return getMemberProgressEntries(userId);
+}
+
+/**
+ * `nb_hizb_completes` de la dernière ligne `progression` strictement
+ * antérieure à `beforeDate` (ISO, comparée à `date`). Aucune ligne → 0.
+ * RLS refusée → 0, sans erreur (même silence que getMemberDeclaredHizbCount).
+ * @returns {{ ok: true, nbHizbCompletes: number } | { ok: false, error: string }}
+ */
+export async function getMemberHizbCompletesBeforeDate(membreId, beforeDate) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!membreId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+  const before = String(beforeDate || "").trim();
+  if (!before) {
+    return { ok: false, error: "تاريخ الموسم مفقود" };
+  }
+
+  try {
+    const { data, error } = await fetchProgressionOrdered(
+      () =>
+        supabase
+          .from("progression")
+          .select("nb_hizb_completes")
+          .eq("membre_id", membreId)
+          .lt("date", before)
+          .limit(1),
+      "قراءة التقدم قبل بداية الموسم"
+    );
+    if (error) {
+      if (isRlsDenied(error)) {
+        return { ok: true, nbHizbCompletes: 0 };
+      }
+      return { ok: false, error: mapTableError(error, "progression") };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      return { ok: true, nbHizbCompletes: 0 };
+    }
+    const n = Number(row.nb_hizb_completes);
+    if (!Number.isInteger(n) || n < 0) {
+      return { ok: true, nbHizbCompletes: 0 };
+    }
+    return { ok: true, nbHizbCompletes: Math.min(n, TOTAL_HIZB) };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
 }
 
 const MAX_TUMUN_COURANT = TUMUNS_PER_HIZB - 1; // 0–7
@@ -686,7 +741,7 @@ export function computeObjectifProgress(objectifText, seasonMemorizedTumuns) {
   return {
     label:
       typeof objectifText === "object" && objectifText?.nbHizbCible != null
-        ? `${objectifText.nbHizbCible} حزب`
+        ? formatHizbCount(objectifText.nbHizbCible)
         : String(objectifText || "").trim(),
     targetTumuns,
     doneTumuns,
@@ -732,7 +787,7 @@ export function computeObjectifProgressFromPrograms(
   return {
     label:
       typeof objectifText === "object" && objectifText?.nbHizbCible != null
-        ? `${objectifText.nbHizbCible} حزب`
+        ? formatHizbCount(objectifText.nbHizbCible)
         : String(objectifText || "").trim(),
     targetTumuns,
     doneTumuns: cappedDone,
