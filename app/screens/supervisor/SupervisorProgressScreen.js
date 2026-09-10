@@ -22,7 +22,7 @@ import {
   getMemberProgressEntries,
 } from "../../lib/progressApi";
 import { getMemberObjectif } from "../../lib/objectifsApi";
-import { formatHizbTumunDelta, tumunStoredToUi } from "../../lib/tumun";
+import { formatHizbCount, formatHizbTumunDelta, tumunStoredToUi } from "../../lib/tumun";
 import {
   ACTIVITY_DAY_COUNT,
   HISTORY_FETCH_LIMIT,
@@ -43,7 +43,7 @@ function formatSupervisorDate(raw) {
 
 function formatHizbTumunPosition(entry, metrics) {
   const hizb = metrics?.nbHizbCompletes ?? 0;
-  return `${hizb} حزب · الثمن ${tumunStoredToUi(entry?.tumun_courant)}`;
+  return `${formatHizbCount(hizb)} · الثمن ${tumunStoredToUi(entry?.tumun_courant)}`;
 }
 
 function progressStateFromMember(member, progressLoading, pace, objectif) {

@@ -56,29 +56,8 @@ async function currentAuthId() {
 const MEMBER_SEANCE_SELECT =
   "id, nom, saison_id, jour, heure_debut, heure_fin, statut, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, avatar_url)";
 
-function seancePreferenceScore(
-  seance,
-  { activeSaisonIds = null, preferSuperviseurId = null, preferSeanceId = null } = {}
-) {
-  if (!seance?.id) return -1;
-  let score = 0;
-  if (seance.superviseur_id) score += 100;
-  if (preferSuperviseurId && seance.superviseur_id === preferSuperviseurId) score += 200;
-  if (preferSeanceId && seance.id === preferSeanceId) score += 150;
-  if (seance.statut === "active") score += 50;
-  if (activeSaisonIds && seance.saison_id && activeSaisonIds.has(seance.saison_id)) {
-    score += 40;
-  }
-  return score;
-}
-
-function pickPreferredMemberSeance(seances, options = {}) {
-  const list = (seances || []).filter((s) => s?.id);
-  if (list.length === 0) return null;
-  return [...list].sort(
-    (a, b) => seancePreferenceScore(b, options) - seancePreferenceScore(a, options)
-  )[0];
-}
+const INSCRIPTION_WITH_SEANCE_SELECT =
+  `id, seance_id, saison_id, statut, date_inscription, seance:seances!inscriptions_seance_id_fkey(${MEMBER_SEANCE_SELECT})`;
 
 async function fetchActiveSaisonIds() {
   try {
@@ -87,69 +66,103 @@ async function fetchActiveSaisonIds() {
       SUPABASE_TIMEOUT_MS,
       "قراءة المواسم النشطة"
     );
-    if (error || !data) return null;
-    return new Set(data.map((row) => row.id).filter(Boolean));
-  } catch {
-    return null;
+    if (error) {
+      return { ok: false, error: mapTableError(error, "saisons"), ids: [] };
+    }
+    return {
+      ok: true,
+      ids: (data || []).map((row) => row.id).filter(Boolean),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      ids: [],
+    };
+  }
+}
+
+function mapInscriptionRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    seanceId: row.seance_id,
+    saisonId: row.saison_id,
+    statut: row.statut,
+    dateInscription: row.date_inscription || null,
+  };
+}
+
+/**
+ * Inscriptions 'accepte' du membre, jointure séance.
+ * Filtre saison en base via inscriptions.saison_id (sync trigger seances).
+ * Tri date_inscription desc — pas de created_at (colonne absente en base).
+ */
+async function fetchMyAcceptedInscriptions(userId, { saisonIds = null } = {}) {
+  let query = supabase
+    .from("inscriptions")
+    .select(INSCRIPTION_WITH_SEANCE_SELECT)
+    .eq("membre_id", userId)
+    .eq("statut", "accepte")
+    .order("date_inscription", { ascending: false });
+  if (Array.isArray(saisonIds)) {
+    if (saisonIds.length === 0) {
+      return { ok: true, rows: [] };
+    }
+    query = query.in("saison_id", saisonIds);
+  }
+  try {
+    const { data, error } = await withTimeout(
+      query,
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تسجيل الحصة"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "inscriptions") };
+    }
+    const rows = (data || []).filter((row) => row?.seance);
+    return { ok: true, rows };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
 /**
- * Séance du membre connecté (inscription 'accepte'), avec le profil du
- * superviseur joint. Un membre peut avoir plusieurs inscriptions (un musim
- * par saison) : on privilégie la séance active du musim courant qui a un
- * superviseur, pour que la conversation reste toujours joignable.
- * @param {object} [options]
- * @param {string} [options.preferSuperviseurId]
- * @param {string} [options.preferSeanceId]
- * @returns { ok, seance? }
+ * Inscription 'accepte' du musim courant (saisons.active = true) + séance jointe.
+ * Pas de repli sur from("seances") : une séance publique n'est pas une affectation.
+ * date_inscription desc : si regular + summer sont actifs, la ligne la plus récente.
  */
-export async function getMySeance(options = {}) {
+export async function getMyCurrentInscription(authId = null) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  const preferSuperviseurId = options.preferSuperviseurId || null;
-  const preferSeanceId = options.preferSeanceId || null;
+  const userId = authId || (await currentAuthId());
+  if (!userId) {
+    return { ok: false, error: "يجب تسجيل الدخول" };
+  }
 
   try {
-    const userId = await currentAuthId();
-    if (!userId) {
-      return { ok: false, error: "يجب تسجيل الدخول" };
+    const saisonsRes = await fetchActiveSaisonIds();
+    if (!saisonsRes.ok) {
+      return { ok: false, error: saisonsRes.error };
     }
-
-    const activeSaisonIds = await fetchActiveSaisonIds();
-    const pickOptions = { activeSaisonIds, preferSuperviseurId, preferSeanceId };
-
-    const { data: inscriptions, error: inscError } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select(
-          `seance_id, saison_id, created_at, seance:seances!inscriptions_seance_id_fkey(${MEMBER_SEANCE_SELECT})`
-        )
-        .eq("membre_id", userId)
-        .eq("statut", "accepte")
-        .order("created_at", { ascending: false }),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة تسجيل الحصة"
-    );
-
-    if (!inscError && inscriptions?.length) {
-      const seances = inscriptions.map((row) => row.seance).filter(Boolean);
-      const picked = pickPreferredMemberSeance(seances, pickOptions);
-      if (picked) return { ok: true, seance: picked };
+    if (saisonsRes.ids.length === 0) {
+      return { ok: true, inscription: null, seance: null };
     }
-
-    const { data: seances, error } = await withTimeout(
-      supabase.from("seances").select(MEMBER_SEANCE_SELECT),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة الحصة"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "seances") };
+    const inscRes = await fetchMyAcceptedInscriptions(userId, {
+      saisonIds: saisonsRes.ids,
+    });
+    if (!inscRes.ok) {
+      return { ok: false, error: inscRes.error };
+    }
+    const row = inscRes.rows[0] || null;
+    if (!row) {
+      return { ok: true, inscription: null, seance: null };
     }
     return {
       ok: true,
-      seance: pickPreferredMemberSeance(seances, pickOptions),
+      inscription: mapInscriptionRow(row),
+      seance: row.seance,
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
@@ -157,50 +170,47 @@ export async function getMySeance(options = {}) {
 }
 
 /**
- * Date d'inscription du membre connecté (self-view).
- * @param {string} [authId] UUID profiles.id — sinon session auth courante
- * @returns {{ ok: boolean, dateInscription?: string|null, error?: string }}
+ * Séance d'une inscription 'accepte' du membre, toutes saisons.
+ * Pour le chat : ancrer seanceId / superviseur sans inventer une séance publique.
  */
-export async function getMyInscriptionDate(authId = null) {
+export async function getMyAcceptedSeance({ seanceId, superviseurId } = {}) {
   if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل", dateInscription: null };
+    return { ok: false, error: "Supabase غير مفعّل" };
   }
-  const membreId = authId || (await currentAuthId());
-  if (!membreId) {
-    return { ok: false, error: "يجب تسجيل الدخول", dateInscription: null };
+  const userId = await currentAuthId();
+  if (!userId) {
+    return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select("date_inscription, created_at")
-        .eq("membre_id", membreId)
-        .eq("statut", "accepte")
-        .order("date_inscription", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة تاريخ التسجيل"
-    );
-    if (error) {
-      return {
-        ok: false,
-        error: mapTableError(error, "inscriptions"),
-        dateInscription: null,
-      };
+    const inscRes = await fetchMyAcceptedInscriptions(userId);
+    if (!inscRes.ok) {
+      return { ok: false, error: inscRes.error };
     }
-    const raw = data?.date_inscription || data?.created_at || null;
+    const wantSeance = seanceId || null;
+    const wantSuperviseur = superviseurId || null;
+    let row = null;
+    if (wantSeance) {
+      row =
+        inscRes.rows.find(
+          (r) => r.seance_id === wantSeance || r.seance?.id === wantSeance
+        ) || null;
+    }
+    if (!row && wantSuperviseur) {
+      row =
+        inscRes.rows.find((r) => r.seance?.superviseur_id === wantSuperviseur) ||
+        null;
+    }
+    if (!row) {
+      return { ok: true, inscription: null, seance: null };
+    }
     return {
       ok: true,
-      dateInscription: raw,
+      inscription: mapInscriptionRow(row),
+      seance: row.seance,
     };
   } catch (e) {
-    return {
-      ok: false,
-      error: e?.message || "تعذر الاتصال بـ Supabase",
-      dateInscription: null,
-    };
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 

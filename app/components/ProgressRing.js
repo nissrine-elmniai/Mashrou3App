@@ -17,6 +17,9 @@ export function ProgressRing({
   const circumference = 2 * Math.PI * radius;
   const clamped = Math.max(0, Math.min(100, Number(progress) || 0));
   const offset = circumference - (clamped / 100) * circumference;
+  // Carré inscrit dans le disque intérieur, pour que le texte ne recouvre pas l'anneau.
+  const innerPad = stroke + 6;
+  const innerSize = Math.max(40, size - innerPad * 2);
 
   return (
     <View
@@ -50,8 +53,12 @@ export function ProgressRing({
           origin={`${size / 2}, ${size / 2}`}
         />
       </Svg>
-      <View style={styles.ringCenter}>
-        {children || <Text style={[styles.ringText, { color }]}>{clamped}%</Text>}
+      <View style={styles.ringCenter} pointerEvents="none">
+        <View style={[styles.ringInnerBox, { width: innerSize, maxWidth: innerSize }]}>
+          {children || (
+            <Text style={[styles.ringText, { color }]}>{clamped}%</Text>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -62,6 +69,11 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
+  },
+  ringInnerBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
   },
   ringText: {
     fontSize: 24,

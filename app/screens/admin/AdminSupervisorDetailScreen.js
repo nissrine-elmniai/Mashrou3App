@@ -18,7 +18,9 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { rtlText, row, arrowBack } from "../../constants/rtl";
 import { useApp } from "../../context/AppContext";
-import { fetchProfile, fetchAppUserRow } from "../../lib/auth";
+import { fetchProfile, fetchAppUserRow, formatBirthDateLabel } from "../../lib/auth";
+import { formatGenderLabel } from "../../lib/membersApi";
+import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
   getAllSeances,
@@ -296,23 +298,33 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
           <>
             <SectionCard title="المعلومات الشخصية">
               <InfoRow
-                icon="id-card-outline"
-                label="الاسم الكامل"
+                icon="person-outline"
+                label={L.full_name}
                 value={fullName}
               />
               <InfoRow
                 icon="mail-outline"
-                label="البريد الإلكتروني"
+                label={L.email}
                 value={email}
               />
               <InfoRow
                 icon="call-outline"
-                label="رقم الهاتف"
+                label={L.phone}
                 value={usersRow?.telephone || profileRow?.phone}
               />
               <InfoRow
+                icon="male-female-outline"
+                label={L.genre}
+                value={formatGenderLabel(profileRow?.genre)}
+              />
+              <InfoRow
+                icon="calendar-outline"
+                label={L.date_naissance}
+                value={formatBirthDateLabel(profileRow?.date_naissance)}
+              />
+              <InfoRow
                 icon="shield-checkmark-outline"
-                label="حالة الحساب"
+                label={L.account_status}
                 value={
                   profileRow?.account_status === "invited"
                     ? "بانتظار التفعيل"
@@ -323,12 +335,12 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               />
               <InfoRow
                 icon="time-outline"
-                label="تاريخ إنشاء الحساب"
+                label={L.created_at}
                 value={formatDate(profileRow?.created_at)}
               />
               <InfoRow
                 icon="refresh-outline"
-                label="آخر تحديث"
+                label={L.updated_at}
                 value={formatDate(profileRow?.updated_at)}
               />
             </SectionCard>

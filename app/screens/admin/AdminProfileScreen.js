@@ -14,6 +14,7 @@ import { ROLE_LABELS } from "../../constants/roles";
 import { rtlText, row, isRTL } from "../../constants/rtl";
 import EditableAvatar from "../../components/EditableAvatar";
 import ProfileAvatar from "../../components/ProfileAvatar";
+import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 
 const palette = {
   primary: "#2E7D32",
@@ -57,22 +58,22 @@ export default function AdminProfileScreen({ navigation }) {
 
   const infoRows = [
     {
-      label: "الاسم الكامل",
+      label: L.full_name,
       value: fullName || "—",
       icon: User,
     },
     {
-      label: "البريد",
+      label: L.email,
       value: currentUser?.email || "—",
       icon: Mail,
     },
     {
-      label: "الدور",
+      label: L.role,
       value: ROLE_LABELS[currentUser?.role] || "مشرف عام",
       icon: Shield,
     },
     {
-      label: "حالة الحساب",
+      label: L.account_status,
       value: statusLabel,
       icon: CheckCircle,
     },

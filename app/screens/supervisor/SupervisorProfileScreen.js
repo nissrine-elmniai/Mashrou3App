@@ -29,6 +29,7 @@ import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditableAvatar from "../../components/EditableAvatar";
 import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
 import EditSupervisorProfileModal from "../../components/profile/EditSupervisorProfileModal";
+import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -256,23 +257,23 @@ export default function SupervisorProfileScreen({ navigation }) {
           title="المعلومات الشخصية"
           onEdit={() => setEditInfoModal(true)}
         >
-          <ProfileRow icon="id-card-outline" label="الاسم الكامل" value={fullName} />
-          <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
-          <ProfileRow icon="call-outline" label="رقم الهاتف" value={phone} />
+          <ProfileRow icon="person-outline" label={L.full_name} value={fullName} />
+          <ProfileRow icon="mail-outline" label={L.email} value={email} />
+          <ProfileRow icon="call-outline" label={L.phone} value={phone} />
           <ProfileRow
             icon="calendar-outline"
-            label="تاريخ الميلاد"
+            label={L.date_naissance}
             value={birthDateLabel}
           />
-          <ProfileRow icon="male-female-outline" label="الجنس" value={gender} />
+          <ProfileRow icon="male-female-outline" label={L.genre} value={gender} />
           <ProfileRow
             icon="time-outline"
-            label="تاريخ إنشاء الحساب"
+            label={L.created_at}
             value={formatDateTime(profileRow?.created_at)}
           />
           <ProfileRow
             icon="refresh-outline"
-            label="آخر تحديث"
+            label={L.updated_at}
             value={formatDateTime(profileRow?.updated_at)}
           />
           <TouchableOpacity

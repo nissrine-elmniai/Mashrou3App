@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, row as rtlRow } from "../../constants/rtl";
-import { formatHizbTumunDelta, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { formatHizbCount, formatHizbTumunDelta, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileFieldRow from "./ProfileFieldRow";
 import ProfileCardHeader from "./ProfileCardHeader";
 
@@ -47,13 +47,13 @@ function formatObjectifLabel(objectif) {
   if (typeof objectif === "object") {
     const n = Number(objectif.nbHizbCible);
     if (Number.isInteger(n) && n >= 1 && n <= TOTAL_HIZB) {
-      return `${n} حزب`;
+      return formatHizbCount(n);
     }
     return null;
   }
   const n = Number(objectif);
   if (Number.isInteger(n) && n >= 1 && n <= TOTAL_HIZB) {
-    return `${n} حزب`;
+    return formatHizbCount(n);
   }
   return null;
 }

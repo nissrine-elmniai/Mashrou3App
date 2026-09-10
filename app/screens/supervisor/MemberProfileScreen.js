@@ -9,8 +9,8 @@
  *
  * Présence : table presences via presenceApi (pas AppContext.attendance mock).
  *
- * date_naissance / âge : getSeanceMembers ne joint pas membres.date_naissance ;
- * phone, school, level, hifz_amount viennent de profiles via route.params.
+ * date_naissance : profiles.date_naissance via getMemberProfileFields.
+ * phone, school, level, hifz_amount, genre viennent de profiles.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -45,6 +45,8 @@ import {
   updateMemberSeance,
   formatGenderLabel,
 } from "../../lib/membersApi";
+import { formatBirthDateLabel } from "../../lib/auth";
+import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 import {
   getAllSeances,
   formatSeanceScheduleLabel,
@@ -261,6 +263,9 @@ export default function MemberProfileScreen({ navigation, route }) {
     records: [],
   });
   const [contactFields, setContactFields] = useState({
+    firstName: firstName || null,
+    lastName: lastName || null,
+    birthDate: null,
     phone: phone || null,
     school: school || null,
     level: level || null,
@@ -369,6 +374,9 @@ export default function MemberProfileScreen({ navigation, route }) {
       if (cancelled || !res.ok) return;
       setAvatarUri(res.avatarUrl || avatarUrl || null);
       setContactFields({
+        firstName: res.firstName || firstName || null,
+        lastName: res.lastName || lastName || null,
+        birthDate: res.dateNaissance || null,
         phone: res.telephone || phone || null,
         school: res.ecole || school || null,
         level: res.niveau || level || null,
@@ -379,7 +387,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [memberId, phone, school, level, hifzAmount, gender]);
+  }, [memberId, firstName, lastName, phone, school, level, hifzAmount, gender]);
 
   useEffect(() => {
     if (!memberId) {
@@ -538,20 +546,26 @@ export default function MemberProfileScreen({ navigation, route }) {
         </View>
 
         <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card]}>
-          <ProfileRow icon="mail-outline" label="البريد الإلكتروني" value={email} />
+          <ProfileRow icon="person-outline" label={L.full_name} value={fullName} />
+          <ProfileRow icon="mail-outline" label={L.email} value={email} />
           <ProfileRow
             icon="male-female-outline"
-            label="الجنس"
+            label={L.genre}
             value={contactFields.gender || "—"}
           />
-          <ProfileRow icon="call-outline" label="رقم الهاتف" value={contactFields.phone} />
-          <ProfileRow icon="school-outline" label="المدرسة" value={contactFields.school} />
+          <ProfileRow icon="call-outline" label={L.phone} value={contactFields.phone} />
+          <ProfileRow
+            icon="calendar-outline"
+            label={L.date_naissance}
+            value={formatBirthDateLabel(contactFields.birthDate)}
+          />
+          <ProfileRow icon="school-outline" label={L.school} value={contactFields.school} />
           <ProfileRow
             icon="bar-chart-outline"
-            label="المستوى التعليمي"
+            label={L.level}
             value={contactFields.level}
           />
-          <ProfileRow icon="book-outline" label="مقدار الحفظ" value={contactFields.hifzAmount} />
+          <ProfileRow icon="book-outline" label={L.hifz_amount} value={contactFields.hifzAmount} />
         </View>
 
         <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>

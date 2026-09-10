@@ -453,8 +453,18 @@ export async function getMemberProfileFields(membreId) {
         "قراءة ملف العضو"
       );
 
-    // profiles.genre existe depuis la migration 0052 ; repli sans la colonne sinon.
-    let profileRes = await readProfile("phone, school, level, hifz_amount, genre, avatar_url");
+    // Colonnes profiles : identité + contact (genre 0052, date_naissance 0056).
+    let profileRes = await readProfile(
+      "first_name, last_name, date_naissance, phone, school, level, hifz_amount, genre, avatar_url"
+    );
+    if (
+      profileRes.error &&
+      /column.*does not exist/i.test(profileRes.error?.message || "")
+    ) {
+      profileRes = await readProfile(
+        "first_name, last_name, phone, school, level, hifz_amount, genre, avatar_url"
+      );
+    }
     if (
       profileRes.error &&
       /column.*does not exist/i.test(profileRes.error?.message || "")
@@ -483,6 +493,9 @@ export async function getMemberProfileFields(membreId) {
 
     return {
       ok: true,
+      firstName: pickProfileText(profileData?.first_name),
+      lastName: pickProfileText(profileData?.last_name),
+      dateNaissance: profileData?.date_naissance || null,
       telephone: merged.telephone,
       ecole: merged.ecole,
       niveau: merged.niveau,

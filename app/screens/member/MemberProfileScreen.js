@@ -19,7 +19,7 @@ import {
   getMemberProfileFields,
   formatGenderLabel,
 } from "../../lib/membersApi";
-import { getMySeance, getMyInscriptionDate } from "../../lib/messagesApi";
+import { getMyCurrentInscription } from "../../lib/messagesApi";
 import {
   getMyProgress,
   computeProgressMetrics,
@@ -141,10 +141,9 @@ export default function MemberProfileScreen({ navigation }) {
     setPresenceState((s) => ({ ...s, loading: true, error: null }));
     setSessionState((s) => ({ ...s, loading: true }));
 
-    const [fieldsRes, seanceRes, inscRes] = await Promise.all([
+    const [fieldsRes, currentInscRes] = await Promise.all([
       getMemberProfileFields(authId),
-      getMySeance(),
-      getMyInscriptionDate(authId),
+      getMyCurrentInscription(authId),
     ]);
 
     if (fieldsRes.ok) {
@@ -156,9 +155,10 @@ export default function MemberProfileScreen({ navigation }) {
       });
     }
 
-    const seance = seanceRes.ok ? seanceRes.seance : null;
+    const seance = currentInscRes.ok ? currentInscRes.seance : null;
+    const inscription = currentInscRes.ok ? currentInscRes.inscription : null;
     const seanceId = seance?.id || null;
-    const saisonId = seance?.saison_id || null;
+    const saisonId = seance?.saison_id || inscription?.saisonId || null;
 
     setSessionState({
       loading: false,
@@ -167,7 +167,7 @@ export default function MemberProfileScreen({ navigation }) {
       heureDebut: seance?.heure_debut || null,
       seanceId,
       saisonId,
-      registrationDate: inscRes.ok ? inscRes.dateInscription : null,
+      registrationDate: inscription?.dateInscription || null,
     });
 
     const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
@@ -176,7 +176,16 @@ export default function MemberProfileScreen({ navigation }) {
       objectifSaisonId
         ? getMyObjectif(objectifSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
-      getMemberPresenceSummary(authId, seanceId),
+      seanceId
+        ? getMemberPresenceSummary(authId, seanceId)
+        : Promise.resolve({
+            ok: true,
+            hasData: false,
+            rate: null,
+            presentCount: 0,
+            absentCount: 0,
+            records: [],
+          }),
     ]);
 
     const objectif =
@@ -291,9 +300,12 @@ export default function MemberProfileScreen({ navigation }) {
 
         <View style={styles.cards}>
           <ProfileInfoCard
+            firstName={currentUser?.firstName}
+            lastName={currentUser?.lastName}
             email={currentUser?.email || null}
             gender={displayGenderFromUser(currentUser?.gender)}
             phone={contactFields.phone}
+            birthDate={currentUser?.birthDate}
             school={contactFields.school}
             level={contactFields.level}
             hifzAmount={contactFields.hifzAmount}
