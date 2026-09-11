@@ -1,5 +1,5 @@
 import React from "react";
-import { TouchableOpacity, StyleSheet } from "react-native";
+import { TouchableOpacity, View, StyleSheet } from "react-native";
 import ProfileAvatar from "../ProfileAvatar";
 
 const palette = {
@@ -7,11 +7,34 @@ const palette = {
   softGreen: "#E8F5E9",
 };
 
-export default function AdminTopBarAvatar({ currentUser, onPress, style, ...touchableProps }) {
+/**
+ * Avatar barre admin. Sans `onPress` : affichage seul (ex. déjà sur le profil).
+ */
+export default function AdminTopBarAvatar({
+  currentUser,
+  onPress,
+  style,
+  ...touchableProps
+}) {
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
     : "";
   const letter = displayName.charAt(0) || "م";
+
+  const avatar = (
+    <ProfileAvatar
+      userId={currentUser?.authId || currentUser?.id || null}
+      avatarUrl={currentUser?.avatarUrl}
+      fallbackLetter={letter}
+      size={32}
+      softBackgroundColor={palette.softGreen}
+      letterColor={palette.primary}
+    />
+  );
+
+  if (!onPress) {
+    return <View style={[styles.wrap, style]}>{avatar}</View>;
+  }
 
   return (
     <TouchableOpacity
@@ -22,14 +45,7 @@ export default function AdminTopBarAvatar({ currentUser, onPress, style, ...touc
       accessibilityLabel="الملف الشخصي"
       {...touchableProps}
     >
-      <ProfileAvatar
-        userId={currentUser?.authId || currentUser?.id || null}
-        avatarUrl={currentUser?.avatarUrl}
-        fallbackLetter={letter}
-        size={32}
-        softBackgroundColor={palette.softGreen}
-        letterColor={palette.primary}
-      />
+      {avatar}
     </TouchableOpacity>
   );
 }

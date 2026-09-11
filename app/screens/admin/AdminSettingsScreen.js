@@ -15,24 +15,14 @@ import {
   KeyboardAvoidingView,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  Menu,
-  Bell,
-  Mail,
-  Lock,
-  LogOut,
-  User,
-  Shield,
-  X,
-} from "lucide-react-native";
+import { Menu, Bell, Mail, Lock, LogOut, X } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { ROLE_LABELS } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../../lib/supabase";
-import { upsertProfile } from "../../lib/auth";
-import EditableAvatar from "../../components/EditableAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import ProfileAvatar from "../../components/ProfileAvatar";
+import ChangePasswordModal from "../../components/ChangePasswordModal";
 
 const palette = {
   primary: "#2E7D32",
@@ -48,22 +38,18 @@ const palette = {
 
 export default function AdminSettingsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "settings");
-  const { currentUser, stats, logout, updateCurrentUserAvatar } = useApp();
+  const { currentUser, stats, logout } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
   const [emailModal, setEmailModal] = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
   const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
-  const anyModalOpen = emailModal || passwordModal;
-
   useEffect(() => {
-    if (!anyModalOpen) {
+    if (!emailModal) {
       setKeyboardHeight(0);
       return undefined;
     }
@@ -77,7 +63,7 @@ export default function AdminSettingsScreen({ navigation }) {
       onShow.remove();
       onHide.remove();
     };
-  }, [anyModalOpen]);
+  }, [emailModal]);
 
   const displayName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
@@ -104,20 +90,9 @@ export default function AdminSettingsScreen({ navigation }) {
     setEmailModal(true);
   };
 
-  const openPasswordModal = () => {
-    setNewPassword("");
-    setConfirmPassword("");
-    setPasswordModal(true);
-  };
-
   const closeEmailModal = () => {
     Keyboard.dismiss();
     setEmailModal(false);
-  };
-
-  const closePasswordModal = () => {
-    Keyboard.dismiss();
-    setPasswordModal(false);
   };
 
   const saveEmail = async () => {
@@ -133,77 +108,31 @@ export default function AdminSettingsScreen({ navigation }) {
 
     setSaving(true);
     try {
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase.auth.updateUser({ email: mail });
-        if (error) {
-          Alert.alert(
-            "خطأ",
-            mapSupabaseAuthError(error) ||
-              "تعذر تغيير البريد. تحقق من إعدادات إرسال البريد في Supabase."
-          );
-          return;
-        }
-        if (data?.user?.id) {
-          await upsertProfile({
-            id: data.user.id,
-            email: mail,
-            role: currentUser?.role,
-            firstName: currentUser?.firstName,
-            lastName: currentUser?.lastName,
-          });
-        }
-        Alert.alert(
-          "تم",
-          "تم طلب تغيير البريد. قد تحتاج إلى تأكيد البريد الجديد من صندوق الوارد."
-        );
-      } else {
+      if (!isSupabaseConfigured()) {
         Alert.alert(
           "تنبيه",
           "Supabase غير مفعّل — لا يمكن تغيير البريد حالياً."
         );
         return;
       }
-      setEmailModal(false);
-    } catch (e) {
-      Alert.alert("خطأ", mapSupabaseAuthError(e) || "تعذر تحديث البريد");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const savePassword = async () => {
-    if (!newPassword || newPassword.length < 6) {
-      Alert.alert("تنبيه", "كلمة المرور قصيرة جداً (6 أحرف على الأقل)");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      Alert.alert("تنبيه", "كلمة المرور غير متطابقة");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      if (isSupabaseConfigured()) {
-        const { error } = await supabase.auth.updateUser({
-          password: newPassword,
-        });
-        if (error) {
-          Alert.alert("خطأ", mapSupabaseAuthError(error));
-          return;
-        }
-        Alert.alert("تم", "تم تغيير كلمة المرور بنجاح");
-      } else {
+      // Demande Auth uniquement : profiles.email n'est pas à jour tant que
+      // l'utilisateur n'a pas confirmé le nouveau courriel.
+      const { error } = await supabase.auth.updateUser({ email: mail });
+      if (error) {
         Alert.alert(
-          "تنبيه",
-          "Supabase غير مفعّل — لا يمكن تغيير كلمة المرور حالياً."
+          "خطأ",
+          mapSupabaseAuthError(error) ||
+            "تعذر تغيير البريد. تحقق من إعدادات إرسال البريد في Supabase."
         );
         return;
       }
-      setPasswordModal(false);
-      setNewPassword("");
-      setConfirmPassword("");
+      Alert.alert(
+        "تم",
+        "تم إرسال طلب تغيير البريد. يصبح العنوان الجديد فعّالاً بعد تأكيدك من صندوق الوارد."
+      );
+      setEmailModal(false);
     } catch (e) {
-      Alert.alert("خطأ", mapSupabaseAuthError(e) || "تعذر تحديث كلمة المرور");
+      Alert.alert("خطأ", mapSupabaseAuthError(e) || "تعذر تحديث البريد");
     } finally {
       setSaving(false);
     }
@@ -250,56 +179,28 @@ export default function AdminSettingsScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.profileCard}>
-          <EditableAvatar
-            authId={currentUser?.authId}
-            avatarUrl={currentUser?.avatarUrl}
-            fallbackLetter={initial}
-            size={72}
-            softBackgroundColor={palette.softGreen}
-            letterColor={palette.primary}
-            onChanged={updateCurrentUserAvatar}
-          />
-          <Text style={styles.userName}>{displayName || "المسؤول"}</Text>
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>
-              {ROLE_LABELS[currentUser?.role] || "مشرف عام"}
-            </Text>
-          </View>
-          <Text style={styles.emailHint}>{currentUser?.email || "—"}</Text>
-        </View>
-
-        <Text style={styles.sectionLabel}>معلومات الحساب</Text>
         <View style={styles.card}>
-          <View style={styles.infoRow}>
-            <View style={styles.infoIcon}>
-              <User size={18} color={palette.primary} />
-            </View>
+          <TouchableOpacity
+            style={[styles.actionRow, styles.actionRowLast]}
+            onPress={() => navigation.navigate("AdminProfile")}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="عرض وتعديل ملفك الشخصي"
+          >
+            <ProfileAvatar
+              userId={currentUser?.authId || currentUser?.id || null}
+              avatarUrl={currentUser?.avatarUrl}
+              cacheKey={currentUser?.avatarUrl || currentUser?.authId}
+              fallbackLetter={initial}
+              size={40}
+              softBackgroundColor={palette.softGreen}
+              letterColor={palette.primary}
+            />
             <View style={styles.infoText}>
-              <Text style={styles.infoLabel}>الاسم</Text>
-              <Text style={styles.infoValue}>{displayName || "—"}</Text>
+              <Text style={styles.actionTitle}>{displayName || "المسؤول"}</Text>
+              <Text style={styles.actionSub}>عرض وتعديل ملفك الشخصي</Text>
             </View>
-          </View>
-          <View style={styles.infoRow}>
-            <View style={styles.infoIcon}>
-              <Shield size={18} color={palette.primary} />
-            </View>
-            <View style={styles.infoText}>
-              <Text style={styles.infoLabel}>الدور</Text>
-              <Text style={styles.infoValue}>
-                {ROLE_LABELS[currentUser?.role] || "مشرف عام"}
-              </Text>
-            </View>
-          </View>
-          <View style={[styles.infoRow, styles.infoRowLast]}>
-            <View style={styles.infoIcon}>
-              <Mail size={18} color={palette.primary} />
-            </View>
-            <View style={styles.infoText}>
-              <Text style={styles.infoLabel}>البريد الحالي</Text>
-              <Text style={styles.infoValue}>{currentUser?.email || "—"}</Text>
-            </View>
-          </View>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionLabel}>إدارة الحساب</Text>
@@ -314,8 +215,8 @@ export default function AdminSettingsScreen({ navigation }) {
             </View>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionRow, styles.infoRowLast]}
-            onPress={openPasswordModal}
+            style={[styles.actionRow, styles.actionRowLast]}
+            onPress={() => setPasswordModal(true)}
           >
             <View style={styles.infoIcon}>
               <Lock size={18} color={palette.primary} />
@@ -388,68 +289,11 @@ export default function AdminSettingsScreen({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal
+      <ChangePasswordModal
         visible={passwordModal}
-        transparent
-        animationType="slide"
-        onRequestClose={closePasswordModal}
-      >
-        <KeyboardAvoidingView
-          style={styles.modalFlex}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <View style={[styles.modalOverlay, { paddingBottom: modalBottomPad }]}>
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={closePasswordModal}
-            />
-            <View style={styles.modalCard}>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                bounces={false}
-              >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>تغيير كلمة المرور</Text>
-                  <TouchableOpacity onPress={closePasswordModal} hitSlop={10}>
-                    <X size={22} color={palette.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.modalLabel}>كلمة المرور الجديدة</Text>
-                <TextInput
-                  style={styles.input}
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  placeholder="••••••••"
-                  placeholderTextColor={palette.placeholder}
-                  secureTextEntry
-                  textAlign={textAlignStart}
-                />
-                <Text style={styles.modalLabel}>تأكيد كلمة المرور</Text>
-                <TextInput
-                  style={styles.input}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  placeholder="••••••••"
-                  placeholderTextColor={palette.placeholder}
-                  secureTextEntry
-                  textAlign={textAlignStart}
-                />
-                <TouchableOpacity
-                  style={[styles.saveBtn, saving && { opacity: 0.6 }]}
-                  onPress={saving ? undefined : savePassword}
-                >
-                  {saving ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.saveBtnText}>حفظ</Text>
-                  )}
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setPasswordModal(false)}
+        bottomInset={bottomGap}
+      />
       {messagesFab}
       {sidebar}
     </SafeAreaView>
@@ -477,19 +321,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     ...rtlText,
   },
-  topBarAvatar: {
-    width: 32,
-    height: 32,
-    backgroundColor: palette.softGreen,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  topBarAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 14,
-  },
   bellBadge: {
     position: "absolute",
     top: -4,
@@ -509,55 +340,6 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   scrollContent: { padding: 16 },
-  profileCard: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    alignItems: "center",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: palette.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  avatarText: {
-    color: palette.primary,
-    fontSize: 28,
-    fontWeight: "bold",
-  },
-  userName: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: palette.textPrimary,
-    marginBottom: 8,
-    ...rtlText,
-  },
-  badge: {
-    backgroundColor: palette.softGreen,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    marginBottom: 8,
-  },
-  badgeText: {
-    color: palette.primary,
-    fontWeight: "600",
-    fontSize: 12,
-    ...rtlText,
-  },
-  emailHint: {
-    fontSize: 13,
-    color: palette.textSecondary,
-    ...rtlText,
-  },
   sectionLabel: {
     fontSize: 13,
     fontWeight: "700",
@@ -573,15 +355,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.border,
   },
-  infoRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.border,
-  },
-  infoRowLast: {
+  actionRowLast: {
     borderBottomWidth: 0,
   },
   infoIcon: {
@@ -593,18 +367,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   infoText: { flex: 1 },
-  infoLabel: {
-    fontSize: 12,
-    color: palette.placeholder,
-    marginBottom: 2,
-    ...rtlText,
-  },
-  infoValue: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: palette.textPrimary,
-    ...rtlText,
-  },
   actionRow: {
     flexDirection: row,
     alignItems: "center",

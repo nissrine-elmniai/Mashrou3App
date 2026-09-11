@@ -25,8 +25,10 @@ import {
   Settings,
   LogOut,
   BarChart3,
+  User,
 } from "lucide-react-native";
 import { useApp } from "../context/AppContext";
+import { ROLE_LABELS } from "../constants/roles";
 import { rtlText, row, isRTL } from "../constants/rtl";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
@@ -55,6 +57,7 @@ const MENU_ITEMS = [
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
   { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "chat", label: "المحادثات", icon: MessageSquare },
+  { id: "profile", label: "الملف الشخصي", icon: User },
   { id: "settings", label: "الإعدادات", icon: Settings },
 ];
 
@@ -69,6 +72,7 @@ const ROUTE_MAP = {
   stats: "AdminStats",
   notifications: "AdminNotifications",
   chat: "AdminChat",
+  profile: "AdminProfile",
   settings: "AdminSettings",
 };
 
@@ -170,7 +174,9 @@ export function AdminSidebar({
               letterColor={palette.primary}
             />
             <View style={{ flex: 1 }}>
-              <Text style={sbStyles.role}>مشرف عام</Text>
+              <Text style={sbStyles.role}>
+                {ROLE_LABELS[currentUser?.role] || "—"}
+              </Text>
               <Text style={sbStyles.name}>{displayName}</Text>
             </View>
             <TouchableOpacity onPress={onClose} hitSlop={12}>

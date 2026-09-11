@@ -1,25 +1,33 @@
-import React from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   StyleSheet,
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { ArrowRight, LogOut, Mail, Shield, User, CheckCircle } from "lucide-react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import {
+  ArrowRight,
+  Mail,
+  Shield,
+  User,
+  CheckCircle,
+  Phone,
+  Settings,
+} from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
-import { ROLE_LABELS } from "../../constants/roles";
+import { ROLE_LABELS, formatAccountStatusLabel } from "../../constants/roles";
 import { rtlText, row, isRTL } from "../../constants/rtl";
 import EditableAvatar from "../../components/EditableAvatar";
-import ProfileAvatar from "../../components/ProfileAvatar";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
+import EditAdminProfileModal from "../../components/profile/EditAdminProfileModal";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 
 const palette = {
   primary: "#2E7D32",
-  gold: "#FBC02D",
-  red: "#D32F2F",
   softGreen: "#E8F5E9",
   background: "#F5F5F5",
   textSecondary: "#666666",
@@ -29,31 +37,51 @@ const palette = {
 };
 
 export default function AdminProfileScreen({ navigation }) {
-  const { currentUser, logout, updateCurrentUserAvatar } = useApp();
+  const {
+    currentUser,
+    updateCurrentUserAvatar,
+    updateCurrentUserProfile,
+    refreshCurrentUser,
+  } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
+  const [editModal, setEditModal] = useState(false);
+  const refreshRef = useRef(refreshCurrentUser);
+  refreshRef.current = refreshCurrentUser;
+  const refreshInFlightRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (refreshInFlightRef.current) return undefined;
+      refreshInFlightRef.current = true;
+      (async () => {
+        try {
+          await refreshRef.current();
+        } catch {
+          /* garder les données affichées */
+        } finally {
+          refreshInFlightRef.current = false;
+        }
+      })();
+      return undefined;
+    }, [])
+  );
 
   const fullName = currentUser
     ? `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim()
     : "";
   const initial = (currentUser?.firstName || fullName || "م").charAt(0);
-  const statusLabel =
-    currentUser?.accountStatus === "active" || !currentUser?.accountStatus
-      ? "نشط"
-      : currentUser.accountStatus;
+  const roleLabel = ROLE_LABELS[currentUser?.role] || "—";
+  const phoneLabel = String(currentUser?.phone || "").trim() || "—";
+  const authId = currentUser?.authId || null;
 
-  const handleLogout = () => {
-    Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
-      { text: "إلغاء", style: "cancel" },
-      {
-        text: "خروج",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
-        },
-      },
-    ]);
+  const handleProfileSaved = (savedProfile) => {
+    updateCurrentUserProfile({
+      firstName: savedProfile?.first_name ?? currentUser?.firstName,
+      lastName: savedProfile?.last_name ?? currentUser?.lastName,
+      phone: savedProfile?.phone ?? currentUser?.phone ?? null,
+    });
+    refreshRef.current?.();
   };
 
   const infoRows = [
@@ -68,13 +96,18 @@ export default function AdminProfileScreen({ navigation }) {
       icon: Mail,
     },
     {
+      label: L.phone,
+      value: phoneLabel,
+      icon: Phone,
+    },
+    {
       label: L.role,
-      value: ROLE_LABELS[currentUser?.role] || "مشرف عام",
+      value: roleLabel,
       icon: Shield,
     },
     {
       label: L.account_status,
-      value: statusLabel,
+      value: formatAccountStatusLabel(currentUser?.accountStatus),
       icon: CheckCircle,
     },
   ];
@@ -95,15 +128,7 @@ export default function AdminProfileScreen({ navigation }) {
           />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الملف الشخصي</Text>
-        <ProfileAvatar
-          userId={currentUser?.authId || currentUser?.id || null}
-          avatarUrl={currentUser?.avatarUrl}
-          cacheKey={currentUser?.avatarUrl || currentUser?.authId}
-          fallbackLetter={initial}
-          size={32}
-          softBackgroundColor={palette.softGreen}
-          letterColor={palette.primary}
-        />
+        <AdminTopBarAvatar currentUser={currentUser} />
       </View>
 
       <ScrollView
@@ -123,14 +148,16 @@ export default function AdminProfileScreen({ navigation }) {
           />
           <Text style={styles.userName}>{fullName || "المسؤول"}</Text>
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>
-              {ROLE_LABELS[currentUser?.role] || "مشرف عام"}
-            </Text>
+            <Text style={styles.badgeText}>{roleLabel}</Text>
           </View>
         </View>
 
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>المعلومات الشخصية</Text>
+          <ProfileCardHeader
+            title="المعلومات الشخصية"
+            onAction={() => setEditModal(true)}
+            accessibilityLabel="تعديل المعلومات الشخصية"
+          />
           <Text style={styles.sectionSub}>معلومات ملفك الشخصي</Text>
 
           {infoRows.map((rowItem, index) => {
@@ -153,20 +180,33 @@ export default function AdminProfileScreen({ navigation }) {
           })}
         </View>
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>الحساب</Text>
-          <Text style={styles.sectionSub}>إدارة حسابك</Text>
-
-          <TouchableOpacity
-            style={styles.logoutBtn}
-            onPress={handleLogout}
-            activeOpacity={0.7}
-          >
-            <LogOut size={20} color={palette.red} />
-            <Text style={styles.logoutText}>تسجيل الخروج</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={styles.settingsRow}
+          onPress={() => navigation.navigate("AdminSettings")}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="إعدادات الحساب"
+        >
+          <View style={styles.infoIcon}>
+            <Settings size={18} color={palette.primary} />
+          </View>
+          <View style={styles.infoText}>
+            <Text style={styles.actionTitle}>إعدادات الحساب</Text>
+            <Text style={styles.actionSub}>البريد الإلكتروني، كلمة المرور</Text>
+          </View>
+        </TouchableOpacity>
       </ScrollView>
+
+      <EditAdminProfileModal
+        visible={editModal}
+        onClose={() => setEditModal(false)}
+        onSaved={handleProfileSaved}
+        authId={authId}
+        firstName={currentUser?.firstName || ""}
+        lastName={currentUser?.lastName || ""}
+        phone={currentUser?.phone || ""}
+        bottomInset={bottomGap}
+      />
     </SafeAreaView>
   );
 }
@@ -193,19 +233,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     ...rtlText,
   },
-  topBarAvatar: {
-    width: 32,
-    height: 32,
-    backgroundColor: palette.softGreen,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  topBarAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 14,
-  },
   scroll: {
     flex: 1,
   },
@@ -224,20 +251,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
-  },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: palette.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  avatarText: {
-    color: palette.primary,
-    fontSize: 28,
-    fontWeight: "bold",
   },
   userName: {
     fontSize: 18,
@@ -268,13 +281,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
-  },
-  sectionTitle: {
-    fontWeight: "bold",
-    color: palette.textPrimary,
-    fontSize: 16,
-    marginBottom: 4,
-    ...rtlText,
   },
   sectionSub: {
     color: palette.placeholder,
@@ -317,19 +323,29 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...rtlText,
   },
-  logoutBtn: {
+  settingsRow: {
     flexDirection: row,
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    backgroundColor: "#FFEBEE",
+    gap: 12,
+    backgroundColor: "#fff",
     borderRadius: 12,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  logoutText: {
-    color: palette.red,
-    fontWeight: "600",
+  actionTitle: {
     fontSize: 15,
+    fontWeight: "600",
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  actionSub: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    marginTop: 2,
     ...rtlText,
   },
 });

@@ -58,12 +58,11 @@ export function profileToAppUser(profile, fallback = {}) {
       formatGenderLabel(fallback.gender) ||
       "غير محدد",
     role: roleFromProfile || roleFromFallback || ROLES.MEMBER,
-    accountStatus:
-      profile.account_status || fallback.accountStatus || ACCOUNT_STATUS.ACTIVE,
+    accountStatus: profile.account_status ?? fallback.accountStatus ?? null,
     seasonId: fallback.seasonId || null,
     school: fallback.school,
     level: fallback.level,
-    phone: fallback.phone || profile.phone,
+    phone: profile.phone ?? fallback.phone,
     hifzAmount: profile.hifz_amount || fallback.hifzAmount || "",
     avatarUrl:
       profile.avatar_url ||
@@ -171,8 +170,12 @@ export function dateToIsoLocal(date) {
 
 function mapProfilesWriteError(error) {
   const msg = error?.message || "";
-  if (/permission|row-level security|RLS|42501|violates row/i.test(msg)) {
-    return "لا صلاحية كافية لهذه العملية";
+  const code = String(error?.code || "");
+  if (
+    code === "42501" ||
+    /permission|row-level security|RLS|42501|violates row/i.test(msg)
+  ) {
+    return "تعذّر حفظ التعديلات";
   }
   if (/column.*date_naissance.*does not exist/i.test(msg)) {
     return "عمود تاريخ الميلاد مفقود — نفّذ supabase/migrations/0056_profiles_date_naissance.sql في SQL Editor";
@@ -185,7 +188,9 @@ function mapProfilesWriteError(error) {
 
 /**
  * Mise à jour du profil par le titulaire (profiles_update_own).
- * Colonnes : first_name, last_name, phone, genre, date_naissance — jamais email / role.
+ * Colonnes envoyées uniquement si présentes dans `fields` :
+ * first_name, last_name (toujours), phone / genre / date_naissance (optionnels).
+ * Jamais email, canonical_email, account_status, created_at, role, roles.
  * Recopie best-effort vers public.users (legacy) si la table existe.
  */
 export async function updateOwnProfile(userId, fields = {}) {
@@ -198,27 +203,31 @@ export async function updateOwnProfile(userId, fields = {}) {
 
   const firstName = pickProfileText(fields.firstName);
   const lastName = pickProfileText(fields.lastName);
-  const phone = pickProfileText(fields.phone);
-  const genre = formatGenderLabel(fields.genre);
-  const birthDate = toIsoDate(fields.birthDate);
+  const hasPhone = "phone" in fields;
+  const hasBirthDate = "birthDate" in fields;
+  const hasGenre = "genre" in fields;
+  const phone = hasPhone ? pickProfileText(fields.phone) : undefined;
+  const genre = hasGenre ? formatGenderLabel(fields.genre) : null;
+  const birthDate = hasBirthDate ? toIsoDate(fields.birthDate) : null;
 
   if (!firstName || !lastName) {
     return { ok: false, error: "أدخل الاسم الأول والنسب" };
   }
-  if (!phone) {
-    return { ok: false, error: "أدخل رقم الهاتف" };
-  }
-  if (!birthDate) {
+  if (hasBirthDate && !birthDate) {
     return { ok: false, error: "أدخل تاريخ الميلاد" };
   }
 
   const payload = {
     first_name: firstName,
     last_name: lastName,
-    phone,
-    date_naissance: birthDate,
     updated_at: new Date().toISOString(),
   };
+  if (hasPhone) {
+    payload.phone = phone;
+  }
+  if (hasBirthDate) {
+    payload.date_naissance = birthDate;
+  }
   if (genre === "ذكر" || genre === "أنثى") {
     payload.genre = genre;
   }
@@ -240,19 +249,20 @@ export async function updateOwnProfile(userId, fields = {}) {
     if (error) {
       return { ok: false, error: mapProfilesWriteError(error) };
     }
+    // RLS qui bloque sans lever d'erreur : 0 ligne renvoyée par .select()
     if (!data) {
-      return { ok: false, error: "لم يُعثر على ملف المستخدم" };
+      return { ok: false, error: "تعذّر حفظ التعديلات" };
     }
 
     try {
-      await supabase
-        .from("users")
-        .update({
-          nom: lastName,
-          prenom: firstName,
-          telephone: phone,
-        })
-        .eq("id", userId);
+      const usersPatch = {
+        nom: lastName,
+        prenom: firstName,
+      };
+      if (hasPhone) {
+        usersPatch.telephone = phone;
+      }
+      await supabase.from("users").update(usersPatch).eq("id", userId);
     } catch {
       /* table users absente ou RLS — profiles reste la source de vérité */
     }
