@@ -246,7 +246,7 @@ export default function SupervisorProfileScreen({ navigation }) {
             onChanged={updateCurrentUserAvatar}
           />
           <Text style={styles.name}>{fullName || "المشرف"}</Text>
-          <Text style={styles.roleBadge}>{ROLE_LABELS[roleKey] || "مشرف"}</Text>
+          <Text style={styles.roleBadge}>{ROLE_LABELS[roleKey] || "—"}</Text>
         </View>
 
         {loadingProfile ? (

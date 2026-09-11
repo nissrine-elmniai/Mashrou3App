@@ -18,6 +18,7 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { rtlText, row, arrowBack } from "../../constants/rtl";
 import { useApp } from "../../context/AppContext";
+import { formatAccountStatusLabel } from "../../constants/roles";
 import { fetchProfile, fetchAppUserRow, formatBirthDateLabel } from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
@@ -325,13 +326,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               <InfoRow
                 icon="shield-checkmark-outline"
                 label={L.account_status}
-                value={
-                  profileRow?.account_status === "invited"
-                    ? "بانتظار التفعيل"
-                    : profileRow?.account_status === "active"
-                      ? "نشط"
-                      : profileRow?.account_status
-                }
+                value={formatAccountStatusLabel(profileRow?.account_status)}
               />
               <InfoRow
                 icon="time-outline"

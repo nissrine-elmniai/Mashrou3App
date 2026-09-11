@@ -130,6 +130,18 @@ export const ACCOUNT_STATUS = {
   ACTIVE: "active",
 };
 
+export const ACCOUNT_STATUS_LABELS = {
+  active: "نشط",
+  invited: "مدعو",
+};
+
+/** Libellé arabe de profiles.account_status. Vide / inconnu → « — ». */
+export function formatAccountStatusLabel(status) {
+  const key = String(status || "").trim().toLowerCase();
+  if (!key) return "—";
+  return ACCOUNT_STATUS_LABELS[key] || "—";
+}
+
 /** الجنس — طلب الانضمام والحصص */
 export const GENDER_OPTIONS = [
   { value: "ذكر", label: "ذكر" },
