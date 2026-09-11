@@ -22,7 +22,6 @@ import {
   FileText,
   Bell,
   MessageSquare,
-  Settings,
   LogOut,
   BarChart3,
   User,
@@ -58,7 +57,6 @@ const MENU_ITEMS = [
   { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "chat", label: "المحادثات", icon: MessageSquare },
   { id: "profile", label: "الملف الشخصي", icon: User },
-  { id: "settings", label: "الإعدادات", icon: Settings },
 ];
 
 const ROUTE_MAP = {
@@ -73,7 +71,6 @@ const ROUTE_MAP = {
   notifications: "AdminNotifications",
   chat: "AdminChat",
   profile: "AdminProfile",
-  settings: "AdminSettings",
 };
 
 export function AdminSidebar({
