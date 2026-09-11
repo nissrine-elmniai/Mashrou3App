@@ -83,11 +83,11 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     programData.nbHizb
   );
 
-  const handleAdjustTumuns = (delta) => {
+  const handleAdjustTumuns = async (delta) => {
     if (!programData.id) return;
-    const result = adjustMemberProgramTumuns(programData.id, delta);
+    const result = await adjustMemberProgramTumuns(programData.id, delta);
     if (!result.ok) {
-      Alert.alert("خطأ", result.error);
+      Alert.alert("خطأ", result.error || "تعذر تحديث التقدم");
       return;
     }
     if (result.unchanged) return;

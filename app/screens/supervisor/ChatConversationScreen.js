@@ -263,11 +263,12 @@ export default function ChatConversationScreen({ navigation, route }) {
               softBackgroundColor={isAdmin && !headerAvatarUrl ? colors.primary : colors.primarySoft}
               letterColor={isAdmin && !headerAvatarUrl ? "#fff" : colors.primary}
             />
-            <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
           </View>
-          <Text style={styles.contactName} numberOfLines={1}>
-            {contactName}
-          </Text>
+          <View style={styles.headerText}>
+            <Text style={styles.contactName} numberOfLines={1}>
+              {contactName}
+            </Text>
+          </View>
         </View>
         <FlatList
           data={[...messages].reverse()}
@@ -311,27 +312,8 @@ const styles = StyleSheet.create({
   },
   backBtn: { padding: 2 },
   avatarWrap: { position: "relative" },
-  memberAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.primarySoft,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  memberAvatarText: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
-  memberAvatarTextWhite: { color: "white", fontFamily: fonts.bold, fontSize: 15 },
-  statusDot: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.card,
-  },
-  contactName: { flex: 1, fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
+  headerText: { flex: 1 },
+  contactName: { fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
 
   listContent: { paddingVertical: 12 },
   bubbleRow: { flexDirection: row, paddingHorizontal: 16, marginVertical: 4 },

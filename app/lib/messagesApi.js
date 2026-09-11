@@ -704,6 +704,20 @@ export function mergeInboxRows(contacts, threads, options = {}) {
   return rows;
 }
 
+/**
+ * Non-lus DM des seuls correspondants affichés (équivalent appendUnknown: false).
+ */
+export function sumUnreadForContactIds(threads = [], contactIds = []) {
+  const ids = new Set(
+    (contactIds || []).filter(Boolean).map((id) => String(id))
+  );
+  if (ids.size === 0) return 0;
+  return (threads || []).reduce((sum, t) => {
+    if (!ids.has(String(t.otherId || ""))) return sum;
+    return sum + (Number(t.unreadCount) || 0);
+  }, 0);
+}
+
 /** Nombre de conversations (DM + groupes) avec au moins un message non lu. */
 export function countUnseenConversations(threads = [], groups = []) {
   const dm = (threads || []).filter(
