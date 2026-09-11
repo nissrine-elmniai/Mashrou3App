@@ -8,7 +8,15 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
-import { Menu, Bell, Plus } from "lucide-react-native";
+import {
+  Menu,
+  Bell,
+  UserPlus,
+  CalendarPlus,
+  ClipboardPlus,
+  Megaphone,
+  Activity,
+} from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
@@ -19,55 +27,47 @@ import {
   REGISTRATION_STATUS,
   ACCOUNT_STATUS,
 } from "../../constants/roles";
-import { rtlText, row } from "../../constants/rtl";
+import { rtlText, rtlTextCenter, row, fonts } from "../../constants/rtl";
+import { colors, radii } from "../../constants/theme";
+import { SectionCard } from "../../components/ui";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
-
-const palette = {
-  primary: "#2E7D32",
-  gold: "#FBC02D",
-  teal: "#00897B",
-  orange: "#D97706",
-  red: "#D32F2F",
-  softGreen: "#E8F5E9",
-  blue: "#1976D2",
-  background: "#F5F5F5",
-  textSecondary: "#666666",
-  textPrimary: "#333333",
-  placeholder: "#999999",
-  border: "#E0E0E0",
-};
 
 const QUICK_ACTIONS = [
   {
-    key: "season",
-    label: "انطلاق موسم جديد",
-    route: "AdminNewSeason",
-    bg: palette.primary,
-    fg: "#fff",
+    key: "notify",
+    label: "إشعار",
+    shortLabel: "إشعار جديد",
+    route: "AdminNotifications",
+    icon: Megaphone,
   },
   {
     key: "supervisor",
     label: "إضافة مشرف",
+    shortLabel: "مشرف جديد",
     route: "AdminSupervisors",
-    bg: palette.gold,
-    fg: palette.textPrimary,
+    icon: UserPlus,
   },
   {
     key: "exam",
     label: "إنشاء اختبار",
+    shortLabel: "اختبار جديد",
     route: "AdminTests",
     params: { initialTab: "create" },
-    bg: palette.teal,
-    fg: "#fff",
+    icon: ClipboardPlus,
   },
   {
-    key: "notify",
-    label: "إشعار",
-    route: "AdminNotifications",
-    bg: palette.orange,
-    fg: "#fff",
+    key: "season",
+    label: "انطلاق موسم جديد",
+    shortLabel: "موسم جديد",
+    route: "AdminNewSeason",
+    icon: CalendarPlus,
   },
 ];
+
+/** 1 : عضو مسجّل — sinon : أعضاء مسجّلون. */
+function membersLabel(count) {
+  return count === 1 ? "عضو مسجّل" : "أعضاء مسجّلون";
+}
 
 function parseActivityDate(value) {
   if (!value) return null;
@@ -121,7 +121,7 @@ function buildRecentActivities({
     if (r.status === REGISTRATION_STATUS.PENDING) {
       items.push({
         id: `reg-pending-${r.id}`,
-        color: palette.gold,
+        color: colors.gold,
         text: `طلب تسجيل جديد: ${name}`,
         at: parseActivityDate(r.createdAt) || new Date(0),
       });
@@ -131,7 +131,7 @@ function buildRecentActivities({
     ) {
       items.push({
         id: `reg-accepted-${r.id}`,
-        color: palette.primary,
+        color: colors.primary,
         text: `تم قبول طلب: ${name}`,
         at:
           parseActivityDate(r.acceptedAt) ||
@@ -141,7 +141,7 @@ function buildRecentActivities({
     } else if (r.status === REGISTRATION_STATUS.ACTIVATED) {
       items.push({
         id: `reg-activated-${r.id}`,
-        color: palette.primary,
+        color: colors.primary,
         text: `تم إنشاء حساب العضو: ${name}`,
         at:
           parseActivityDate(r.acceptedAt) ||
@@ -151,7 +151,7 @@ function buildRecentActivities({
     } else if (r.status === REGISTRATION_STATUS.REJECTED) {
       items.push({
         id: `reg-rejected-${r.id}`,
-        color: palette.red,
+        color: colors.red,
         text: `تم رفض طلب: ${name}`,
         at: parseActivityDate(r.createdAt) || new Date(0),
       });
@@ -163,21 +163,21 @@ function buildRecentActivities({
     if (e.status === "cancelled") {
       items.push({
         id: `exam-cancel-${e.id}`,
-        color: palette.red,
+        color: colors.red,
         text: `تم إلغاء الاختبار: ${title}`,
         at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
       });
     } else if (e.status === "completed") {
       items.push({
         id: `exam-done-${e.id}`,
-        color: palette.blue,
+        color: colors.blue,
         text: `تم إنجاز الاختبار: ${title}`,
         at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
       });
     } else {
       items.push({
         id: `exam-${e.id}`,
-        color: palette.blue,
+        color: colors.blue,
         text: `اختبار جديد: ${title}`,
         at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
       });
@@ -190,7 +190,7 @@ function buildRecentActivities({
     const name = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email;
     items.push({
       id: `sup-invite-${u.id}`,
-      color: palette.gold,
+      color: colors.gold,
       text: `تعيين مشرف جديد: ${name}`,
       at: parseActivityDate(u.createdAt) || new Date(0),
     });
@@ -201,7 +201,7 @@ function buildRecentActivities({
     if (!title.includes("تنبيه")) return;
     items.push({
       id: `notif-${n.id}`,
-      color: palette.red,
+      color: colors.red,
       text: n.body ? `${title}: ${n.body}` : title,
       at: parseActivityDate(n.createdAt) || new Date(0),
     });
@@ -209,7 +209,7 @@ function buildRecentActivities({
 
   return items
     .sort((a, b) => b.at - a.at)
-    .slice(0, 12)
+    .slice(0, 10)
     .map((item) => ({
       id: item.id,
       color: item.color,
@@ -219,79 +219,86 @@ function buildRecentActivities({
 }
 
 function DashboardHome({ navigation, stats, activities }) {
-  const statCards = [
-    { label: "الأعضاء", value: stats?.members ?? 0, icon: "👥" },
-    { label: "المشرفون", value: stats?.supervisors ?? 0, icon: "👨\u200d🏫" },
-    { label: "الحصص", value: stats?.seances ?? 0, icon: "📅" },
-    {
-      label: "الاختبارات",
-      value: stats?.exams ?? 0,
-      icon: "📋",
-      badge: stats?.pendingRegs > 0 ? `${stats.pendingRegs} معلق` : null,
-    },
+  const members = stats?.members ?? 0;
+  const pendingRegs = stats?.pendingRegs ?? 0;
+  // Hero = membres du saison. 1 → عضو مسجّل, sinon → أعضاء مسجّلون.
+  const secondaryStats = [
+    { key: "supervisors", label: "المشرفون", value: stats?.supervisors ?? 0 },
+    { key: "seances", label: "الحصص", value: stats?.seances ?? 0 },
+    { key: "exams", label: "الاختبارات", value: stats?.exams ?? 0 },
   ];
 
   return (
     <View style={dhStyles.wrapper}>
-      <View style={dhStyles.statsGrid}>
-        {statCards.map((stat, index) => (
-          <View key={index} style={dhStyles.statCard}>
-            <Text style={dhStyles.statValue}>{stat.value}</Text>
-            <Text style={dhStyles.statLabel}>
-              {stat.icon}  {stat.label}
-            </Text>
-            {stat.badge ? (
-              <View style={dhStyles.statBadge}>
-                <Text style={dhStyles.statBadgeText}>{stat.badge}</Text>
-              </View>
-            ) : null}
-          </View>
-        ))}
-      </View>
+      <SectionCard borderColor={colors.border}>
+        <View style={dhStyles.heroRow}>
+          <Text style={dhStyles.heroValue}>{members}</Text>
+          <Text style={dhStyles.heroLabel}>{membersLabel(members)}</Text>
+          {pendingRegs > 0 ? (
+            <View style={dhStyles.pendingBadge}>
+              <Text style={dhStyles.pendingBadgeText}>
+                {pendingRegs} معلق
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={dhStyles.statDivider} />
+        <View style={dhStyles.secondaryRow}>
+          {secondaryStats.map((stat) => (
+            <View key={stat.key} style={dhStyles.secondaryItem}>
+              <Text style={dhStyles.secondaryValue}>{stat.value}</Text>
+              <Text style={dhStyles.secondaryLabel}>{stat.label}</Text>
+            </View>
+          ))}
+        </View>
+      </SectionCard>
 
-      <View style={dhStyles.actionsGrid}>
-        {QUICK_ACTIONS.map((action) => (
-          <TouchableOpacity
-            key={action.key}
-            style={[dhStyles.actionBtn, { backgroundColor: action.bg }]}
-            onPress={() =>
-              navigation.navigate(action.route, action.params)
-            }
-          >
-            <Plus size={13} color={action.fg} />
-            <Text
-              style={[dhStyles.actionBtnText, { color: action.fg }]}
-              numberOfLines={2}
+      <View style={dhStyles.actionsRow}>
+        {QUICK_ACTIONS.map((action) => {
+          const Icon = action.icon;
+          return (
+            <TouchableOpacity
+              key={action.key}
+              style={dhStyles.actionBtn}
+              onPress={() =>
+                navigation.navigate(action.route, action.params)
+              }
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={action.label}
             >
-              {action.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Icon size={20} color={colors.gold} pointerEvents="none" />
+              <Text style={dhStyles.actionLabel} numberOfLines={2}>
+                {action.shortLabel}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
-      <View style={dhStyles.activityCard}>
-        <Text style={dhStyles.activityTitle}>النشاط الأخير</Text>
+      <SectionCard title="آخر النشاطات" borderColor={colors.border}>
         {activities.length === 0 ? (
           <Text style={dhStyles.activityEmpty}>لا يوجد نشاط بعد</Text>
         ) : (
           activities.map((activity) => (
-            <View key={activity.id} style={dhStyles.activityItem}>
-              <View
-                style={[
-                  dhStyles.activityDot,
-                  { backgroundColor: activity.color },
-                ]}
-              />
-              <View style={{ flex: 1 }}>
-                <Text style={dhStyles.activityText}>{activity.text}</Text>
-                {activity.time ? (
-                  <Text style={dhStyles.activityTime}>{activity.time}</Text>
-                ) : null}
+            <View key={activity.id} style={dhStyles.activityRow}>
+              <View style={dhStyles.activityIconWrap}>
+                <Activity
+                  size={16}
+                  color={colors.muted}
+                  pointerEvents="none"
+                />
               </View>
+              <Text style={dhStyles.activityText} numberOfLines={2}>
+                {activity.text}
+              </Text>
+              {activity.time ? (
+                <Text style={dhStyles.activityWhen}>{activity.time}</Text>
+              ) : null}
             </View>
           ))
         )}
-      </View>
+      </SectionCard>
     </View>
   );
 }
@@ -380,7 +387,7 @@ export default function AdminDashboard({ navigation }) {
           accessibilityRole="button"
           accessibilityLabel="فتح القائمة"
         >
-          <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
+          <Menu size={24} color={colors.text} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>لوحة التحكم</Text>
         <AdminTopBarAvatar
@@ -393,7 +400,7 @@ export default function AdminDashboard({ navigation }) {
           accessibilityRole="button"
           accessibilityLabel="التنبيهات"
         >
-          <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
+          <Bell size={24} color={colors.muted} pointerEvents="none" />
           {derivedStats.pendingRegs > 0 ? (
             <View style={styles.bellBadge}>
               <Text style={styles.bellBadgeText}>
@@ -425,7 +432,7 @@ export default function AdminDashboard({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: palette.background,
+    backgroundColor: colors.bg,
   },
   scroll: {
     flex: 1,
@@ -434,33 +441,20 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   topBar: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.card,
     padding: 16,
     flexDirection: row,
     alignItems: "center",
     gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: palette.border,
+    borderBottomColor: colors.border,
   },
   topBarTitle: {
     flex: 1,
-    fontWeight: "bold",
-    color: palette.textPrimary,
+    fontFamily: fonts.bold,
+    color: colors.text,
     fontSize: 16,
     ...rtlText,
-  },
-  topBarAvatar: {
-    width: 32,
-    height: 32,
-    backgroundColor: palette.softGreen,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  topBarAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 14,
   },
   bellBadge: {
     position: "absolute",
@@ -468,15 +462,15 @@ const styles = StyleSheet.create({
     right: -4,
     width: 16,
     height: 16,
-    backgroundColor: palette.red,
+    backgroundColor: colors.primary,
     borderRadius: 8,
     justifyContent: "center",
     alignItems: "center",
   },
   bellBadgeText: {
-    color: "#fff",
+    color: colors.card,
     fontSize: 10,
-    fontWeight: "bold",
+    fontFamily: fonts.bold,
   },
 });
 
@@ -484,116 +478,118 @@ const dhStyles = StyleSheet.create({
   wrapper: {
     padding: 16,
   },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    marginBottom: 24,
+  heroRow: {
+    flexDirection: row,
+    alignItems: "baseline",
+    gap: 8,
   },
-  statCard: {
-    width: "48%",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    position: "relative",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+  heroValue: {
+    fontSize: 34,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    lineHeight: 40,
   },
-  statValue: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: palette.primary,
-    marginBottom: 4,
-  },
-  statLabel: {
-    color: palette.textSecondary,
-    fontSize: 14,
+  heroLabel: {
+    color: colors.text,
+    fontSize: 16,
+    fontFamily: fonts.medium,
     ...rtlText,
   },
-  statBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: palette.gold,
-    borderRadius: 12,
+  pendingBadge: {
+    alignSelf: "center",
+    backgroundColor: colors.primarySoft,
+    borderRadius: radii.pill,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  statBadgeText: {
+  pendingBadgeText: {
+    color: colors.primary,
     fontSize: 12,
-    color: palette.textPrimary,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
   },
-  actionsGrid: {
+  statDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 12,
+  },
+  secondaryRow: {
     flexDirection: row,
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    rowGap: 8,
-    marginBottom: 20,
+  },
+  secondaryItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  secondaryValue: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    lineHeight: 24,
+  },
+  secondaryLabel: {
+    color: colors.text,
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    marginTop: 2,
+    ...rtlTextCenter,
+  },
+  actionsRow: {
+    flexDirection: row,
+    gap: 16,
+    marginTop: 18,
+    marginBottom: 22,
   },
   actionBtn: {
-    width: "48%",
-    flexDirection: row,
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: radii.md,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  actionBtnText: {
-    flexShrink: 1,
-    fontWeight: "600",
+  actionLabel: {
+    color: colors.muted,
+    fontFamily: fonts.semiBold,
     fontSize: 11,
-    textAlign: "center",
-    lineHeight: 15,
-    ...rtlText,
+    lineHeight: 16,
+    includeFontPadding: false,
+    ...rtlTextCenter,
   },
-  activityCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  activityTitle: {
-    fontWeight: "bold",
-    color: palette.textPrimary,
-    marginBottom: 12,
-    fontSize: 16,
-    ...rtlText,
-  },
-  activityItem: {
+  activityRow: {
     flexDirection: row,
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 12,
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
   },
-  activityDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginTop: 6,
+  activityIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.soft,
+    alignItems: "center",
+    justifyContent: "center",
   },
   activityText: {
-    color: palette.textPrimary,
-    fontSize: 14,
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontFamily: fonts.regular,
     ...rtlText,
   },
-  activityTime: {
-    color: palette.placeholder,
+  activityWhen: {
+    color: colors.muted,
     fontSize: 12,
+    fontFamily: fonts.regular,
     ...rtlText,
   },
   activityEmpty: {
-    color: palette.textSecondary,
+    color: colors.muted,
     fontSize: 13,
+    fontFamily: fonts.regular,
     textAlign: "center",
     paddingVertical: 12,
     ...rtlText,
