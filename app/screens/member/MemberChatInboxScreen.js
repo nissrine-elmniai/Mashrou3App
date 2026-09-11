@@ -6,13 +6,13 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  StatusBar,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { colors } from "../../constants/theme";
-import { rtlTextBold, row, fonts, arrowBack } from "../../constants/rtl";
+import { rtlTextBold, row as rtlRow, fonts, arrowBack } from "../../constants/rtl";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { EmptyState } from "../../components/ui";
 import { getMyCurrentInscription, mergeInboxRows } from "../../lib/messagesApi";
@@ -36,7 +36,6 @@ function supervisorContactFromSeance(seance) {
     avatarLetter: initials(s.first_name || displayName || "م"),
     avatarUrl: resolvePublicAvatarUrl(seance.superviseur_id, s.avatar_url),
     seanceId: seance.id,
-    highlighted: true,
   };
 }
 
@@ -54,7 +53,7 @@ export default function MemberChatInboxScreen({ navigation }) {
         const res = await getMyCurrentInscription();
         if (cancelled) return;
         // Sans inscription du musim actif : pas de ligne superviseur.
-        // Les anciens fils restent via useInboxThreads + appendUnknown.
+        // L'historique DM n'est plus fusionné (appendUnknown: false).
         setSupervisor(
           res.ok ? supervisorContactFromSeance(res.seance) : null
         );
@@ -72,11 +71,11 @@ export default function MemberChatInboxScreen({ navigation }) {
   );
 
   const dmRows = useMemo(() => {
-    // appendUnknown: le badge du FAB compte TOUS les non-lus ; la boîte doit
-    // afficher les mêmes fils (ex. superviseur d'une saison précédente), sinon
-    // le membre voit "3" sans aucune conversation.
+    // Affiliation seulement (comme l'inbox superviseur) : un ancien
+    // superviseur avec qui des DM existent encore n'apparaît plus.
+    // Le badge FAB ne compte que ces mêmes correspondants.
     const merged = mergeInboxRows(contacts, threads, {
-      appendUnknown: true,
+      appendUnknown: false,
     });
     return merged.filter((r) => {
       if (r.role === "admin") return false;
@@ -114,17 +113,19 @@ export default function MemberChatInboxScreen({ navigation }) {
     !loading && (chatGroups || []).length === 0 && dmRows.length === 0;
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.card} />
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+      <StatusBar style="light" />
       <View style={styles.header}>
         <TouchableOpacity
-          style={styles.backBtn}
+          style={styles.headerBtn}
           onPress={() => navigation.goBack()}
           activeOpacity={0.7}
+          accessibilityLabel="رجوع"
         >
-          <Ionicons name={arrowBack} size={22} color={colors.text} />
+          <Ionicons name={arrowBack} size={22} color="white" />
         </TouchableOpacity>
-        <Text style={styles.title}>الرسائل</Text>
+        <Text style={styles.headerTitle}>الرسائل</Text>
+        <View style={styles.headerBtn} />
       </View>
 
       {loading ? (
@@ -141,6 +142,23 @@ export default function MemberChatInboxScreen({ navigation }) {
         />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Superviseur épinglé en tête, même ligne que le groupe (surlignage si non lu). */}
+          {dmRows.map((row) => (
+            <ChatThreadRow
+              key={`${row.role}-${row.id}`}
+              name={row.name}
+              preview={row.lastMessage}
+              time={row.time}
+              userId={row.id}
+              avatarLetter={row.avatarLetter}
+              avatarUrl={row.avatarUrl}
+              avatarPrimary={!row.avatarUrl}
+              highlighted={!!row.unread}
+              unread={row.unread}
+              unreadCount={row.unreadCount}
+              onPress={() => openThread(row)}
+            />
+          ))}
           {(chatGroups || []).map((group) => (
             <ChatThreadRow
               key={`group-${group.id}`}
@@ -158,22 +176,6 @@ export default function MemberChatInboxScreen({ navigation }) {
               onPress={() => openGroupChat(group)}
             />
           ))}
-          {dmRows.map((row) => (
-            <ChatThreadRow
-              key={`${row.role}-${row.id}`}
-              name={row.name}
-              preview={row.lastMessage}
-              time={row.time}
-              userId={row.id}
-              avatarLetter={row.avatarLetter}
-              avatarUrl={row.avatarUrl}
-              avatarPrimary={row.avatarPrimary}
-              highlighted={row.highlighted}
-              unread={row.unread}
-              unreadCount={row.unreadCount}
-              onPress={() => openThread(row)}
-            />
-          ))}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -183,20 +185,24 @@ export default function MemberChatInboxScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   header: {
-    flexDirection: row,
+    flexDirection: rtlRow,
     alignItems: "center",
-    gap: 12,
-    padding: 16,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: colors.primary,
   },
-  backBtn: { padding: 2 },
-  title: {
+  headerBtn: {
+    padding: 4,
+    minWidth: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
     flex: 1,
+    color: "white",
+    fontSize: 18,
     fontFamily: fonts.bold,
-    fontSize: 16,
-    color: colors.text,
     ...rtlTextBold,
   },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },

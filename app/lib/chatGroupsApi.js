@@ -164,7 +164,7 @@ export async function getMyChatGroups() {
       };
     }
 
-    const groupsRaw = (memberships || [])
+    const groupsAll = (memberships || [])
       .map((row) => {
         const g = row.group;
         if (!g?.id) return null;
@@ -178,6 +178,37 @@ export async function getMyChatGroups() {
         };
       })
       .filter(Boolean);
+
+    if (groupsAll.length === 0) {
+      return { ok: true, groups: [] };
+    }
+
+    // Inbox : uniquement les séances encore ouvertes (`seances.statut`).
+    // Pas de filtre `saisons.active` ici — voir le rapport (archivage parfois incomplet).
+    const seanceIds = [
+      ...new Set(groupsAll.map((g) => g.seanceId).filter(Boolean)),
+    ];
+    let groupsRaw = [];
+    if (seanceIds.length > 0) {
+      const { data: activeSeances, error: seanceError } = await withTimeout(
+        supabase
+          .from("seances")
+          .select("id")
+          .in("id", seanceIds)
+          .eq("statut", "active"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة حصص المجموعات"
+      );
+      if (seanceError) {
+        return {
+          ok: false,
+          error: mapTableError(seanceError, "seances"),
+          groups: [],
+        };
+      }
+      const activeIds = new Set((activeSeances || []).map((s) => s.id));
+      groupsRaw = groupsAll.filter((g) => activeIds.has(g.seanceId));
+    }
 
     if (groupsRaw.length === 0) {
       return { ok: true, groups: [] };

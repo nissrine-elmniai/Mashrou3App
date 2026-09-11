@@ -22,14 +22,11 @@ import {
   computeProgressPace,
   latestProgressionRow,
 } from "../../lib/progressApi";
-import {
-  REGISTRATION_STATUS_LABELS,
-  SEASON_TYPES,
-} from "../../constants/roles";
+import { SEASON_TYPES } from "../../constants/roles";
 import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
 import { getMyObjectif } from "../../lib/objectifsApi";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextCenter, row, arrowForward, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextCenter, row, fonts } from "../../constants/rtl";
 import {
   StatCard,
   SectionCard,
@@ -47,11 +44,15 @@ import {
   getMemberProfileFields,
   formatGenderLabel,
 } from "../../lib/membersApi";
-import { getMyCurrentInscription, formatUnreadBadge } from "../../lib/messagesApi";
+import {
+  getMyCurrentInscription,
+  formatUnreadBadge,
+  sumUnreadForContactIds,
+} from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { formatHizbCount, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -69,6 +70,20 @@ function displayGenderFromUser(gender) {
   const raw = String(gender || "").trim();
   if (!raw || raw === "غير محدد") return null;
   return formatGenderLabel(raw) || null;
+}
+
+/** جمل فعلية: تم + المصدر المضاف إلى كاف الخطاب (نائب الفاعل). */
+function memberActivityPhrases(gender) {
+  const k = displayGenderFromUser(gender) === "أنثى" ? "كِ" : "ك";
+  return {
+    progress: `تم تحديث تقدم${k}`,
+    regCreate: `تم إرسال طلب${k}`,
+    regAccept: `تم قبول${k}`,
+    seance: `تم تعيين${k}`,
+    present: `تم تسجيل حضور${k}`,
+    absent: `تم تسجيل غياب${k}`,
+    exam: `تم إحراز نتيجة${k}`,
+  };
 }
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
@@ -156,13 +171,6 @@ export default function MemberDashboardScreen({ navigation }) {
   const authId = currentUser?.authId || currentUser?.id || null;
   const { threads } = useInboxThreads();
   const { totalUnread: groupsUnread } = useChatGroups();
-  const messagesUnread = useMemo(() => {
-    const dm = (threads || []).reduce(
-      (sum, t) => sum + (Number(t.unreadCount) || 0),
-      0
-    );
-    return dm + (Number(groupsUnread) || 0);
-  }, [threads, groupsUnread]);
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
@@ -188,6 +196,7 @@ export default function MemberDashboardScreen({ navigation }) {
     heureDebut: null,
     seanceId: null,
     saisonId: null,
+    superviseurId: null,
     registrationDate: null,
   });
   const [progressState, setProgressState] = useState({
@@ -206,6 +215,11 @@ export default function MemberDashboardScreen({ navigation }) {
     absentCount: 0,
     records: [],
   });
+
+  const messagesUnread = useMemo(() => {
+    const dm = sumUnreadForContactIds(threads, [sessionState.superviseurId]);
+    return dm + (Number(groupsUnread) || 0);
+  }, [threads, groupsUnread, sessionState.superviseurId]);
 
   const loadProgressEntries = useCallback(async () => {
     setActivitiesLoading(true);
@@ -314,6 +328,7 @@ export default function MemberDashboardScreen({ navigation }) {
         heureDebut: null,
         seanceId: null,
         saisonId: null,
+        superviseurId: null,
         registrationDate: null,
       });
       setProgressState({
@@ -365,6 +380,7 @@ export default function MemberDashboardScreen({ navigation }) {
       heureDebut: seance?.heure_debut || null,
       seanceId,
       saisonId,
+      superviseurId: seance?.superviseur_id || null,
       registrationDate: inscription?.dateInscription || null,
     });
 
@@ -557,15 +573,12 @@ export default function MemberDashboardScreen({ navigation }) {
       return at >= sinceMs;
     };
 
+    const phrases = memberActivityPhrases(currentUser?.gender);
+
     progressEntries.forEach((entry, idx) => {
       const metrics = computeProgressMetrics(entry);
-      let body = metrics?.notes || formatHizbCount(metrics?.nbHizbCompletes ?? 0);
-      if (metrics?.tumunCourant != null) {
-        body += ` — الثمن ${metrics.tumunCourant}`;
-      }
-      if (metrics?.globalPct != null) {
-        body += ` • ${metrics.globalPct}% من القرآن`;
-      }
+      const hizb = formatHizbCount(metrics?.nbHizbCompletes ?? 0);
+      const tumun = tumunStoredToUi(metrics?.tumunCourant ?? entry.tumun_courant);
       const at = parseActivityTimestamp(
         entry.date || entry.date_saisie || entry.created_at
       );
@@ -573,8 +586,8 @@ export default function MemberDashboardScreen({ navigation }) {
       items.push({
         id: `progress-${entry.id || idx}`,
         at,
-        title: "تحديث التقدم",
-        body,
+        title: phrases.progress,
+        body: `${hizb} · الثمن ${tumun}`,
         icon: "book-outline",
         color: colors.primary,
         action: "progress",
@@ -583,16 +596,14 @@ export default function MemberDashboardScreen({ navigation }) {
 
     myRegs.forEach((r) => {
       const season = seasons.find((s) => s.id === r.seasonId);
-      const statusLabel =
-        REGISTRATION_STATUS_LABELS[r.status] || r.status || "—";
       const atAccepted = parseActivityTimestamp(r.acceptedAt);
       const atCreated = parseActivityTimestamp(r.createdAt);
       if (isAfterRegistration(atCreated)) {
         items.push({
           id: `reg-create-${r.id}`,
           at: atCreated,
-          title: "طلب تسجيل",
-          body: `${season?.name || "موسم"} — تم إرسال الطلب`,
+          title: phrases.regCreate,
+          body: season?.name || "موسم",
           icon: "document-text-outline",
           color: colors.orange,
           action: "registration",
@@ -602,8 +613,8 @@ export default function MemberDashboardScreen({ navigation }) {
         items.push({
           id: `reg-accept-${r.id}`,
           at: atAccepted,
-          title: "قبول التسجيل",
-          body: `${season?.name || "موسم"} — ${statusLabel}`,
+          title: phrases.regAccept,
+          body: season?.name || "موسم",
           icon: "checkmark-circle-outline",
           color: colors.primary,
           action: "registration",
@@ -617,7 +628,7 @@ export default function MemberDashboardScreen({ navigation }) {
         items.push({
           id: "seance-assign",
           at,
-          title: "التعيين في الحصة",
+          title: phrases.seance,
           body: sessionState.groupName,
           icon: "people-outline",
           color: colors.teal || colors.primary,
@@ -633,8 +644,8 @@ export default function MemberDashboardScreen({ navigation }) {
       items.push({
         id: `presence-${r.date || idx}`,
         at,
-        title: present ? "حضور الحصة" : "غياب عن الحصة",
-        body: present ? "تم تسجيل حضورك" : "تم تسجيل غيابك",
+        title: present ? phrases.present : phrases.absent,
+        body: "",
         icon: present ? "checkmark-outline" : "close-outline",
         color: present ? colors.primary : colors.orange,
         action: "profile",
@@ -647,8 +658,8 @@ export default function MemberDashboardScreen({ navigation }) {
       items.push({
         id: `exam-${e.id}`,
         at,
-        title: "نتيجة اختبار",
-        body: `${e.level || e.title || "اختبار"} — الدرجة: ${e.score}`,
+        title: phrases.exam,
+        body: `${e.level || e.title || "اختبار"} · ${e.score}`,
         icon: "school-outline",
         color: colors.gold,
         action: "registration",
@@ -674,6 +685,7 @@ export default function MemberDashboardScreen({ navigation }) {
     return items.sort((a, b) => b.at - a.at).slice(0, 8);
   }, [
     currentUser?.id,
+    currentUser?.gender,
     activityCutoffReady,
     activitySinceMs,
     sessionState.registrationDate,
@@ -764,20 +776,22 @@ export default function MemberDashboardScreen({ navigation }) {
         <LinearGradient colors={colors.gradientHeader} style={styles.header}>
           <View style={styles.headerRow}>
             <View style={styles.headerTextWrap}>
-              <Text style={styles.headerGreeting}>
-                {tab === "programs"
-                  ? "برامجي"
-                  : tab === "registration"
-                    ? "التسجيل والموسم"
-                    : tab === "profile"
-                      ? "ملفي"
-                      : "السلام عليكم"}
-              </Text>
               {tab === "home" ? (
-                <Text style={styles.headerSubtitle}>
-                  {currentUser?.firstName || fullName}
+                <>
+                  <Text style={styles.headerSalam}>السلام عليكم</Text>
+                  <Text style={styles.headerGreeting}>
+                    {currentUser?.firstName || fullName}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.headerGreeting}>
+                  {tab === "programs"
+                    ? "برامجي"
+                    : tab === "registration"
+                      ? "التسجيل والموسم"
+                      : "ملفي"}
                 </Text>
-              ) : null}
+              )}
             </View>
             {tab === "programs" ? (
               <Ionicons name="book" size={22} color="white" />
@@ -890,10 +904,7 @@ export default function MemberDashboardScreen({ navigation }) {
               )}
             </SectionCard>
 
-            <SectionCard
-              title="آخر النشاطات"
-              subtitle="نشاطاتك منذ تاريخ تسجيلك"
-            >
+            <SectionCard title="آخر النشاطات">
               {(activitiesLoading || !activityCutoffReady) &&
               recentActivities.length === 0 ? (
                 <View style={styles.activityLoading}>
@@ -902,10 +913,11 @@ export default function MemberDashboardScreen({ navigation }) {
               ) : recentActivities.length === 0 ? (
                 <EmptyState text="لا توجد أنشطة حديثة" />
               ) : (
-                recentActivities.map((activity) => (
+                recentActivities.map((activity, idx) => (
                   <ActivityCard
                     key={activity.id}
                     activity={activity}
+                    isLast={idx === recentActivities.length - 1}
                     onPress={
                       activity.action
                         ? () => handleActivityPress(activity)
@@ -987,20 +999,31 @@ export default function MemberDashboardScreen({ navigation }) {
       <View style={styles.bottomWrap}>
         <MemberBottomTabBar tabs={TABS} activeKey={tab} onChange={setTab} />
       </View>
-      <TouchableOpacity
-        style={[styles.fab, { bottom: 68 + Math.max(insets.bottom, 16) }]}
-        onPress={openChat}
-        activeOpacity={0.85}
+      <View
+        style={[styles.fabWrap, { bottom: 68 + Math.max(insets.bottom, 16) }]}
+        pointerEvents="box-none"
       >
-        <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={openChat}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={
+            messagesUnread > 0
+              ? `الرسائل، ${messagesUnread} غير مقروءة`
+              : "الرسائل"
+          }
+        >
+          <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+        </TouchableOpacity>
         {messagesUnread > 0 ? (
-          <View style={styles.fabBadge}>
+          <View style={styles.fabBadge} pointerEvents="none">
             <Text style={styles.fabBadgeText}>
               {formatUnreadBadge(messagesUnread)}
             </Text>
           </View>
         ) : null}
-      </TouchableOpacity>
+      </View>
 
       <ChangePasswordModal
         visible={passwordModal}
@@ -1028,37 +1051,35 @@ export default function MemberDashboardScreen({ navigation }) {
   );
 }
 
-function ActivityCard({ activity, onPress }) {
+function ActivityCard({ activity, onPress, isLast }) {
   const when = formatActivityWhen(activity.at);
+  const body = String(activity.body || "").trim();
   const content = (
-    <View style={styles.activityRow}>
-      <View style={[styles.activityIcon, { backgroundColor: `${activity.color}18` }]}>
-        <Ionicons name={activity.icon} size={20} color={activity.color} />
+    <View style={[styles.activityRow, !isLast && styles.activityRowBorder]}>
+      <View
+        style={[styles.activityIcon, { backgroundColor: `${activity.color}18` }]}
+      >
+        <Ionicons name={activity.icon} size={16} color={activity.color} />
       </View>
       <View style={styles.activityBody}>
         <View style={styles.activityHead}>
-          <Text style={styles.activityTitle}>{activity.title}</Text>
+          <Text style={styles.activityTitle} numberOfLines={1}>
+            {activity.title}
+          </Text>
           {when ? <Text style={styles.activityWhen}>{when}</Text> : null}
         </View>
-        <Text style={styles.activityText} numberOfLines={2}>
-          {activity.body}
-        </Text>
+        {body ? (
+          <Text style={styles.activityText} numberOfLines={1}>
+            {body}
+          </Text>
+        ) : null}
       </View>
-      {onPress ? (
-        <Ionicons name={arrowForward} size={18} color={colors.muted} />
-      ) : null}
     </View>
   );
 
-  if (!onPress) {
-    return <View style={styles.activityCard}>{content}</View>;
-  }
+  if (!onPress) return content;
   return (
-    <TouchableOpacity
-      style={styles.activityCard}
-      onPress={onPress}
-      activeOpacity={0.85}
-    >
+    <TouchableOpacity onPress={onPress} activeOpacity={0.75}>
       {content}
     </TouchableOpacity>
   );
@@ -1087,17 +1108,17 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: alignEdge,
   },
-  headerGreeting: {
-    color: "white",
-    fontSize: 19,
-    fontFamily: fonts.bold,
+  headerSalam: {
+    color: "rgba(255,255,255,0.88)",
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    marginBottom: 2,
     ...rtlText,
   },
-  headerSubtitle: {
-    color: "rgba(255,255,255,0.92)",
-    fontSize: 12,
-    marginTop: 4,
-    fontFamily: fonts.regular,
+  headerGreeting: {
+    color: "white",
+    fontSize: 20,
+    fontFamily: fonts.bold,
     ...rtlText,
   },
   headerBtn: {
@@ -1177,23 +1198,20 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     alignItems: "center",
   },
-  activityCard: {
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-    borderRadius: radii.lg,
-    padding: 12,
-    marginBottom: 10,
-    backgroundColor: colors.soft,
-  },
   activityRow: {
     flexDirection: row,
     alignItems: "center",
     gap: 10,
+    paddingVertical: 10,
+  },
+  activityRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
   activityIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1205,23 +1223,25 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     gap: 8,
-    marginBottom: 4,
   },
   activityTitle: {
     flex: 1,
-    color: colors.primary,
-    fontFamily: fonts.bold,
-    fontSize: 14,
+    color: colors.text,
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
     ...rtlText,
   },
   activityWhen: {
     color: colors.muted,
     fontSize: 11,
+    fontFamily: fonts.regular,
     ...rtlText,
   },
   activityText: {
     color: colors.muted,
-    fontSize: 13,
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    marginTop: 2,
     ...rtlText,
   },
 
@@ -1252,9 +1272,13 @@ const styles = StyleSheet.create({
   profileLoader: { marginVertical: 8 },
 
   bottomWrap: {},
-  fab: {
+  fabWrap: {
     position: "absolute",
     end: 16,
+    overflow: "visible",
+    zIndex: 20,
+  },
+  fab: {
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -1269,19 +1293,19 @@ const styles = StyleSheet.create({
   },
   fabBadge: {
     position: "absolute",
-    top: -2,
-    end: -2,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 4,
+    top: -6,
+    end: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
     backgroundColor: colors.gold,
     justifyContent: "center",
     alignItems: "center",
   },
   fabBadgeText: {
     color: colors.text,
-    fontSize: 10,
+    fontSize: 9,
     fontFamily: fonts.bold,
   },
 });

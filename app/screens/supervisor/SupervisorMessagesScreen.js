@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  TouchableOpacity,
   ActivityIndicator,
   StatusBar,
 } from "react-native";
@@ -13,7 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
-import { rtlText, rtlTextBold, row, textAlignStart, fonts, arrowBack } from "../../constants/rtl";
+import { rtlText, row, textAlignStart, fonts } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { initials } from "./supervisorHelpers";
@@ -162,7 +161,7 @@ export default function SupervisorMessagesScreen({
         avatarLetter: initials(a.first_name || a.email || "إ"),
         avatarUrl: resolvePublicAvatarUrl(a.id, a.avatar_url),
         avatarPrimary: true,
-        highlighted: true,
+        highlighted: false,
       }));
     }
     const fromThreads = (threads || []).filter((t) => t.role === "admin");
@@ -177,7 +176,7 @@ export default function SupervisorMessagesScreen({
           avatarLetter: initials(t.firstName || name),
           avatarUrl: t.avatarUrl || resolvePublicAvatarUrl(t.otherId, null),
           avatarPrimary: true,
-          highlighted: true,
+          highlighted: false,
         };
       });
     }
@@ -188,7 +187,7 @@ export default function SupervisorMessagesScreen({
         role: "admin",
         avatarLetter: "إ",
         avatarPrimary: true,
-        highlighted: true,
+        highlighted: false,
       },
     ];
   }, [admins, threads]);
@@ -261,14 +260,6 @@ export default function SupervisorMessagesScreen({
     [threads, chatGroups]
   );
 
-  const handleBack = () => {
-    if (onBack) {
-      onBack();
-      return;
-    }
-    navigation.goBack();
-  };
-
   const Wrapper = embedded ? View : SafeAreaView;
   const wrapperProps = embedded
     ? { style: styles.container }
@@ -279,20 +270,18 @@ export default function SupervisorMessagesScreen({
       {embedded ? null : (
         <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
       )}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={handleBack}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="رجوع"
-        >
-          <Ionicons name={arrowBack} size={22} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>الرسائل</Text>
-        {unseenConversations > 0 ? (
-          <Text style={styles.headerCount}>({unseenConversations})</Text>
-        ) : null}
+      <View style={styles.summaryWrap}>
+        <View style={styles.summaryRow}>
+          <Text style={styles.summaryText} numberOfLines={1}>
+            الرسائل
+          </Text>
+          {unseenConversations > 0 ? (
+            <>
+              <Text style={styles.summaryDot}> · </Text>
+              <Text style={styles.summaryText}>({unseenConversations})</Text>
+            </>
+          ) : null}
+        </View>
       </View>
 
       {loading ? (
@@ -306,42 +295,6 @@ export default function SupervisorMessagesScreen({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.topBlock}>
-            <View style={styles.searchWrapper}>
-              <Ionicons name="search-outline" size={20} color={colors.placeholder} />
-              <TextInput
-                placeholder="ابحث عن عضو..."
-                placeholderTextColor={colors.placeholder}
-                style={styles.searchInput}
-                textAlign={textAlignStart}
-                value={search}
-                onChangeText={setSearch}
-              />
-            </View>
-          </View>
-
-          {pinnedGroup ? (
-            <>
-              <View style={styles.messagesDivider}>
-                <Text style={styles.messagesDividerText}>مجموعة الحصة</Text>
-              </View>
-              <ChatThreadRow
-                name={pinnedGroup.name}
-                preview={pinnedGroup.lastMessage}
-                time={pinnedGroup.time}
-                userId={pinnedGroup.id}
-                avatarLetter={(pinnedGroup.name || "م").charAt(0)}
-                avatarUrl={pinnedGroup.avatarUrl}
-                avatarPrimary={!pinnedGroup.avatarUrl}
-                isGroup
-                highlighted={!!pinnedGroup.unread}
-                unread={pinnedGroup.unread}
-                unreadCount={pinnedGroup.unreadCount}
-                onPress={() => openGroupChat(pinnedGroup)}
-              />
-            </>
-          ) : null}
-
           {adminRows.map((row) => (
             <ChatThreadRow
               key={`admin-${row.id}`}
@@ -359,8 +312,39 @@ export default function SupervisorMessagesScreen({
             />
           ))}
 
+          {pinnedGroup ? (
+            <ChatThreadRow
+              name={pinnedGroup.name}
+              preview={pinnedGroup.lastMessage}
+              time={pinnedGroup.time}
+              userId={pinnedGroup.id}
+              avatarLetter={(pinnedGroup.name || "م").charAt(0)}
+              avatarUrl={pinnedGroup.avatarUrl}
+              avatarPrimary={!pinnedGroup.avatarUrl}
+              isGroup
+              highlighted={!!pinnedGroup.unread}
+              unread={pinnedGroup.unread}
+              unreadCount={pinnedGroup.unreadCount}
+              onPress={() => openGroupChat(pinnedGroup)}
+            />
+          ) : null}
+
           <View style={styles.messagesDivider}>
             <Text style={styles.messagesDividerText}>أعضاء الحصة</Text>
+          </View>
+
+          <View style={styles.topBlock}>
+            <View style={styles.searchWrapper}>
+              <Ionicons name="search-outline" size={20} color={colors.placeholder} />
+              <TextInput
+                placeholder="ابحث عن عضو..."
+                placeholderTextColor={colors.placeholder}
+                style={styles.searchInput}
+                textAlign={textAlignStart}
+                value={search}
+                onChangeText={setSearch}
+              />
+            </View>
           </View>
 
           {filteredMemberRows.length === 0 ? (
@@ -398,25 +382,32 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flexFill: { flex: 1 },
   scrollContent: { paddingBottom: 24, flexGrow: 1 },
-  header: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 10,
+  summaryWrap: {
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingTop: 16,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    flexWrap: "wrap",
     backgroundColor: colors.primary,
+    borderRadius: radii.lg,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    marginBottom: 14,
   },
-  backBtn: { padding: 2 },
-  headerTitle: {
-    color: "white",
-    fontSize: 18,
-    fontFamily: fonts.bold,
-    ...rtlTextBold,
-  },
-  headerCount: {
-    color: "white",
+  summaryText: {
     fontSize: 16,
+    color: "#FFFFFF",
+    ...rtlText,
+    textAlign: "center",
+  },
+  summaryDot: {
     fontFamily: fonts.medium,
+    fontSize: 13,
+    color: "rgba(255, 255, 255, 0.75)",
+    marginHorizontal: 6,
   },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
   topBlock: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
