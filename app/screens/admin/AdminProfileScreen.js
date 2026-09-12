@@ -19,6 +19,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   Menu,
   Bell,
+  Inbox,
   Mail,
   Shield,
   User,
@@ -35,6 +36,7 @@ import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../../lib/supabase";
 import EditableAvatar from "../../components/EditableAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
 import EditAdminProfileModal from "../../components/profile/EditAdminProfileModal";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
@@ -233,6 +235,12 @@ export default function AdminProfileScreen({ navigation }) {
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الملف الشخصي</Text>
         <AdminTopBarAvatar currentUser={currentUser} />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={palette.textSecondary}
+          variant="lucide"
+          size={24}
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
@@ -312,6 +320,18 @@ export default function AdminProfileScreen({ navigation }) {
               <Text style={styles.actionSub}>
                 {currentUser?.email || "—"}
               </Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.actionRow}
+            onPress={() => navigation.navigate("NotificationSettings")}
+          >
+            <View style={styles.infoIcon}>
+              <Inbox size={18} color={palette.primary} />
+            </View>
+            <View style={styles.infoText}>
+              <Text style={styles.actionTitle}>إعدادات الإشعارات</Text>
+              <Text style={styles.actionSub}>الجهاز والتصنيفات</Text>
             </View>
           </TouchableOpacity>
           <TouchableOpacity

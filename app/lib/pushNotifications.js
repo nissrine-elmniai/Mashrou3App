@@ -81,7 +81,9 @@ async function loadPushModules() {
         handleNotification: async () => ({
           shouldShowAlert: true,
           shouldPlaySound: false,
-          shouldSetBadge: false,
+          shouldSetBadge: true,
+          shouldShowBanner: true,
+          shouldShowList: true,
         }),
       });
       handlerConfigured = true;
@@ -99,6 +101,9 @@ async function loadPushModules() {
 
 function mapPushTokensError(error) {
   const msg = error?.message || "";
+  if (/upsert_push_token|Could not find the function/i.test(msg)) {
+    return "دالة تسجيل الإشعارات غير موجودة — نفّذ ترحيل 0067";
+  }
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return "جدول push_tokens غير موجود";
   }
@@ -146,7 +151,8 @@ function pushNativeUnavailableError() {
 }
 
 /**
- * Enregistre ou réassocie le token Expo Push du device courant (upsert par expo_push_token).
+ * Enregistre le token Expo du device pour le compte connecté (tous rôles).
+ * L'identité vient de auth.uid() côté RPC, pas du userId passé (garde-fou session).
  */
 export async function registerForPushNotifications(userId, options = {}) {
   const { requestPermission = true } = options;
@@ -201,15 +207,12 @@ export async function registerForPushNotifications(userId, options = {}) {
       return { ok: false, error: tokenRes.error };
     }
 
-    const { error } = await supabase.from("push_tokens").upsert(
-      {
-        user_id: userId,
-        expo_push_token: tokenRes.token,
-        platform: Platform.OS,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "expo_push_token" }
-    );
+    // RPC SECURITY DEFINER : réattribue le token si un autre compte l'avait
+    // (upsert client bloqué par RLS USING sur l'ancienne ligne).
+    const { error } = await supabase.rpc("upsert_push_token", {
+      p_token: tokenRes.token,
+      p_platform: Platform.OS,
+    });
 
     if (error) {
       return { ok: false, error: mapPushTokensError(error) };
@@ -263,6 +266,73 @@ export async function unregisterPushNotifications(userId) {
     console.warn("[push] unregisterPushNotifications:", e?.message || e);
     return { ok: false, error: e?.message || "تعذر إلغاء الإشعارات" };
   }
+}
+
+function extractNotificationPayload(notification) {
+  const data = notification?.request?.content?.data;
+  if (data && typeof data === "object") return data;
+  return {};
+}
+
+function notificationResponseKey(notification) {
+  return (
+    notification?.request?.identifier ||
+    notification?.date ||
+    JSON.stringify(notification?.request?.content?.data || {})
+  );
+}
+
+const consumedResponseKeys = new Set();
+
+/**
+ * Tap d'une notification (arrière-plan / tuée) + écoute des réponses suivantes.
+ * getLastNotificationResponseAsync reste collé : on ne le rejoue qu'une fois par id.
+ * @param {(payload: object) => void} onResponse
+ * @returns {() => void}
+ */
+export function subscribeNotificationResponses(onResponse) {
+  if (typeof onResponse !== "function") {
+    return () => {};
+  }
+
+  let subscription = null;
+  let cancelled = false;
+
+  const emit = (notification) => {
+    if (!notification) return;
+    const key = String(notificationResponseKey(notification));
+    if (key && consumedResponseKeys.has(key)) return;
+    if (key) consumedResponseKeys.add(key);
+    onResponse(extractNotificationPayload(notification));
+  };
+
+  (async () => {
+    const modules = await loadPushModules();
+    if (!modules || cancelled) return;
+    const Notifications = modules.notifications;
+
+    try {
+      const last = await Notifications.getLastNotificationResponseAsync();
+      if (last?.notification) {
+        emit(last.notification);
+      }
+    } catch (e) {
+      console.warn("[push] getLastNotificationResponseAsync:", e?.message || e);
+    }
+
+    subscription = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        emit(response?.notification);
+      }
+    );
+  })();
+
+  return () => {
+    cancelled = true;
+    if (subscription) {
+      subscription.remove();
+    }
+  };
 }
 
 export async function getPushNotificationsToggleState(userId) {

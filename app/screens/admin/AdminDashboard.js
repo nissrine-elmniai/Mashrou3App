@@ -18,6 +18,7 @@ import {
   Activity,
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getSeasonDashboardStats } from "../../lib/saisonsApi";
@@ -393,6 +394,12 @@ export default function AdminDashboard({ navigation }) {
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
+        />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
         />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}

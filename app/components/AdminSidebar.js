@@ -25,12 +25,14 @@ import {
   LogOut,
   BarChart3,
   User,
+  Inbox,
 } from "lucide-react-native";
 import { useApp } from "../context/AppContext";
 import { ROLE_LABELS } from "../constants/roles";
 import { rtlText, row, isRTL } from "../constants/rtl";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
+import { useUnreadNotifications } from "../hooks/useUnreadNotifications";
 import AdminMessagesFab from "./AdminMessagesFab";
 import ProfileAvatar from "./ProfileAvatar";
 
@@ -55,6 +57,7 @@ const MENU_ITEMS = [
   { id: "tests", label: "الاختبارات", icon: ClipboardList },
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
   { id: "notifications", label: "التنبيهات", icon: Bell },
+  { id: "inbox", label: "الإشعارات", icon: Inbox },
   { id: "chat", label: "المحادثات", icon: MessageSquare },
   { id: "profile", label: "الملف الشخصي", icon: User },
 ];
@@ -69,6 +72,7 @@ const ROUTE_MAP = {
   tests: "AdminTests",
   stats: "AdminStats",
   notifications: "AdminNotifications",
+  inbox: "NotificationInbox",
   chat: "AdminChat",
   profile: "AdminProfile",
 };
@@ -85,6 +89,7 @@ export function AdminSidebar({
   const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
+  const { count: inboxUnread } = useUnreadNotifications();
 
   useEffect(() => {
     if (isOpen) {
@@ -215,6 +220,13 @@ export function AdminSidebar({
                     <View style={sbStyles.unreadBadge}>
                       <Text style={sbStyles.unreadBadgeText}>
                         {formatUnreadBadge(unreadTotal)}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {item.id === "inbox" && inboxUnread > 0 ? (
+                    <View style={sbStyles.unreadBadge}>
+                      <Text style={sbStyles.unreadBadgeText}>
+                        {formatUnreadBadge(inboxUnread)}
                       </Text>
                     </View>
                   ) : null}

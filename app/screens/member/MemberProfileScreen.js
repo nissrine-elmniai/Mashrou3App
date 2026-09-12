@@ -31,6 +31,7 @@ import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
+import ProfileNotificationsCard from "../../components/profile/ProfileNotificationsCard";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
@@ -326,6 +327,10 @@ export default function MemberProfileScreen({ navigation }) {
           <AttendanceCard
             key={`${authId || ""}_${sessionState.seanceId || ""}`}
             presenceState={presenceState}
+          />
+
+          <ProfileNotificationsCard
+            onPress={() => navigation.navigate("NotificationSettings")}
           />
         </View>
       </ScrollView>

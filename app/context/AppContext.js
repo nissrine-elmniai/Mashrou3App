@@ -185,17 +185,14 @@ function applySupabaseSessionRole(appUser, profile, local, preferredRole) {
   };
 }
 
-function maybeRefreshSupervisorPushRegistration(userId, role) {
-  if (role !== ROLES.SUPERVISOR || !userId) return;
+function maybeRegisterSessionPush(userId, { requestPermission = false } = {}) {
+  if (!userId) return;
   import("../lib/pushNotifications")
-    .then(({ refreshPushRegistrationIfEnabled }) =>
-      refreshPushRegistrationIfEnabled(userId)
+    .then(({ registerForPushNotifications }) =>
+      registerForPushNotifications(userId, { requestPermission })
     )
     .catch((e) => {
-      console.warn(
-        "[push] maybeRefreshSupervisorPushRegistration:",
-        e?.message || e
-      );
+      console.warn("[push] maybeRegisterSessionPush:", e?.message || e);
     });
 }
 
@@ -286,10 +283,9 @@ export function AppProvider({ children }) {
               null
             );
             setSupabaseSession(sessionResult.session);
-            maybeRefreshSupervisorPushRegistration(
-              profileResult.profile.id,
-              restored.role
-            );
+            maybeRegisterSessionPush(profileResult.profile.id, {
+              requestPermission: false,
+            });
           }
         }
       } else if (saved?.currentUserId) {
@@ -505,7 +501,7 @@ export function AppProvider({ children }) {
         preferredRole
       );
       setCurrentUser(sessionUser);
-      maybeRefreshSupervisorPushRegistration(profile.id, sessionUser.role);
+      maybeRegisterSessionPush(profile.id, { requestPermission: true });
       return {
         ok: true,
         user: sessionUser,
@@ -542,6 +538,17 @@ export function AppProvider({ children }) {
   };
 
   const logout = async () => {
+    const authId = supabaseSession?.user?.id || currentUser?.authId || null;
+    if (authId) {
+      try {
+        const { unregisterPushNotifications } = await import(
+          "../lib/pushNotifications"
+        );
+        await unregisterPushNotifications(authId);
+      } catch (e) {
+        console.warn("[push] unregister on logout:", e?.message || e);
+      }
+    }
     // Vider la session locale d'abord pour éviter que LoginScreen
     // redirige vers le dashboard tant que signOutAuth n'a pas fini.
     skipNextSave.current = true;

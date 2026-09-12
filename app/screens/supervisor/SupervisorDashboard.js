@@ -14,6 +14,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import ProfileAvatar from "../../components/ProfileAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import {
@@ -171,6 +172,7 @@ export default function SupervisorDashboard({ navigation }) {
               <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={22} color="white" />
               </TouchableOpacity>
+              <InboxHeaderButton navigation={navigation} color="white" />
               <TouchableOpacity
                 style={styles.headerIconWrap}
                 onPress={openAlerts}
