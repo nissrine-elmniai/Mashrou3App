@@ -223,11 +223,6 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
         <Stack.Screen
-          name="AdminSettings"
-          getComponent={() => require("./app/screens/admin/AdminSettingsScreen").default}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
           name="AdminMembers"
           getComponent={() => require("./app/screens/admin/AdminMembersScreen").default}
           options={{ headerShown: false }}

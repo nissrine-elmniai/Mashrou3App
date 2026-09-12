@@ -96,6 +96,22 @@ const AppContext = createContext(null);
 const uid = (prefix) =>
   `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
+/** Première occurrence par `id` — évite seed + cache / double append. */
+function uniqSeasonsById(list = []) {
+  const seen = new Set();
+  const out = [];
+  (list || []).forEach((season) => {
+    const id = season?.id;
+    if (id != null && String(id) !== "") {
+      const key = String(id);
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
+    out.push(season);
+  });
+  return out;
+}
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10).replace(/-/g, "/");
 }
@@ -225,7 +241,7 @@ export function AppProvider({ children }) {
             ? saved.seasons
             : bootstrapSeasons;
         setUsers(loadedUsers);
-        setSeasons(loadedSeasons);
+        setSeasons(uniqSeasonsById(loadedSeasons));
         setRegistrations(saved.registrations || []);
         setGroups(saved.groups || []);
         setProgress(saved.progress || []);
@@ -239,7 +255,7 @@ export function AppProvider({ children }) {
         );
       } else {
         setUsers(loadedUsers);
-        setSeasons(loadedSeasons);
+        setSeasons(uniqSeasonsById(loadedSeasons));
         setMemberPrograms(migrateMemberPrograms(emptyState.memberPrograms || []));
       }
 
@@ -248,7 +264,7 @@ export function AppProvider({ children }) {
           (loadedSeasons || []).map(withIsoSeasonDates)
         );
         if (seasonSync.ok && seasonSync.seasons) {
-          setSeasons(seasonSync.seasons);
+          setSeasons(uniqSeasonsById(seasonSync.seasons));
         }
       }
 
@@ -545,9 +561,60 @@ export function AppProvider({ children }) {
   const logout = async () => {
     // Vider la session locale d'abord pour éviter que LoginScreen
     // redirige vers le dashboard tant que signOutAuth n'a pas fini.
+    skipNextSave.current = true;
     setCurrentUser(null);
     setSupabaseSession(null);
+    // Purge des listes liées à la session (pas de resetToSeedData).
+    setUsers([]);
+    setRegistrations([]);
+    setGroups([]);
+    setProgress([]);
+    setAttendance([]);
+    setExams([]);
+    setNotifications([]);
+    setMemberPrograms([]);
+    await clearAppState();
     await signOutAuth();
+  };
+
+  /** Recharge currentUser depuis profiles (focus profil, après édition). Erreur → no-op. */
+  const refreshCurrentUser = async () => {
+    const authId = currentUser?.authId || supabaseSession?.user?.id;
+    if (!authId || !isSupabaseConfigured()) {
+      return { ok: false };
+    }
+    try {
+      const profileResult = await fetchProfile(authId);
+      if (!profileResult.ok || !profileResult.profile) {
+        return { ok: false, error: profileResult.error };
+      }
+      const local =
+        users.find((u) => u.authId === authId) ||
+        users.find((u) => u.id === currentUser?.id) ||
+        currentUser ||
+        {};
+      const appUser = profileToAppUser(profileResult.profile, local);
+      if (local?.id) appUser.id = local.id;
+      const sessionUser = applySupabaseSessionRole(
+        appUser,
+        profileResult.profile,
+        local,
+        currentUser?.role
+      );
+      setCurrentUser(sessionUser);
+      setUsers((prev) => {
+        const idx = prev.findIndex(
+          (u) => u.authId === authId || u.id === sessionUser.id
+        );
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...sessionUser, id: next[idx].id };
+        return next;
+      });
+      return { ok: true, user: sessionUser };
+    } catch {
+      return { ok: false };
+    }
   };
 
   /** Dev only: efface AsyncStorage et remet l'état sur les données de seed.js */
@@ -750,7 +817,7 @@ export function AppProvider({ children }) {
             : s
         );
       }
-      return next;
+      return uniqSeasonsById(next);
     });
 
     if (isSupabaseConfigured()) {
@@ -816,7 +883,7 @@ export function AppProvider({ children }) {
           ? { ...s, registrationOpen: false, active: false }
           : s
       );
-      return [...closed, season];
+      return uniqSeasonsById([...closed, season]);
     });
 
     if (isSupabaseConfigured()) {
@@ -2686,6 +2753,7 @@ export function AppProvider({ children }) {
     isSupabaseConfigured: isSupabaseConfigured(),
     login,
     logout,
+    refreshCurrentUser,
     resetToSeedData,
     registerAccount,
     submitMemberApplication,

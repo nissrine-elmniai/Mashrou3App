@@ -127,18 +127,6 @@ export default function AdminMembersScreen({ navigation }) {
         if (cancelled) return;
         if (profRes.ok) {
           setProfiles(profRes.members);
-          const rows = profRes.members || [];
-          const withUrl = rows.filter((m) => m.avatar_url).length;
-          console.log(
-            "[AdminMembers] profiles=",
-            rows.length,
-            "avatar_url=",
-            withUrl,
-            "sampleId=",
-            rows[0]?.id || null,
-            "sampleAvatar=",
-            rows[0]?.avatar_url || null
-          );
         } else {
           console.warn("[AdminMembers] getMemberProfiles failed:", profRes.error);
         }
@@ -225,7 +213,13 @@ export default function AdminMembersScreen({ navigation }) {
           seasonVersion: currentSeason?.version ?? null,
           supervisorId: seance?.superviseur_id || null,
           supervisorName: supervisorName(seance?.superviseur),
-          versionLabels: memberSeasons.map(seasonVersionLabel).filter(Boolean),
+          versionPills: memberSeasons
+            .map((season, index) => ({
+              id: season.id,
+              label: seasonVersionLabel(season),
+              index,
+            }))
+            .filter((pill) => pill.label),
           filterKeys,
           groupSchedule: formatSeanceScheduleLabel(seance),
           registrationDate:
@@ -472,9 +466,12 @@ function MemberCard({ member, onPress, avatarNonce }) {
               </Text>
             </View>
             <Text style={styles.sessionText}>{member.session}</Text>
-            {member.versionLabels.map((label) => (
-              <View key={label} style={styles.versionPill}>
-                <Text style={styles.versionPillText}>{label}</Text>
+            {member.versionPills.map((pill) => (
+              <View
+                key={pill.id ?? `${pill.label}-${pill.index}`}
+                style={styles.versionPill}
+              >
+                <Text style={styles.versionPillText}>{pill.label}</Text>
               </View>
             ))}
           </View>
