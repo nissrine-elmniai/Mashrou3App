@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -10,7 +10,6 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import ProfileAvatar from "../../components/ProfileAvatar";
@@ -20,7 +19,6 @@ import {
   useSupervisorMembers,
   SUPERVISOR_FETCH_DEGRADED_MESSAGE,
 } from "./hooks/useSupervisorMembers";
-import { getUnacknowledgedAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 
 import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
@@ -59,7 +57,6 @@ export default function SupervisorDashboard({ navigation }) {
 
   const [tab, setTab] = useState("home");
   const [selectedGroupId, setSelectedGroupId] = useState(null);
-  const [pendingAlertCount, setPendingAlertCount] = useState(0);
 
   const {
     myGroups,
@@ -119,23 +116,6 @@ export default function SupervisorDashboard({ navigation }) {
   const showDegradedBanner = !!fetchError;
   const degradedMessage = SUPERVISOR_FETCH_DEGRADED_MESSAGE;
 
-  // Compte non-acquitté centralisé (RG9) : absence de alert_acknowledgments.alert_id.
-  const loadPendingAlertCount = useCallback(async () => {
-    const res = await getUnacknowledgedAlerts();
-    if (res.ok) setPendingAlertCount(res.alerts.length);
-  }, []);
-
-  useEffect(() => {
-    loadPendingAlertCount();
-    return subscribeToNewAlerts(() => loadPendingAlertCount());
-  }, [loadPendingAlertCount]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadPendingAlertCount();
-    }, [loadPendingAlertCount])
-  );
-
   useEffect(() => {
     registerSupervisorAttendanceSaved(refetch);
     return () => unregisterSupervisorAttendanceSaved();
@@ -179,13 +159,6 @@ export default function SupervisorDashboard({ navigation }) {
                 accessibilityLabel="تنبيهات الإدارة"
               >
                 <Ionicons name="notifications-outline" size={22} color="white" />
-                {pendingAlertCount > 0 ? (
-                  <View style={styles.headerBellBadge}>
-                    <Text style={styles.headerBellBadgeText}>
-                      {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
-                    </Text>
-                  </View>
-                ) : null}
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.profileBtn}

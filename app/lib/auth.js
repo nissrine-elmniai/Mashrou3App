@@ -330,6 +330,14 @@ export async function signInWithEmailPassword(email, password) {
       error: "الحساب غير مفعّل بعد — أنشئ كلمة المرور من شاشة إنشاء الحساب",
     };
   }
+  if (profileResult.profile.account_status === ACCOUNT_STATUS.INACTIVE) {
+    await supabase.auth.signOut();
+    return {
+      ok: false,
+      error:
+        "هذا الحساب معطّل بعد انتهاء الموسم السابق. تواصل مع الإدارة لإعادة تفعيله في الموسم الجديد.",
+    };
+  }
   return {
     ok: true,
     session: data.session,

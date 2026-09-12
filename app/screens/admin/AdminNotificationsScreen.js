@@ -18,6 +18,7 @@ import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row } from "../../constants/rtl";
 import { sendAlert, getAllAlertsAdmin } from "../../lib/alertsApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
@@ -57,7 +58,8 @@ const AUDIENCE_LABELS = {
 
 export default function AdminNotificationsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "notifications");
-  const { currentUser, stats } = useApp();
+  const { currentUser, stats, seasons } = useApp();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
 
@@ -72,6 +74,7 @@ export default function AdminNotificationsScreen({ navigation }) {
 
   const pendingCount = stats?.pendingRegs ?? 0;
 
+  // Admin : toutes les saisons (historique conservé). Filtre optionnel = saison active.
   const loadHistory = useCallback(async () => {
     const res = await getAllAlertsAdmin();
     if (res.ok) setHistory(res.alerts);
@@ -106,7 +109,9 @@ export default function AdminNotificationsScreen({ navigation }) {
       return;
     }
     setSending(true);
-    const result = await sendAlert(alertText.trim(), audience);
+    const result = await sendAlert(alertText.trim(), audience, {
+      saisonId: activeSeasonId,
+    });
     setSending(false);
     if (!result.ok) {
       Alert.alert("فشل الإرسال", result.error);
@@ -144,13 +149,6 @@ export default function AdminNotificationsScreen({ navigation }) {
           hitSlop={12}
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
-          {pendingCount > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {pendingCount > 9 ? "9+" : pendingCount}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 
@@ -266,6 +264,12 @@ export default function AdminNotificationsScreen({ navigation }) {
                 <View style={styles.historyMeta}>
                   <Text style={styles.historyDate}>
                     {formatTime(item.createdAt)}
+                    {item.saisonId
+                      ? ` · ${
+                          seasons.find((s) => s.id === item.saisonId)?.name ||
+                          "موسم"
+                        }`
+                      : ""}
                   </Text>
                   <Text style={styles.historyAck}>
                     قرأها {item.ackCount} من المستهدفين

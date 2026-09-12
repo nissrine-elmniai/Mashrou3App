@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
@@ -22,8 +23,10 @@ import {
   rtlTextBold,
   fonts,
   arrowBack,
+  row,
   row as rtlRow,
   textAlignStart,
+  isRTL,
 } from "../../constants/rtl";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
@@ -36,6 +39,7 @@ import {
   getMyProgress,
   latestProgressionRow,
 } from "../../lib/progressApi";
+import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
 import {
   getMyObjectif,
   parseObjectifInput,
@@ -128,8 +132,16 @@ export default function MemberProgressScreen({ navigation }) {
     const season = getActiveRegularSeason(seasons);
     const activeSaisonId = season?.id ?? null;
     const startIso = seasonStartDateIso(season);
+    const cutoffRes =
+      authId && activeSaisonId
+        ? await resolveMemberSeasonAlertCutoff(authId, activeSaisonId)
+        : { ok: true, sinceIso: null };
+    const sinceIso = cutoffRes.sinceIso || startIso || null;
     const [res, objRes, departRes] = await Promise.all([
-      getMyProgress(),
+      getMyProgress({
+        since: sinceIso || undefined,
+        saisonId: activeSaisonId,
+      }),
       activeSaisonId
         ? getMyObjectif(activeSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
@@ -303,19 +315,31 @@ export default function MemberProgressScreen({ navigation }) {
   }, [goalHizb, objectifRow, entries, seasonStartDepart]);
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-          accessibilityLabel="رجوع"
-        >
-          <Ionicons name={arrowBack} size={22} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>تسجيل التقدم</Text>
-        <View style={styles.headerBtn} />
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <StatusBar style="dark" />
+
+      <View style={styles.headerWrap}>
+        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => navigation.goBack()}
+              hitSlop={8}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="رجوع"
+            >
+              <Ionicons name={arrowBack} size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerTitle}>تسجيل التقدم</Text>
+              <Text style={styles.headerSubtitle}>
+                موضعك في الحفظ لهذا الموسم
+              </Text>
+            </View>
+            <Ionicons name="trending-up" size={22} color="#fff" />
+          </View>
+        </LinearGradient>
       </View>
 
       <KeyboardAvoidingView
@@ -327,18 +351,16 @@ export default function MemberProgressScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-         
-
           {loading ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />
           ) : loadError ? (
             <Text style={styles.errorText}>{loadError}</Text>
           ) : (
             <View style={[styles.card, shadows.card]}>
-               <Text style={styles.lead}>
-            هذا مقدار حفظك الكامل في القرآن الكريم، مستقل عن برامج الحفظ
-            والمراجعة. يمكنك تصحيحه في أي وقت.
-          </Text>
+              <Text style={styles.lead}>
+                هذا مقدار حفظك الكامل في القرآن الكريم، مستقل عن برامج الحفظ
+                والمراجعة. يمكنك تصحيحه في أي وقت.
+              </Text>
               <View style={styles.fieldsRow}>
                 <View style={styles.fieldCol}>
                   <Text style={styles.fieldLabel}>الأحزاب المكتملة (0–60)</Text>
@@ -474,39 +496,61 @@ export default function MemberProgressScreen({ navigation }) {
   );
 }
 
+const alignEdge = isRTL ? "flex-start" : "flex-end";
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
+  headerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
   header: {
-    flexDirection: rtlRow,
+    borderRadius: radii.lg,
+    overflow: "hidden",
+    paddingTop: 16,
+    paddingBottom: 18,
+    paddingHorizontal: 14,
+  },
+  headerRow: {
+    flexDirection: row,
     alignItems: "center",
-    gap: radii.sm,
-    paddingHorizontal: radii.lg,
-    paddingVertical: radii.md,
-    backgroundColor: colors.primary,
+    gap: 10,
   },
   headerBtn: {
-    padding: 4,
-    minWidth: 30,
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTitle: {
+  headerTextWrap: {
     flex: 1,
-    color: "white",
-    fontSize: radii.lg,
-    fontFamily: fonts.bold,
-    ...rtlTextBold,
+    alignItems: alignEdge,
   },
-  content: { padding: radii.lg, paddingBottom: radii.xl, gap: radii.md },
-  lead: {
-    fontSize: radii.md,
-    color: colors.muted,
-    fontFamily: fonts.regular,
-    lineHeight: radii.lg + radii.sm,
+  headerTitle: {
+    color: "#fff",
+    fontSize: 18,
+    fontFamily: fonts.bold,
     ...rtlText,
   },
-  loader: { marginVertical: radii.lg },
+  headerSubtitle: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 12,
+    marginTop: 4,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  content: { padding: 16, paddingBottom: 40, gap: 12 },
+  lead: {
+    fontSize: 14,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    lineHeight: 22,
+    marginBottom: 12,
+    ...rtlText,
+  },
+  loader: { marginVertical: 24 },
   errorText: {
     color: colors.red,
     fontFamily: fonts.regular,
@@ -514,98 +558,100 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.card,
-    borderRadius: radii.xl,
-    padding: radii.lg,
+    borderRadius: radii.lg,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
   },
   fieldsRow: {
     flexDirection: rtlRow,
     alignItems: "flex-start",
-    gap: radii.md,
-    marginBottom: radii.sm,
+    gap: 12,
+    marginBottom: 8,
   },
   fieldCol: { flex: 1, minWidth: 0 },
   fieldLabel: {
-    fontSize: radii.md,
+    fontSize: 13,
     fontFamily: fonts.regular,
     color: colors.muted,
-    marginBottom: radii.sm,
+    marginBottom: 8,
     ...rtlText,
   },
   input: {
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radii.md,
-    paddingHorizontal: radii.md,
-    paddingVertical: radii.sm,
-    marginBottom: radii.md,
-    fontSize: radii.lg,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    fontSize: 16,
     color: colors.text,
     backgroundColor: colors.bg,
     fontFamily: fonts.semiBold,
     ...rtlText,
   },
   notesInput: {
-    minHeight: radii.xl * 3 + radii.md,
+    minHeight: 88,
     textAlignVertical: "top",
     fontFamily: fonts.regular,
   },
   saveBtn: {
     backgroundColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: 6,
-    paddingHorizontal: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     alignItems: "center",
   },
   saveBtnDisabled: { opacity: 0.7 },
   saveBtnText: {
     color: "white",
     fontFamily: fonts.bold,
-    fontSize: radii.lg,
+    fontSize: 16,
     ...rtlText,
   },
   historyTitle: {
     fontFamily: fonts.semiBold,
-    fontSize: radii.lg,
+    fontSize: 16,
     color: colors.text,
-    marginBottom: radii.sm,
+    marginBottom: 8,
     ...rtlTextBold,
   },
   objectifHint: {
-    fontSize: radii.md,
+    fontSize: 13,
     color: colors.muted,
     fontFamily: fonts.regular,
-    marginBottom: radii.md,
-    lineHeight: radii.lg + radii.sm,
+    marginBottom: 12,
+    lineHeight: 20,
     ...rtlText,
   },
   objectifMeaning: {
     fontSize: 13,
     color: colors.text,
     fontFamily: fonts.regular,
-    marginTop: -radii.sm,
-    marginBottom: radii.md,
-    lineHeight: radii.lg + 2,
+    marginTop: -4,
+    marginBottom: 12,
+    lineHeight: 20,
     ...rtlText,
   },
   objectifSuggestHint: {
     fontSize: 12,
     color: colors.muted,
     fontFamily: fonts.regular,
-    marginTop: -radii.sm,
-    marginBottom: radii.md,
-    lineHeight: radii.lg,
+    marginTop: -4,
+    marginBottom: 12,
+    lineHeight: 18,
     ...rtlText,
   },
   hizbSuggestHint: {
     fontSize: 12,
     color: colors.muted,
     fontFamily: fonts.regular,
-    marginTop: -radii.sm,
-    marginBottom: radii.md,
-    lineHeight: radii.lg,
+    marginTop: -4,
+    marginBottom: 12,
+    lineHeight: 18,
     ...rtlText,
   },
-  historyRow: { paddingVertical: radii.sm },
+  historyRow: { paddingVertical: 8 },
   historyRowBorder: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
@@ -614,23 +660,23 @@ const styles = StyleSheet.create({
     flexDirection: rtlRow,
     alignItems: "baseline",
     justifyContent: "space-between",
-    gap: radii.sm,
+    gap: 8,
   },
   historyMeta: {
-    fontSize: radii.md,
+    fontSize: 13,
     color: colors.muted,
     fontFamily: fonts.regular,
     ...rtlText,
   },
   historyBody: {
     flex: 1,
-    fontSize: radii.md,
+    fontSize: 14,
     color: colors.text,
     fontFamily: fonts.semiBold,
     ...rtlText,
   },
   historyNote: {
-    fontSize: radii.md,
+    fontSize: 13,
     color: colors.muted,
     marginTop: 2,
     ...rtlText,

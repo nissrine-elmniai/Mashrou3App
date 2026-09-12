@@ -232,13 +232,6 @@ export default function AdminSettingsScreen({ navigation }) {
           hitSlop={12}
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
-          {pendingCount > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {pendingCount > 9 ? "9+" : pendingCount}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 

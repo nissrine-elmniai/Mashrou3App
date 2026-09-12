@@ -32,29 +32,48 @@ function mapSenderInitial(row) {
 }
 
 const ALERTS_SENDER_SELECT =
-  "id, message, title, body, audience, created_at, created_by, sender:profiles!created_by(first_name, last_name, avatar_url)";
+  "id, message, title, body, audience, created_at, created_by, saison_id, sender:profiles!created_by(first_name, last_name, avatar_url)";
 
 const ALERTS_SENDER_SELECT_FALLBACK =
+  "id, message, title, body, audience, created_at, created_by, saison_id";
+
+const ALERTS_SENDER_SELECT_NO_SAISON =
+  "id, message, title, body, audience, created_at, created_by, sender:profiles!created_by(first_name, last_name, avatar_url)";
+
+const ALERTS_SENDER_SELECT_NO_SAISON_FALLBACK =
   "id, message, title, body, audience, created_at, created_by";
 
 async function fetchAlertsWithSender(queryBuilder) {
   let res = await withTimeout(queryBuilder(ALERTS_SENDER_SELECT), SUPABASE_TIMEOUT_MS, "قراءة التنبيهات");
   if (
     res.error &&
-    /relationship|PGRST200|Could not find|avatar_url/i.test(res.error.message || "")
+    /saison_id|column.*does not exist/i.test(res.error.message || "")
   ) {
     res = await withTimeout(
-      queryBuilder(ALERTS_SENDER_SELECT.replace(", avatar_url", "")),
+      queryBuilder(ALERTS_SENDER_SELECT_NO_SAISON),
       SUPABASE_TIMEOUT_MS,
       "قراءة التنبيهات"
     );
   }
   if (
     res.error &&
-    /relationship|PGRST200|Could not find/i.test(res.error.message || "")
+    /relationship|PGRST200|Could not find|avatar_url/i.test(res.error.message || "")
+  ) {
+    const clause = /saison_id|column.*does not exist/i.test(res.error.message || "")
+      ? ALERTS_SENDER_SELECT_NO_SAISON_FALLBACK
+      : ALERTS_SENDER_SELECT.replace(", avatar_url", "");
+    res = await withTimeout(
+      queryBuilder(clause),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+  }
+  if (
+    res.error &&
+    /relationship|PGRST200|Could not find|saison_id/i.test(res.error.message || "")
   ) {
     res = await withTimeout(
-      queryBuilder(ALERTS_SENDER_SELECT_FALLBACK),
+      queryBuilder(ALERTS_SENDER_SELECT_NO_SAISON_FALLBACK),
       SUPABASE_TIMEOUT_MS,
       "قراءة التنبيهات"
     );
@@ -69,6 +88,7 @@ function mapAlertRow(a) {
     message: a.message || a.body || a.title || "",
     audience: a.audience,
     createdAt: a.created_at,
+    saisonId: a.saison_id || null,
     senderId,
     senderName: mapSenderName(a),
     senderAvatarUrl: resolvePublicAvatarUrl(senderId, mapSenderAvatar(a)),
@@ -104,9 +124,173 @@ async function currentAuthId() {
 }
 
 /**
- * Date/heure d'inscription du membre (notifications + dernières activités).
- * Priorité : première inscription acceptée → profil.created_at.
- * @returns { ok, sinceIso }
+ * Date/heure d'inscription du membre pour UNE saison (notifications + activités).
+ * Priorité : inscription acceptée de cette saison → demande activée → null.
+ * @returns { ok, sinceIso, saisonId }
+ */
+export async function resolveMemberSeasonAlertCutoff(authId = null, saisonId = null) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, sinceIso: null, saisonId: saisonId || null };
+  }
+  const membreId = authId || (await currentAuthId());
+  const season = String(saisonId || "").trim() || null;
+  if (!membreId || !season) {
+    return { ok: true, sinceIso: null, saisonId: season };
+  }
+
+  try {
+    let inscRes = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select("date_inscription, created_at, saison_id")
+        .eq("membre_id", membreId)
+        .eq("saison_id", season)
+        .eq("statut", "accepte")
+        .order("date_inscription", { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تاريخ التسجيل للموسم"
+    );
+
+    if (
+      inscRes.error &&
+      /date_inscription|column.*does not exist/i.test(inscRes.error.message || "")
+    ) {
+      inscRes = await withTimeout(
+        supabase
+          .from("inscriptions")
+          .select("created_at, saison_id")
+          .eq("membre_id", membreId)
+          .eq("saison_id", season)
+          .eq("statut", "accepte")
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة تاريخ التسجيل للموسم"
+      );
+    }
+
+    if (!inscRes.error && inscRes.data) {
+      const since =
+        inscRes.data.date_inscription || inscRes.data.created_at || null;
+      if (since) {
+        return { ok: true, sinceIso: since, saisonId: season };
+      }
+    }
+
+    // Repli : demande d'inscription / renouvellement activée pour cette saison
+    const { data: appRow } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("activated_at, accepted_at, created_at, season_id, status")
+        .eq("user_id", membreId)
+        .eq("season_id", season)
+        .in("status", ["activated", "invited"])
+        .order("activated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة طلب التسجيل للموسم"
+    );
+    if (appRow) {
+      const since =
+        appRow.activated_at || appRow.accepted_at || appRow.created_at || null;
+      if (since) {
+        return { ok: true, sinceIso: since, saisonId: season };
+      }
+    }
+
+    return { ok: true, sinceIso: null, saisonId: season };
+  } catch (e) {
+    return { ok: false, sinceIso: null, saisonId: season, error: e?.message };
+  }
+}
+
+/**
+ * Date d'activation / affectation du superviseur pour UNE saison.
+ * Priorité : invitation activated (updated_at) → séance active de la saison.
+ */
+export async function resolveSupervisorSeasonAlertCutoff(
+  authId = null,
+  saisonId = null
+) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, sinceIso: null, saisonId: saisonId || null };
+  }
+  const supervisorId = authId || (await currentAuthId());
+  const season = String(saisonId || "").trim() || null;
+  if (!supervisorId || !season) {
+    return { ok: true, sinceIso: null, saisonId: season };
+  }
+
+  try {
+    const { data: profile } = await withTimeout(
+      supabase
+        .from("profiles")
+        .select("email, canonical_email")
+        .eq("id", supervisorId)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة ملف المشرف"
+    );
+    const mail = String(
+      profile?.canonical_email || profile?.email || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    if (mail) {
+      const { data: inv } = await withTimeout(
+        supabase
+          .from("supervisor_invitations")
+          .select("updated_at, created_at, status, saison_id")
+          .ilike("email", mail)
+          .eq("saison_id", season)
+          .eq("status", "activated")
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة دعوة المشرف للموسم"
+      );
+      if (inv) {
+        const since = inv.updated_at || inv.created_at || null;
+        if (since) {
+          return { ok: true, sinceIso: since, saisonId: season };
+        }
+      }
+    }
+
+    const { data: seance } = await withTimeout(
+      supabase
+        .from("seances")
+        .select("created_at, updated_at, saison_id")
+        .eq("superviseur_id", supervisorId)
+        .eq("saison_id", season)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة حصة المشرف للموسم"
+    );
+    if (seance) {
+      const since = seance.created_at || seance.updated_at || null;
+      if (since) {
+        return { ok: true, sinceIso: since, saisonId: season };
+      }
+    }
+
+    return { ok: true, sinceIso: null, saisonId: season };
+  } catch (e) {
+    return { ok: false, sinceIso: null, saisonId: season, error: e?.message };
+  }
+}
+
+/**
+ * Cutoff global (compat) : première inscription acceptée toutes saisons.
+ * Préférer resolveMemberSeasonAlertCutoff pour le produit saisonnier.
  */
 export async function resolveMemberAlertCutoff(authId = null) {
   if (!isSupabaseConfigured()) {
@@ -131,7 +315,6 @@ export async function resolveMemberAlertCutoff(authId = null) {
       "قراءة تاريخ التسجيل"
     );
 
-    // Colonne date_inscription absente → repli created_at
     if (
       inscRes.error &&
       /date_inscription|column.*does not exist/i.test(inscRes.error.message || "")
@@ -191,22 +374,64 @@ function filterAlertsSince(alerts, sinceIso) {
 }
 
 /**
- * Alertes non encore acquittées par l'utilisateur connecté, dans l'ordre
- * FIFO (la plus ancienne d'abord — à afficher en premier par la passerelle
- * bloquante). La RLS n'expose que les alertes dont l'audience couvre le rôle
- * de l'appelant (0014).
- * @param {{ sinceMemberRegistration?: boolean }} [options]
- * @returns { ok, alerts: [] }
+ * Filtre saison + date d'inscription :
+ * 1) même saison (les alertes sans saison_id sont exclues si saisonId fourni)
+ * 2) created_at >= sinceIso
+ * Si pas encore inscrit (sinceIso null) → liste vide.
+ */
+function filterAlertsForSeasonScope(alerts, { saisonId = null, sinceIso = null } = {}) {
+  const season = String(saisonId || "").trim() || null;
+  if (season && !sinceIso) {
+    return [];
+  }
+  let list = alerts || [];
+  if (season) {
+    list = list.filter((a) => {
+      const aSeason = a.saisonId || a.saison_id || null;
+      return aSeason === season;
+    });
+  }
+  return filterAlertsSince(list, sinceIso);
+}
+
+async function resolveScopedCutoff(options = {}) {
+  const saisonId = String(options.saisonId || "").trim() || null;
+  const scopeToCurrentSeason = !!options.scopeToCurrentSeason || !!saisonId;
+  const role = options.role || "member";
+
+  if (!scopeToCurrentSeason) {
+    if (options.sinceMemberRegistration) {
+      return resolveMemberAlertCutoff(options.authId || null);
+    }
+    return { ok: true, sinceIso: null, saisonId: null };
+  }
+
+  if (role === "supervisor") {
+    return resolveSupervisorSeasonAlertCutoff(options.authId || null, saisonId);
+  }
+  return resolveMemberSeasonAlertCutoff(options.authId || null, saisonId);
+}
+
+/**
+ * Alertes non encore acquittées (FIFO). Filtrage optionnel saison + date d'inscription.
+ * @param {{
+ *   sinceMemberRegistration?: boolean,
+ *   scopeToCurrentSeason?: boolean,
+ *   saisonId?: string|null,
+ *   role?: 'member'|'supervisor',
+ *   authId?: string|null,
+ * }} [options]
  */
 export async function getUnacknowledgedAlerts(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const sinceMemberRegistration = !!options.sinceMemberRegistration;
-    const cutoffPromise = sinceMemberRegistration
-      ? resolveMemberAlertCutoff()
-      : Promise.resolve({ ok: true, sinceIso: null });
+    const saisonId = String(options.saisonId || "").trim() || null;
+    const scoped =
+      !!options.scopeToCurrentSeason ||
+      !!saisonId ||
+      !!options.sinceMemberRegistration;
 
     const [alertsRes, acksRes, cutoff] = await Promise.all([
       fetchAlertsWithSender((selectClause) =>
@@ -217,7 +442,9 @@ export async function getUnacknowledgedAlerts(options = {}) {
         SUPABASE_TIMEOUT_MS,
         "قراءة الإقرارات"
       ),
-      cutoffPromise,
+      scoped
+        ? resolveScopedCutoff(options)
+        : Promise.resolve({ ok: true, sinceIso: null, saisonId: null }),
     ]);
 
     if (alertsRes.error || acksRes.error) {
@@ -232,11 +459,14 @@ export async function getUnacknowledgedAlerts(options = {}) {
       .filter((a) => !acked.has(a.id))
       .map(mapAlertRow);
 
-    if (sinceMemberRegistration) {
-      pending = filterAlertsSince(pending, cutoff.sinceIso);
+    if (scoped) {
+      pending = filterAlertsForSeasonScope(pending, {
+        saisonId: cutoff.saisonId || saisonId,
+        sinceIso: cutoff.sinceIso,
+      });
     }
 
-    return { ok: true, alerts: pending };
+    return { ok: true, alerts: pending, sinceIso: cutoff.sinceIso || null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -274,12 +504,12 @@ export async function acknowledgeAlert(alertId) {
 }
 
 /**
- * (Admin) Émission d'une alerte via le RPC réservé aux admins (0014).
- * @param {string} message texte de l'alerte
- * @param {"all"|"members"|"supervisors"} audience public destinataire
- * @returns { ok }
+ * (Admin) Émission d'une alerte.
+ * @param {string} message
+ * @param {"all"|"members"|"supervisors"} audience
+ * @param {{ saisonId?: string|null }} [options]
  */
-export async function sendAlert(message, audience) {
+export async function sendAlert(message, audience, options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -290,6 +520,7 @@ export async function sendAlert(message, audience) {
   const allowed = ["all", "members", "supervisors"];
   const target = allowed.includes(audience) ? audience : "all";
   const title = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+  const saisonId = String(options.saisonId || "").trim() || null;
   const id =
     (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
       ? globalThis.crypto.randomUUID()
@@ -304,9 +535,9 @@ export async function sendAlert(message, audience) {
       body: text,
       audience: target,
       created_by: authData?.user?.id || null,
+      saison_id: saisonId,
     };
 
-    // Schéma legacy : title + body souvent NOT NULL
     let insertError = (
       await withTimeout(
         supabase.from("alerts").insert(row),
@@ -315,7 +546,17 @@ export async function sendAlert(message, audience) {
       )
     ).error;
 
-    // Si une colonne n'existe pas dans le cache, retenter sans elle
+    if (insertError && /saison_id|column.*does not exist/i.test(insertError.message || "")) {
+      const { saison_id: _s, ...withoutSeason } = row;
+      insertError = (
+        await withTimeout(
+          supabase.from("alerts").insert(withoutSeason),
+          SUPABASE_TIMEOUT_MS,
+          "إرسال التنبيه"
+        )
+      ).error;
+    }
+
     if (insertError && /Could not find the ['"](\w+)['"] column/i.test(insertError.message || "")) {
       const badCol = RegExp.$1;
       const slim = { ...row };
@@ -331,9 +572,11 @@ export async function sendAlert(message, audience) {
 
     if (!insertError) return { ok: true };
 
-    // Repli RPC (après migration 0022)
+    const rpcArgs = saisonId
+      ? { p_message: text, p_audience: target, p_saison_id: saisonId }
+      : { p_message: text, p_audience: target };
     const { error: rpcError } = await withTimeout(
-      supabase.rpc("send_alert", { p_message: text, p_audience: target }),
+      supabase.rpc("send_alert", rpcArgs),
       SUPABASE_TIMEOUT_MS,
       "إرسال التنبيه"
     );
@@ -349,21 +592,39 @@ export async function sendAlert(message, audience) {
 }
 
 /**
- * (Admin) Historique complet des alertes avec nb d'acquittements.
- * @returns { ok, alerts: [{ id, message, audience, created_at, ackCount }] }
+ * (Admin) Historique des alertes. Filtre saison optionnel (null = toutes).
+ * @param {{ saisonId?: string|null }} [options]
  */
-export async function getAllAlertsAdmin() {
+export async function getAllAlertsAdmin(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
+  const saisonId = String(options.saisonId || "").trim() || null;
   try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("alerts")
-        .select("id, message, title, body, audience, created_at"),
+    let query = supabase
+      .from("alerts")
+      .select("id, message, title, body, audience, created_at, saison_id")
+      .order("created_at", { ascending: false });
+    if (saisonId) {
+      query = query.eq("saison_id", saisonId);
+    }
+    let { data, error } = await withTimeout(
+      query,
       SUPABASE_TIMEOUT_MS,
       "قراءة سجل التنبيهات"
     );
+
+    if (error && /saison_id|column.*does not exist/i.test(error.message || "")) {
+      ({ data, error } = await withTimeout(
+        supabase
+          .from("alerts")
+          .select("id, message, title, body, audience, created_at")
+          .order("created_at", { ascending: false }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة سجل التنبيهات"
+      ));
+    }
+
     if (error) {
       return { ok: false, error: mapTableError(error, "alerts") };
     }
@@ -383,6 +644,7 @@ export async function getAllAlertsAdmin() {
           message: a.message || a.body || a.title || "",
           audience: a.audience,
           createdAt: a.created_at,
+          saisonId: a.saison_id || null,
           ackCount: countError ? 0 : count || 0,
         };
       })
@@ -395,31 +657,30 @@ export async function getAllAlertsAdmin() {
 }
 
 /**
- * Alertes visibles par le compte connecté (RLS filtre déjà l'audience).
- * Sert aux listes membre / superviseur.
- * @param {{ sinceMemberRegistration?: boolean, limit?: number }} [options]
- * @returns { ok, alerts }
+ * Alertes visibles (RLS + saison + date d'inscription).
  */
 export async function getVisibleAlerts(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   const limit = Number(options.limit) > 0 ? Number(options.limit) : 20;
-  const sinceMemberRegistration = !!options.sinceMemberRegistration;
+  const saisonId = String(options.saisonId || "").trim() || null;
+  const scoped =
+    !!options.scopeToCurrentSeason ||
+    !!saisonId ||
+    !!options.sinceMemberRegistration;
   try {
-    const cutoffPromise = sinceMemberRegistration
-      ? resolveMemberAlertCutoff()
-      : Promise.resolve({ ok: true, sinceIso: null });
-
     const [result, cutoff] = await Promise.all([
       fetchAlertsWithSender((selectClause) =>
         supabase
           .from("alerts")
           .select(selectClause)
           .order("created_at", { ascending: false })
-          .limit(Math.max(limit, 50))
+          .limit(Math.max(limit, 80))
       ),
-      cutoffPromise,
+      scoped
+        ? resolveScopedCutoff(options)
+        : Promise.resolve({ ok: true, sinceIso: null, saisonId: null }),
     ]);
 
     const { data, error } = result;
@@ -427,44 +688,51 @@ export async function getVisibleAlerts(options = {}) {
       return { ok: false, error: mapTableError(error, "alerts") };
     }
     let alerts = (data || []).map(mapAlertRow);
-    if (sinceMemberRegistration) {
-      alerts = filterAlertsSince(alerts, cutoff.sinceIso);
+    if (scoped) {
+      alerts = filterAlertsForSeasonScope(alerts, {
+        saisonId: cutoff.saisonId || saisonId,
+        sinceIso: cutoff.sinceIso,
+      });
     }
-    return { ok: true, alerts: alerts.slice(0, limit) };
+    return {
+      ok: true,
+      alerts: alerts.slice(0, limit),
+      sinceIso: cutoff.sinceIso || null,
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
 /**
- * Alertes visibles avec statut d'acquittement (alert_acknowledgments.alert_id).
- * @param {{ sinceMemberRegistration?: boolean }} [options]
- * @returns { ok, alerts: [{ id, message, createdAt, senderName, acknowledged }] }
+ * Alertes visibles avec statut d'acquittement.
  */
 export async function getVisibleAlertsWithAckStatus(options = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  const sinceMemberRegistration = !!options.sinceMemberRegistration;
+  const saisonId = String(options.saisonId || "").trim() || null;
+  const scoped =
+    !!options.scopeToCurrentSeason ||
+    !!saisonId ||
+    !!options.sinceMemberRegistration;
   try {
-    const cutoffPromise = sinceMemberRegistration
-      ? resolveMemberAlertCutoff()
-      : Promise.resolve({ ok: true, sinceIso: null });
-
     const [visibleRes, acksRes, cutoff] = await Promise.all([
       fetchAlertsWithSender((selectClause) =>
         supabase
           .from("alerts")
           .select(selectClause)
           .order("created_at", { ascending: false })
-          .limit(50)
+          .limit(80)
       ),
       withTimeout(
         supabase.from("alert_acknowledgments").select("alert_id"),
         SUPABASE_TIMEOUT_MS,
         "قراءة الإقرارات"
       ),
-      cutoffPromise,
+      scoped
+        ? resolveScopedCutoff(options)
+        : Promise.resolve({ ok: true, sinceIso: null, saisonId: null }),
     ]);
 
     if (visibleRes.error || acksRes.error) {
@@ -479,10 +747,13 @@ export async function getVisibleAlertsWithAckStatus(options = {}) {
       ...mapAlertRow(a),
       acknowledged: acked.has(a.id),
     }));
-    if (sinceMemberRegistration) {
-      alerts = filterAlertsSince(alerts, cutoff.sinceIso);
+    if (scoped) {
+      alerts = filterAlertsForSeasonScope(alerts, {
+        saisonId: cutoff.saisonId || saisonId,
+        sinceIso: cutoff.sinceIso,
+      });
     }
-    return { ok: true, alerts };
+    return { ok: true, alerts, sinceIso: cutoff.sinceIso || null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }

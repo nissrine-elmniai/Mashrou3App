@@ -314,13 +314,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
           hitSlop={12}
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
-          {pendingCount > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {pendingCount > 9 ? "9+" : pendingCount}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 
@@ -449,6 +442,9 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 <View style={styles.cardInfo}>
                   <Text style={styles.cardName}>{name || supervisor.email}</Text>
                   <Text style={styles.cardEmail}>{supervisor.email}</Text>
+                  {supervisor.account_status === "inactive" ? (
+                    <Text style={styles.inactiveHint}>معطّل — موسم سابق</Text>
+                  ) : null}
                   <View style={styles.sessionBadge}>
                     <Text style={styles.sessionBadgeText}>
                       {supervisorSessionLabel(supervisor, seances, invitations)}
@@ -759,6 +755,13 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     fontSize: 13,
     marginTop: 2,
+    ...rtlText,
+  },
+  inactiveHint: {
+    color: palette.red,
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: "600",
     ...rtlText,
   },
   cardGroup: {

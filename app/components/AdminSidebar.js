@@ -28,6 +28,10 @@ import {
 } from "lucide-react-native";
 import { useApp } from "../context/AppContext";
 import { rtlText, row, isRTL } from "../constants/rtl";
+import {
+  ADMIN_MENU_TO_CATEGORY,
+  formatMenuBadge,
+} from "../constants/notifications";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
 import AdminMessagesFab from "./AdminMessagesFab";
@@ -49,9 +53,9 @@ const MENU_ITEMS = [
   { id: "supervisors", label: "المشرفون", icon: UserCog },
   { id: "members", label: "الأعضاء", icon: Users },
   { id: "newSeason", label: "انطلاق موسم جديد", icon: CalendarPlus },
-  { id: "registrations", label: "طلبات التسجيل", icon: FileText },
+  { id: "registrations", label: "طلبات الانضمام", icon: FileText },
   { id: "sessions", label: "الحصص", icon: Calendar },
-  { id: "tests", label: "الاختبارات", icon: ClipboardList },
+  { id: "tests", label: "التقييمات", icon: ClipboardList },
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
   { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "chat", label: "المحادثات", icon: MessageSquare },
@@ -80,6 +84,8 @@ export function AdminSidebar({
   onLogout,
   activeItem = "home",
   unreadTotal = 0,
+  menuBadges = {},
+  onMenuPress = null,
 }) {
   const translateX = useRef(new Animated.Value(SIDEBAR_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
@@ -121,6 +127,9 @@ export function AdminSidebar({
   const initial = displayName.charAt(0) || "م";
 
   const handlePress = (id) => {
+    if (typeof onMenuPress === "function") {
+      onMenuPress(id);
+    }
     onClose();
     if (id === activeItem) return;
     const routeName = ROUTE_MAP[id];
@@ -186,6 +195,14 @@ export function AdminSidebar({
             {MENU_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = item.id === activeItem;
+              const badgeCount =
+                item.id === "chat"
+                  ? unreadTotal
+                  : Number(menuBadges[item.id]) || 0;
+              const badgeLabel =
+                item.id === "chat"
+                  ? formatUnreadBadge(badgeCount)
+                  : formatMenuBadge(badgeCount);
               return (
                 <TouchableOpacity
                   key={item.id}
@@ -208,11 +225,9 @@ export function AdminSidebar({
                   >
                     {item.label}
                   </Text>
-                  {item.id === "chat" && unreadTotal > 0 ? (
+                  {badgeLabel ? (
                     <View style={sbStyles.unreadBadge}>
-                      <Text style={sbStyles.unreadBadgeText}>
-                        {formatUnreadBadge(unreadTotal)}
-                      </Text>
+                      <Text style={sbStyles.unreadBadgeText}>{badgeLabel}</Text>
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -263,12 +278,38 @@ export function AdminChatFab({ navigation, hidden = false }) {
 
 export function useAdminSidebar(navigation, activeItem = "home") {
   const [isOpen, setIsOpen] = useState(false);
-  const { currentUser, logout } = useApp();
+  const {
+    currentUser,
+    logout,
+    getMenuBadgeCounts,
+    markCategoryNotificationsRead,
+    notifications,
+  } = useApp();
   const { threads, loading: threadsLoading } = useInboxThreads();
   const unreadTotal = useMemo(
     () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
     [threads]
   );
+
+  const menuBadges = useMemo(() => {
+    const byCategory = getMenuBadgeCounts(currentUser) || {};
+    const mapped = {};
+    Object.entries(ADMIN_MENU_TO_CATEGORY).forEach(([menuId, category]) => {
+      const n = Number(byCategory[category]) || 0;
+      if (n > 0) mapped[menuId] = n;
+    });
+    return mapped;
+  }, [currentUser, getMenuBadgeCounts, notifications]);
+
+  // Ouvrir une section (y compris via navigation hors sidebar) → marquer lue.
+  useEffect(() => {
+    const category = ADMIN_MENU_TO_CATEGORY[activeItem];
+    if (category) {
+      markCategoryNotificationsRead(category, currentUser);
+    }
+    // Intentionnel : uniquement au changement d'écran / utilisateur.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeItem, currentUser?.id]);
 
   const handleLogout = () => {
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
@@ -290,6 +331,7 @@ export function useAdminSidebar(navigation, activeItem = "home") {
     threads,
     threadsLoading,
     unreadTotal,
+    menuBadges,
     messagesFab: (
       <AdminMessagesFab
         navigation={navigation}
@@ -306,6 +348,11 @@ export function useAdminSidebar(navigation, activeItem = "home") {
         onLogout={handleLogout}
         activeItem={activeItem}
         unreadTotal={unreadTotal}
+        menuBadges={menuBadges}
+        onMenuPress={(id) => {
+          const category = ADMIN_MENU_TO_CATEGORY[id];
+          if (category) markCategoryNotificationsRead(category, currentUser);
+        }}
       />
     ),
   };
@@ -404,6 +451,7 @@ const sbStyles = StyleSheet.create({
     borderRightColor: palette.primary,
   },
   menuItemText: {
+    flex: 1,
     fontWeight: "500",
     color: palette.textSecondary,
     fontSize: 14,

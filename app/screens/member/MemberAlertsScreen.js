@@ -21,6 +21,8 @@ import {
   acknowledgeAlert,
   subscribeToNewAlerts,
 } from "../../lib/alertsApi";
+import { useApp } from "../../context/AppContext";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -36,8 +38,10 @@ function formatTime(iso) {
   }
 }
 
-/** Liste des notifications membre — uniquement après la date d'inscription. */
+/** قائمة إشعارات العضو — موسم حالي + بعد تاريخ التسجيل في هذا الموسم فقط. */
 export default function MemberAlertsScreen({ navigation }) {
+  const { seasons } = useApp();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -45,11 +49,13 @@ export default function MemberAlertsScreen({ navigation }) {
 
   const load = useCallback(async () => {
     const res = await getVisibleAlertsWithAckStatus({
-      sinceMemberRegistration: true,
+      scopeToCurrentSeason: true,
+      saisonId: activeSeasonId,
+      role: "member",
     });
     if (res.ok) setAlerts(res.alerts);
     setLoading(false);
-  }, []);
+  }, [activeSeasonId]);
 
   useEffect(() => {
     load();

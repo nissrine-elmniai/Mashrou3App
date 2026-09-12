@@ -16,6 +16,7 @@ import {
   acknowledgeAlert,
   subscribeToNewAlerts,
 } from "../lib/alertsApi";
+import { getActiveRegularSeason } from "../lib/seasonScope";
 import AlertSenderFace from "./AlertSenderFace";
 
 const POLL_INTERVAL_MS = 30000;
@@ -32,8 +33,9 @@ const POLL_INTERVAL_MS = 30000;
  *   libère la suivante.
  */
 export default function BlockingAlertGate() {
-  const { supabaseSession, currentUser } = useApp();
+  const { supabaseSession, currentUser, seasons } = useApp();
   const isAdmin = currentUser?.role === ROLES.ADMIN;
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const [queue, setQueue] = useState([]);
   const [loadingAck, setLoadingAck] = useState(false);
   const fetchingRef = useRef(false);
@@ -44,8 +46,11 @@ export default function BlockingAlertGate() {
     fetchingRef.current = true;
     try {
       const isMember = currentUser?.role === ROLES.MEMBER;
+      const isSupervisor = currentUser?.role === ROLES.SUPERVISOR;
       const res = await getUnacknowledgedAlerts({
-        sinceMemberRegistration: isMember,
+        scopeToCurrentSeason: true,
+        saisonId: activeSeasonId,
+        role: isSupervisor ? "supervisor" : isMember ? "member" : "member",
       });
       if (res.ok) setQueue(res.alerts);
     } catch (e) {
@@ -53,7 +58,12 @@ export default function BlockingAlertGate() {
     } finally {
       fetchingRef.current = false;
     }
-  }, [supabaseSession?.user?.id, isAdmin, currentUser?.role]);
+  }, [
+    supabaseSession?.user?.id,
+    isAdmin,
+    currentUser?.role,
+    activeSeasonId,
+  ]);
 
   // Requête immédiate au montage + Realtime (affichage dès l'envoi admin)
   useEffect(() => {

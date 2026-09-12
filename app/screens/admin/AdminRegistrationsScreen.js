@@ -262,13 +262,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           hitSlop={12}
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
-          {bellCount > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {bellCount > 9 ? "9+" : bellCount}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 

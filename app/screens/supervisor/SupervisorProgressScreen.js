@@ -21,6 +21,7 @@ import {
   computeProgressPace,
   getMemberProgressEntries,
 } from "../../lib/progressApi";
+import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
 import { getMemberObjectif } from "../../lib/objectifsApi";
 import { formatHizbCount, formatHizbTumunDelta, tumunStoredToUi } from "../../lib/tumun";
 import {
@@ -142,8 +143,20 @@ export default function SupervisorProgressScreen({
     }));
 
     (async () => {
+      const seasonId =
+        activeGroup?.seasonId || getActiveRegularSeason(seasons)?.id || null;
+      const cutoff = seasonId
+        ? await resolveMemberSeasonAlertCutoff(selectedMemberId, seasonId)
+        : { sinceIso: null };
+      const windowSince = historySinceIso();
+      const joinSince = cutoff.sinceIso || null;
+      const since =
+        joinSince && new Date(joinSince).getTime() > new Date(windowSince).getTime()
+          ? joinSince
+          : windowSince;
+
       const res = await getMemberProgressEntries(selectedMemberId, {
-        since: historySinceIso(),
+        since,
         limit: HISTORY_FETCH_LIMIT,
       });
       if (cancelled) return;
@@ -159,9 +172,14 @@ export default function SupervisorProgressScreen({
         });
         return;
       }
+      const entries = (res.entries || []).filter((e) => {
+        if (!seasonId) return true;
+        const sid = e?.saison_id || e?.saisonId || null;
+        return !sid || String(sid) === String(seasonId);
+      });
       setHistory({
         memberId: selectedMemberId,
-        entries: res.entries || [],
+        entries,
         loading: false,
       });
     })();
@@ -169,7 +187,7 @@ export default function SupervisorProgressScreen({
     return () => {
       cancelled = true;
     };
-  }, [selectedMemberId]);
+  }, [selectedMemberId, activeGroup?.seasonId, seasons]);
 
   const selectedMember = members.find((m) => m.user.id === selectedMemberId);
   const confirmedName = selectedMember

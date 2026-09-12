@@ -90,6 +90,82 @@ async function findSupervisorProfileByInvitationEmail(mail) {
 }
 
 /**
+ * (Admin) Désactive les superviseurs des saisons clôturées (RPC 0065).
+ * Les lignes profiles restent (historique) ; le login est bloqué.
+ * @param {string[]} saisonIds
+ * @returns {{ ok, count?, error?, skipped? }}
+ */
+export async function deactivateSupervisorsForSaisons(saisonIds = []) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, count: 0 };
+  }
+  const ids = [...new Set((saisonIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  if (ids.length === 0) {
+    return { ok: true, count: 0 };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase.rpc("deactivate_supervisors_for_saisons", {
+        p_saison_ids: ids,
+      }),
+      SUPABASE_TIMEOUT_MS,
+      "تعطيل مشرفي المواسم السابقة"
+    );
+    if (error) {
+      const msg = error.message || "";
+      if (/Could not find the function|deactivate_supervisors_for_saisons/i.test(msg)) {
+        return {
+          ok: false,
+          error:
+            "دالة تعطيل المشرفين غير موجودة — نفّذ supabase/migrations/0065_profiles_account_status_inactive.sql",
+        };
+      }
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+    return { ok: true, count: Number(data) || 0 };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر تعطيل المشرفين" };
+  }
+}
+
+/**
+ * (Admin) Réactive un profil superviseur pour la nouvelle saison.
+ * @param {string} profileId
+ * @returns {{ ok, error?, skipped? }}
+ */
+export async function reactivateSupervisorProfile(profileId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true };
+  }
+  if (!profileId) {
+    return { ok: false, error: "معرّف المشرف مفقود" };
+  }
+  try {
+    const { error } = await withTimeout(
+      supabase.rpc("reactivate_supervisor_profile", {
+        p_profile_id: profileId,
+      }),
+      SUPABASE_TIMEOUT_MS,
+      "إعادة تفعيل المشرف"
+    );
+    if (error) {
+      const msg = error.message || "";
+      if (/Could not find the function|reactivate_supervisor_profile/i.test(msg)) {
+        return {
+          ok: false,
+          error:
+            "دالة إعادة التفعيل غير موجودة — نفّذ supabase/migrations/0065_profiles_account_status_inactive.sql",
+        };
+      }
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر إعادة تفعيل المشرف" };
+  }
+}
+
+/**
  * (Admin) Rattache la séance de l'invitation au profil superviseur (RPC 0032).
  * @returns {{ ok, error? }}
  */
@@ -203,6 +279,7 @@ export async function createSupervisorInvitation({
 
     const existingProfile = await findSupervisorProfileByInvitationEmail(mail);
     if (existingProfile) {
+      await reactivateSupervisorProfile(existingProfile.id);
       await assignSupervisorSeanceFromInvitation(existingProfile.id, mail);
     }
 

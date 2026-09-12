@@ -330,7 +330,9 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
                     ? "بانتظار التفعيل"
                     : profileRow?.account_status === "active"
                       ? "نشط"
-                      : profileRow?.account_status
+                      : profileRow?.account_status === "inactive"
+                        ? "معطّل (موسم سابق)"
+                        : profileRow?.account_status
                 }
               />
               <InfoRow
