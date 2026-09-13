@@ -11,6 +11,27 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_MAX = 3;
+const rateHits = new Map<string, number[]>();
+
+function isRateLimited(key: string): boolean {
+  const now = Date.now();
+  const prev = (rateHits.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (prev.length >= RATE_MAX) {
+    rateHits.set(key, prev);
+    return true;
+  }
+  prev.push(now);
+  rateHits.set(key, prev);
+  return false;
+}
+
+function clientIp(req: Request): string {
+  const forwarded = req.headers.get("x-forwarded-for") || "";
+  return forwarded.split(",")[0].trim() || req.headers.get("cf-connecting-ip") || "unknown";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -21,6 +42,11 @@ Deno.serve(async (req) => {
     const email = String(body.email || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
       return json({ ok: false, error: "أدخل بريداً إلكترونياً صالحاً" }, 400);
+    }
+
+    if (isRateLimited(`email:${email}`) || isRateLimited(`ip:${clientIp(req)}`)) {
+      // Réponse neutre — pas d'énumération ni de signal de throttling
+      return json({ ok: true });
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;

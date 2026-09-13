@@ -1,9 +1,9 @@
 import { ACCOUNT_STATUS, ROLES, SEASON_TYPES } from "../constants/roles";
 
-/** Mot de passe du compte admin initial uniquement */
+/** Mot de passe des comptes mock — uniquement si Supabase n'est pas configuré */
 export const DEMO_PASSWORD = "123456";
 
-/** Comptes de démarrage — le reste se crée dynamiquement dans l’app */
+/** Comptes de démarrage locaux (dev sans .env). Jamais hydratés si Supabase est actif. */
 export const bootstrapUsers = [
   {
     id: "u_admin",
@@ -19,7 +19,7 @@ export const bootstrapUsers = [
   {
     id: "u_supervisor",
     email: "superviseur@test.com",
-    password: "123456",
+    password: DEMO_PASSWORD,
     firstName: "أميمة",
     lastName: "العماري",
     birthDate: "1990/03/20",
@@ -29,29 +29,16 @@ export const bootstrapUsers = [
   {
     id: "u_member",
     email: "membre@test.com",
-    password: "123456",
+    password: DEMO_PASSWORD,
     firstName: "أنس",
     lastName: "الفاسي",
     birthDate: "2010/07/09",
     gender: "ذكر",
     role: ROLES.MEMBER,
   },
-  {
-    // Compte superviseur seedé côté Supabase (voir scripts/seed-supervisor-test.js) —
-    // dupliqué ici pour que la recherche mock de login() réussisse avec les mêmes
-    // identifiants, ce qui déclenche ensuite la tentative supabase.auth.signInWithPassword.
-    id: "u_supervisor_supabase",
-    email: "elaammarioumeima@gmail.com",
-    password: "Test1234!",
-    firstName: "Oumeyma",
-    lastName: "Elaammari",
-    birthDate: "1990/01/01",
-    gender: "أنثى",
-    role: ROLES.SUPERVISOR,
-  },
 ];
 
-/** Saison + groupe minimaux pour que le superviseur de test ait une séance assignée */
+/** Saison + groupe minimaux pour le mode local sans Supabase */
 export const bootstrapSeasons = [
   {
     id: "s_bootstrap",

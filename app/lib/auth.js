@@ -3,6 +3,10 @@ import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
 import { canonicalEmail } from "./authEmail";
 import { formatGenderLabel } from "./membersApi";
 import { markMemberApplicationActivated } from "./memberApplicationsApi";
+import {
+  isPasswordTooShort,
+  passwordTooShortMessage,
+} from "../constants/security";
 
 export { isSupabaseConfigured };
 
@@ -625,8 +629,8 @@ export async function confirmPasswordResetWithOtp(email, token, newPassword) {
   const code = String(token || "").trim();
   if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
   if (!code) return { ok: false, error: "أدخل رمز التحقق" };
-  if (!newPassword || newPassword.length < 6) {
-    return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
+  if (isPasswordTooShort(newPassword)) {
+    return { ok: false, error: passwordTooShortMessage() };
   }
 
   const { error: verifyError } = await supabase.auth.verifyOtp({

@@ -17,6 +17,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../constants/theme";
 import { useApp } from "../context/AppContext";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
+import {
+  isPasswordTooShort,
+  passwordTooShortMessage,
+} from "../constants/security";
 
 export default function ForgotPasswordScreen({ navigation }) {
   const { resetPassword, confirmPasswordReset, isSupabaseConfigured } =
@@ -80,8 +84,8 @@ export default function ForgotPasswordScreen({ navigation }) {
       Alert.alert("خطأ", "كلمة المرور غير متطابقة");
       return;
     }
-    if (password.length < 6) {
-      Alert.alert("خطأ", "كلمة المرور قصيرة جداً (6 أحرف على الأقل)");
+    if (isPasswordTooShort(password)) {
+      Alert.alert("خطأ", passwordTooShortMessage());
       return;
     }
 

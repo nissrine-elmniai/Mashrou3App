@@ -17,6 +17,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../lib/supabase";
 import { colors, radii } from "../constants/theme";
 import { rtlText, textAlignStart, fonts, row } from "../constants/rtl";
+import {
+  isPasswordTooShort,
+  passwordTooShortMessage,
+} from "../constants/security";
 
 export default function ChangePasswordModal({ visible, onClose, bottomInset = 16 }) {
   const [newPassword, setNewPassword] = useState("");
@@ -49,8 +53,8 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
   };
 
   const savePassword = async () => {
-    if (!newPassword || newPassword.length < 6) {
-      Alert.alert("تنبيه", "كلمة المرور قصيرة جداً (6 أحرف على الأقل)");
+    if (isPasswordTooShort(newPassword)) {
+      Alert.alert("تنبيه", passwordTooShortMessage());
       return;
     }
     if (newPassword !== confirmPassword) {

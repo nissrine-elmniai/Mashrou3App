@@ -53,6 +53,7 @@ import {
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
+import { getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
 import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
@@ -161,7 +162,6 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser,
     seasons,
     registrations,
-    exams,
     logout,
     submitSeasonRegistration,
     getNotificationsForUser,
@@ -219,6 +219,7 @@ export default function MemberDashboardScreen({ navigation }) {
     absentCount: 0,
     records: [],
   });
+  const [myExams, setMyExams] = useState([]);
 
   const messagesUnread = useMemo(() => {
     const dm = sumUnreadForContactIds(threads, [sessionState.superviseurId]);
@@ -242,6 +243,21 @@ export default function MemberDashboardScreen({ navigation }) {
     useCallback(() => {
       loadProgressEntries();
     }, [loadProgressEntries])
+  );
+
+  const loadMyExams = useCallback(async () => {
+    const res = await getMyTestResults();
+    if (!res.ok) {
+      setMyExams([]);
+      return;
+    }
+    setMyExams((res.results || []).map(mapMemberTestToExam));
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMyExams();
+    }, [loadMyExams])
   );
 
   const loadAlerts = useCallback(async () => {
@@ -481,7 +497,6 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser?.hifzAmount,
   ]);
 
-  const myExams = exams.filter((e) => e.memberId === currentUser?.id);
   const myMemberPrograms = getMemberPrograms();
 
   const activePrograms = myMemberPrograms.length;
@@ -787,7 +802,6 @@ export default function MemberDashboardScreen({ navigation }) {
         style: "destructive",
         onPress: async () => {
           await logout();
-          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
         },
       },
     ]);

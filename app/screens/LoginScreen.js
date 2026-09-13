@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -15,24 +15,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../context/AppContext";
-import { DASHBOARD_BY_ROLE } from "../constants/roles";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function LoginScreen({ navigation }) {
-  const { login, currentUser } = useApp();
+  const { login } = useApp();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-
-  useEffect(() => {
-    if (currentUser?.role && DASHBOARD_BY_ROLE[currentUser.role]) {
-      navigation.reset({
-        index: 0,
-        routes: [{ name: DASHBOARD_BY_ROLE[currentUser.role] }],
-      });
-    }
-  }, [currentUser, navigation]);
 
   const handleLogin = async () => {
     if (!username || !password) {
@@ -42,12 +32,7 @@ export default function LoginScreen({ navigation }) {
     const result = await login(username, password);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
-      return;
     }
-    navigation.reset({
-      index: 0,
-      routes: [{ name: result.dashboard }],
-    });
   };
 
   return (

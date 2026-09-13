@@ -41,3 +41,6 @@ scripts/.env.seed
 # generated native folders
 /ios
 /android
+
+# local CLI binary (not part of the app)
+supabase.exe

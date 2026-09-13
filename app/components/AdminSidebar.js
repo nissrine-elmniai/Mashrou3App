@@ -323,7 +323,6 @@ export function useAdminSidebar(navigation, activeItem = "home") {
         onPress: async () => {
           setIsOpen(false);
           await logout();
-          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
         },
       },
     ]);

@@ -7,8 +7,12 @@ import React, {
   useState,
 } from "react";
 import { ActivityIndicator, View, StyleSheet } from "react-native";
-import { DEMO_PASSWORD, emptyState, bootstrapUsers, bootstrapSeasons } from "../data/seed";
+import { emptyState, bootstrapUsers, bootstrapSeasons } from "../data/seed";
 import { loadAppState, saveAppState, clearAppState } from "../data/storage";
+import {
+  isPasswordTooShort,
+  passwordTooShortMessage,
+} from "../constants/security";
 import {
   ACCOUNT_STATUS,
   DASHBOARD_BY_ROLE,
@@ -229,13 +233,18 @@ export function AppProvider({ children }) {
   useEffect(() => {
     (async () => {
       const saved = await loadAppState();
-      let loadedUsers = bootstrapUsers;
+      const remoteMode = isSupabaseConfigured();
+      let loadedUsers = remoteMode ? [] : bootstrapUsers;
       let loadedSeasons = bootstrapSeasons;
       if (saved) {
         loadedUsers =
           Array.isArray(saved.users) && saved.users.length > 0
-            ? saved.users
-            : bootstrapUsers;
+            ? remoteMode
+              ? saved.users
+                  .filter((u) => u.authId)
+                  .map((u) => ({ ...u, password: null }))
+              : saved.users
+            : loadedUsers;
         loadedSeasons =
           Array.isArray(saved.seasons) && saved.seasons.length > 0
             ? saved.seasons
@@ -243,10 +252,10 @@ export function AppProvider({ children }) {
         setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
         setRegistrations(saved.registrations || []);
-        setGroups(saved.groups || []);
-        setProgress(saved.progress || []);
-        setAttendance(saved.attendance || []);
-        setExams(saved.exams || []);
+        setGroups(remoteMode ? [] : saved.groups || []);
+        setProgress(remoteMode ? [] : saved.progress || []);
+        setAttendance(remoteMode ? [] : saved.attendance || []);
+        setExams(remoteMode ? [] : saved.exams || []);
         setNotifications(saved.notifications || []);
         setMemberPrograms(
           migrateMemberPrograms(
@@ -256,7 +265,17 @@ export function AppProvider({ children }) {
       } else {
         setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
-        setMemberPrograms(migrateMemberPrograms(emptyState.memberPrograms || []));
+        if (remoteMode) {
+          setGroups([]);
+          setProgress([]);
+          setAttendance([]);
+          setExams([]);
+        }
+        setMemberPrograms(
+          remoteMode
+            ? []
+            : migrateMemberPrograms(emptyState.memberPrograms || [])
+        );
       }
 
       if (isSupabaseConfigured()) {
@@ -319,7 +338,9 @@ export function AppProvider({ children }) {
       return;
     }
     saveAppState({
-      users,
+      users: isSupabaseConfigured()
+        ? users.map((u) => ({ ...u, password: null }))
+        : users,
       seasons,
       registrations,
       groups,
@@ -738,6 +759,9 @@ export function AppProvider({ children }) {
     password,
     gender = "غير محدد",
   }) => {
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
+    }
     if (
       users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase())
     ) {
@@ -769,8 +793,8 @@ export function AppProvider({ children }) {
     if (!exists) {
       return { ok: false, error: "لا يوجد حساب بهذا البريد" };
     }
-    if (!newPassword || newPassword.length < 4) {
-      return { ok: false, error: "كلمة المرور قصيرة جداً" };
+    if (isPasswordTooShort(newPassword)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     setUsers((prev) =>
       prev.map((u) =>
@@ -1414,8 +1438,8 @@ export function AppProvider({ children }) {
   const activateInvite = async ({ email, password, confirmPassword }) => {
     const mail = String(email || "").trim().toLowerCase();
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
-    if (!password || password.length < 6) {
-      return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     if (password !== confirmPassword) {
       return { ok: false, error: "كلمة المرور غير متطابقة" };
@@ -1775,8 +1799,8 @@ export function AppProvider({ children }) {
   }) => {
     const mail = canonicalEmail(email);
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
-    if (!password || password.length < 6) {
-      return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     if (password !== confirmPassword) {
       return { ok: false, error: "كلمة المرور غير متطابقة" };
@@ -2199,10 +2223,13 @@ export function AppProvider({ children }) {
     gender,
     groupId,
     email,
-    password = "123456",
+    password,
   }) => {
     if (!firstName?.trim() || !lastName?.trim()) {
       return { ok: false, error: "املأ الاسم واللقب" };
+    }
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     const mail =
       email?.trim().toLowerCase() || `member_${Date.now()}@mosque.ma`;
@@ -2749,7 +2776,6 @@ export function AppProvider({ children }) {
     exams,
     notifications,
     stats,
-    DEMO_PASSWORD,
     isSupabaseConfigured: isSupabaseConfigured(),
     login,
     logout,

@@ -22,6 +22,11 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import {
+  countTestsAdmin,
+  listRecentTestsAdmin,
+  mapTestToDashboardExam,
+} from "../../lib/testsApi";
+import {
   ROLES,
   userHasRole,
   REGISTRATION_STATUS,
@@ -300,7 +305,6 @@ export default function AdminDashboard({ navigation }) {
   const {
     stats,
     currentUser,
-    exams,
     seasons,
     registrations,
     notifications,
@@ -313,22 +317,35 @@ export default function AdminDashboard({ navigation }) {
     supervisors: 0,
     seances: 0,
   });
+  const [examCount, setExamCount] = useState(0);
+  const [recentExams, setRecentExams] = useState([]);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
         if (!activeSeason?.id) {
-          setSeasonStats({ members: 0, supervisors: 0, seances: 0 });
-          return;
+          if (!cancelled) {
+            setSeasonStats({ members: 0, supervisors: 0, seances: 0 });
+          }
+        } else {
+          const res = await getSeasonDashboardStats(activeSeason.id);
+          if (!cancelled && res.ok) {
+            setSeasonStats({
+              members: res.members,
+              supervisors: res.supervisors,
+              seances: res.seances,
+            });
+          }
         }
-        const res = await getSeasonDashboardStats(activeSeason.id);
-        if (!cancelled && res.ok) {
-          setSeasonStats({
-            members: res.members,
-            supervisors: res.supervisors,
-            seances: res.seances,
-          });
+        const [countRes, listRes] = await Promise.all([
+          countTestsAdmin(),
+          listRecentTestsAdmin(8),
+        ]);
+        if (cancelled) return;
+        if (countRes.ok) setExamCount(countRes.count || 0);
+        if (listRes.ok) {
+          setRecentExams((listRes.tests || []).map(mapTestToDashboardExam));
         }
       })();
       return () => {
@@ -351,7 +368,7 @@ export default function AdminDashboard({ navigation }) {
     members: seasonStats.members,
     supervisors: seasonStats.supervisors,
     seances: seasonStats.seances,
-    exams: stats?.exams ?? exams?.length ?? 0,
+    exams: examCount,
     pendingRegs: stats?.pendingRegs ?? pendingRegs,
   };
 
@@ -363,11 +380,11 @@ export default function AdminDashboard({ navigation }) {
               (r) => !r.seasonId || r.seasonId === activeSeason.id
             )
           : registrations,
-        exams,
+        exams: recentExams,
         users: [],
         notifications,
       }),
-    [registrations, exams, notifications, activeSeason]
+    [registrations, recentExams, notifications, activeSeason]
   );
 
   return (
