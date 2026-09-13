@@ -13,6 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
 import { row, rtlText, rtlTextBold, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
@@ -243,32 +244,41 @@ export default function ChatConversationScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.card} />
+      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
 
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <Ionicons name={arrowBack} size={22} color={colors.text} />
-          </TouchableOpacity>
-          <View style={styles.avatarWrap}>
-            <ProfileAvatar
-              userId={conversation.otherId || contactId}
-              avatarUrl={headerAvatarUrl}
-              cacheKey={headerAvatarUrl || conversation.otherId || contactId}
-              fallbackLetter={contactAvatarLetter || "؟"}
-              size={42}
-              softBackgroundColor={isAdmin && !headerAvatarUrl ? colors.primary : colors.primarySoft}
-              letterColor={isAdmin && !headerAvatarUrl ? "#fff" : colors.primary}
-            />
-          </View>
-          <View style={styles.headerText}>
-            <Text style={styles.contactName} numberOfLines={1}>
-              {contactName}
-            </Text>
-          </View>
+        <View style={styles.headerWrap}>
+          <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+            <TouchableOpacity
+              style={styles.backBtn}
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="رجوع"
+            >
+              <Ionicons name={arrowBack} size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.avatarWrap}>
+              <ProfileAvatar
+                userId={conversation.otherId || contactId}
+                avatarUrl={headerAvatarUrl}
+                cacheKey={headerAvatarUrl || conversation.otherId || contactId}
+                fallbackLetter={contactAvatarLetter || "؟"}
+                size={42}
+                softBackgroundColor="rgba(255,255,255,0.28)"
+                letterColor="#fff"
+              />
+            </View>
+            <View style={styles.headerText}>
+              <Text style={styles.contactName} numberOfLines={1}>
+                {contactName}
+              </Text>
+            </View>
+          </LinearGradient>
         </View>
         <FlatList
           data={[...messages].reverse()}
@@ -301,19 +311,34 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
 
+  headerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
   header: {
     flexDirection: row,
     alignItems: "center",
     gap: 12,
-    padding: 16,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderRadius: radii.lg,
+    overflow: "hidden",
+    paddingVertical: 14,
+    paddingHorizontal: 14,
   },
-  backBtn: { padding: 2 },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   avatarWrap: { position: "relative" },
   headerText: { flex: 1 },
-  contactName: { fontFamily: fonts.bold, fontSize: 16, color: colors.text, ...rtlTextBold },
+  contactName: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: "#fff",
+    ...rtlTextBold,
+  },
 
   listContent: { paddingVertical: 12 },
   bubbleRow: { flexDirection: row, paddingHorizontal: 16, marginVertical: 4 },
@@ -324,7 +349,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
-  bubbleOther: { backgroundColor: colors.card, borderBottomLeftRadius: 4 },
+  bubbleOther: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    borderBottomLeftRadius: 4,
+  },
   bubbleImage: { width: 180, height: 140, borderRadius: radii.md, marginBottom: 6 },
   bubbleText: { fontSize: 15, fontFamily: fonts.regular, ...rtlText },
   bubbleTextMine: { color: "white" },
@@ -337,10 +367,13 @@ const styles = StyleSheet.create({
     flexDirection: row,
     alignItems: "center",
     gap: 10,
-    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 10,
     backgroundColor: colors.card,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
   },
   input: {
     flex: 1,

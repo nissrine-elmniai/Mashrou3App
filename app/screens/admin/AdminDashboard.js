@@ -221,7 +221,6 @@ function buildRecentActivities({
 
 function DashboardHome({ navigation, stats, activities }) {
   const members = stats?.members ?? 0;
-  const pendingRegs = stats?.pendingRegs ?? 0;
   // Hero = membres du saison. 1 → عضو مسجّل, sinon → أعضاء مسجّلون.
   const secondaryStats = [
     { key: "supervisors", label: "المشرفون", value: stats?.supervisors ?? 0 },
@@ -235,13 +234,6 @@ function DashboardHome({ navigation, stats, activities }) {
         <View style={dhStyles.heroRow}>
           <Text style={dhStyles.heroValue}>{members}</Text>
           <Text style={dhStyles.heroLabel}>{membersLabel(members)}</Text>
-          {pendingRegs > 0 ? (
-            <View style={dhStyles.pendingBadge}>
-              <Text style={dhStyles.pendingBadgeText}>
-                {pendingRegs} معلق
-              </Text>
-            </View>
-          ) : null}
         </View>
         <View style={dhStyles.statDivider} />
         <View style={dhStyles.secondaryRow}>
@@ -408,13 +400,6 @@ export default function AdminDashboard({ navigation }) {
           accessibilityLabel="التنبيهات"
         >
           <Bell size={24} color={colors.muted} pointerEvents="none" />
-          {derivedStats.pendingRegs > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {derivedStats.pendingRegs > 9 ? "9+" : derivedStats.pendingRegs}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 

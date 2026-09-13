@@ -233,7 +233,6 @@ function RegistrationBlock({
         <QuickButton
           key={s.id}
           color={buttonColor}
-          icon="send"
           label={
             submitting
               ? "جاري الإرسال..."

@@ -67,7 +67,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
         : "\nتم إرسال تنبيه في «التنبيهات» لحث الأعضاء على تعبئة استمارة التسجيل.";
     Alert.alert(
       "انطلاق موسم جديد",
-      `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nابدأ بإعداد حصص ومشرفي هذا الموسم.${alertNote}`,
+      `تم إنشاء «${result.season.name}» وفتح باب التسجيل.\nتم تعطيل حسابات مشرفي الموسم السابق (مع الإبقاء على السجل).\nابدأ بإعداد حصص ومشرفي هذا الموسم — الأعضاء يحتفظون بحساباتهم ويسجّلون عبر «إعادة التسجيل».${alertNote}`,
       [{ text: "حسناً", onPress: () => navigation.goBack() }]
     );
   };
@@ -95,13 +95,6 @@ export default function AdminNewSeasonScreen({ navigation }) {
           accessibilityLabel="طلبات التسجيل"
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
-          {pendingCount > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {pendingCount > 9 ? "9+" : pendingCount}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 

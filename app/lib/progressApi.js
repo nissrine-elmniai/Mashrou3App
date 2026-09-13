@@ -117,14 +117,26 @@ export async function getMemberProgressEntries(membreId, options) {
 
 /**
  * Progression personnelle du membre connecté (historique des saisies,
- * plus récentes d'abord). @returns { ok, entries }
+ * plus récentes d'abord).
+ * @param {{ limit?: number, since?: string, saisonId?: string|null }} [options]
+ * @returns { ok, entries }
  */
-export async function getMyProgress() {
+export async function getMyProgress(options) {
   const userId = await currentAuthId();
   if (!userId) {
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
-  return getMemberProgressEntries(userId);
+  const res = await getMemberProgressEntries(userId, options);
+  if (!res.ok) return res;
+  const saisonId = String(options?.saisonId || "").trim() || null;
+  if (!saisonId) return res;
+  return {
+    ok: true,
+    entries: (res.entries || []).filter((e) => {
+      const sid = e?.saison_id || e?.saisonId || null;
+      return !sid || String(sid) === saisonId;
+    }),
+  };
 }
 
 /**

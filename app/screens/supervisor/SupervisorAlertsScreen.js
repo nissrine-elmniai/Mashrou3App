@@ -20,6 +20,8 @@ import {
   subscribeToNewAlerts,
 } from "../../lib/alertsApi";
 import AlertSenderFace from "../../components/AlertSenderFace";
+import { useApp } from "../../context/AppContext";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -35,18 +37,24 @@ function formatTime(iso) {
   }
 }
 
-/** Liste complète des alertes superviseur — acquittement via acknowledgeAlert (RG9). */
+/** قائمة تنبيهات المشرف — موسم حالي + بعد تاريخ تفعيله في هذا الموسم. */
 export default function SupervisorAlertsScreen({ navigation }) {
+  const { seasons } = useApp();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [ackingId, setAckingId] = useState(null);
 
   const load = useCallback(async () => {
-    const res = await getVisibleAlertsWithAckStatus();
+    const res = await getVisibleAlertsWithAckStatus({
+      scopeToCurrentSeason: true,
+      saisonId: activeSeasonId,
+      role: "supervisor",
+    });
     if (res.ok) setAlerts(res.alerts);
     setLoading(false);
-  }, []);
+  }, [activeSeasonId]);
 
   useEffect(() => {
     load();
