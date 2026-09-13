@@ -136,7 +136,7 @@ export default function SupervisorHomeScreen({
       </View>
 
       {recentAlerts.length > 0 ? (
-        <SectionCard title="الإشعارات" borderColor={colors.card}>
+        <SectionCard title="التنبيهات" borderColor={colors.card}>
           {recentAlerts.map((alert) => (
             <View key={alert.id} style={styles.activityRow}>
               <View style={styles.activityIconWrap}>

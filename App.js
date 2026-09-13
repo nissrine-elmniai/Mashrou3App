@@ -20,6 +20,7 @@ import {
 
 import { AppProvider } from "./app/context/AppContext";
 import BlockingAlertGate from "./app/components/BlockingAlertGate";
+import PushNotificationBridge from "./app/components/PushNotificationBridge";
 import { colors } from "./app/constants/theme";
 import {
   applyGlobalRtlTypography,
@@ -103,6 +104,7 @@ function RootNavigator() {
   }, []);
 
   return (
+    <>
     <NavigationContainer ref={navigationRef} linking={linking} direction="rtl">
       <Stack.Navigator
         initialRouteName="Login"
@@ -328,8 +330,33 @@ function RootNavigator() {
           component={SupervisorAttendanceDetailScreen}
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="NotificationInbox"
+          getComponent={() =>
+            require("./app/screens/notifications/NotificationInboxScreen").default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="NotificationSettings"
+          getComponent={() =>
+            require("./app/screens/notifications/NotificationSettingsScreen")
+              .default
+          }
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="NotificationDetail"
+          getComponent={() =>
+            require("./app/screens/notifications/NotificationDetailScreen")
+              .default
+          }
+          options={{ headerShown: false }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
+    <PushNotificationBridge navigationRef={navigationRef} />
+    </>
   );
 }
 

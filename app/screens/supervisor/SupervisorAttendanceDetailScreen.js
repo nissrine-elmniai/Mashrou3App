@@ -25,6 +25,7 @@ import {
   getSeancePresenceForDate,
   saveSeancePresence,
 } from "../../lib/presenceApi";
+import { getSeanceMembers } from "../../lib/membersApi";
 import { emitSupervisorAttendanceSaved } from "./supervisorAttendanceBridge";
 
 export default function SupervisorAttendanceDetailScreen({ navigation, route }) {
@@ -35,8 +36,47 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     markingWindowEnd,
     isMarked: isMarkedParam = false,
     groupName,
-    members = [],
   } = route.params || {};
+  const membersFromRoute = Array.isArray(route.params?.members)
+    ? route.params.members
+    : null;
+
+  const [members, setMembers] = useState(membersFromRoute || []);
+  const [membersLoading, setMembersLoading] = useState(
+    !(membersFromRoute && membersFromRoute.length > 0)
+  );
+
+  useEffect(() => {
+    if (membersFromRoute && membersFromRoute.length > 0) {
+      setMembers(membersFromRoute);
+      setMembersLoading(false);
+      return undefined;
+    }
+    if (!seanceId) {
+      setMembersLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setMembersLoading(true);
+    (async () => {
+      const res = await getSeanceMembers(seanceId);
+      if (cancelled) return;
+      if (res.ok) {
+        setMembers(
+          (res.members || []).map((m) => ({
+            id: m.userId,
+            firstName: m.prenom,
+            lastName: m.nom,
+            avatarUrl: m.avatarUrl || null,
+          }))
+        );
+      }
+      setMembersLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [seanceId, membersFromRoute]);
 
   const memberIds = useMemo(
     () => (members || []).map((m) => m.id).filter(Boolean),
@@ -50,6 +90,11 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (membersLoading) {
+      setLoading(true);
+      setError(null);
+      return;
+    }
     if (!seanceId || !sessionDate || memberIds.length === 0) {
       setLoading(false);
       setError("بيانات الحصة غير مكتملة");
@@ -81,7 +126,7 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     return () => {
       cancelled = true;
     };
-  }, [seanceId, sessionDate, memberIds, readOnly]);
+  }, [seanceId, sessionDate, memberIds, readOnly, membersLoading]);
 
   const handleSave = async () => {
     if (readOnly || !seanceId || !sessionDate || saving || loading) return;

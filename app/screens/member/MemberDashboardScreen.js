@@ -57,12 +57,14 @@ import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tum
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
+import ProfileNotificationsCard from "../../components/profile/ProfileNotificationsCard";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
 import AlertSenderFace from "../../components/AlertSenderFace";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import MemberProgramsPanel from "./MemberProgramsPanel";
 import MemberRegistrationPanel from "./MemberRegistrationPanel";
 
@@ -881,15 +883,25 @@ export default function MemberDashboardScreen({ navigation }) {
                   <Ionicons name="log-out-outline" size={22} color="white" />
                 </TouchableOpacity>
                 {tab === "home" ? (
-                  <TouchableOpacity
-                    style={styles.headerIconWrap}
-                    onPress={() => navigation.navigate("MemberAlerts")}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                    accessibilityLabel="تنبيهات الإدارة"
-                  >
-                    <Ionicons name="notifications-outline" size={22} color="white" />
-                  </TouchableOpacity>
+                  <>
+                    <InboxHeaderButton navigation={navigation} color="white" />
+                    <TouchableOpacity
+                      style={styles.headerIconWrap}
+                      onPress={() => navigation.navigate("MemberAlerts")}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="تنبيهات الإدارة"
+                    >
+                      <Ionicons name="notifications-outline" size={22} color="white" />
+                      {pendingAlertCount > 0 ? (
+                        <View style={styles.headerBellBadge}>
+                          <Text style={styles.headerBellBadgeText}>
+                            {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  </>
                 ) : null}
               </View>
             ) : null}
@@ -955,9 +967,9 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard title="الإشعارات">
+            <SectionCard title="التنبيهات">
               {adminAlerts.length === 0 ? (
-                <EmptyState text="لا توجد إشعارات جديدة" />
+                <EmptyState text="لا توجد تنبيهات جديدة" />
               ) : (
                 adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>
@@ -1061,6 +1073,9 @@ export default function MemberDashboardScreen({ navigation }) {
               />
 
               <ProfilePasswordCard onChange={() => setPasswordModal(true)} />
+              <ProfileNotificationsCard
+                onPress={() => navigation.navigate("NotificationSettings")}
+              />
             </View>
           </View>
         )}

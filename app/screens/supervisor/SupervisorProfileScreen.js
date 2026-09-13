@@ -288,7 +288,7 @@ export default function SupervisorProfileScreen({ navigation }) {
           </TouchableOpacity>
         </SectionCard>
 
-        <SectionCard title="الإشعارات" subtitle="استلام التنبيهات والتحديثات">
+        <SectionCard title="الإشعارات" subtitle="استلام الإشعارات والتحديثات">
           <View style={styles.switchRow}>
             <Text style={styles.switchLabel}>تفعيل الإشعارات</Text>
             {loadingNotifications || togglingNotifications ? (
@@ -303,6 +303,22 @@ export default function SupervisorProfileScreen({ navigation }) {
               />
             )}
           </View>
+          <TouchableOpacity
+            style={styles.passwordRow}
+            onPress={() => navigation.navigate("NotificationSettings")}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="إعدادات الإشعارات"
+          >
+            <View style={styles.rowIcon}>
+              <Ionicons name="options-outline" size={18} color={colors.primary} />
+            </View>
+            <View style={styles.rowTextWrap}>
+              <Text style={styles.rowValue}>إعدادات الإشعارات</Text>
+              <Text style={styles.rowLabel}>التصنيفات وصندوق الإشعارات</Text>
+            </View>
+            <Ionicons name={arrowForward} size={18} color={colors.muted} />
+          </TouchableOpacity>
         </SectionCard>
         <SectionCard title="الحساب" subtitle="تأمين الدخول إلى التطبيق">
           <TouchableOpacity
