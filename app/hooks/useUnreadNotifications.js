@@ -5,7 +5,7 @@ import {
   subscribeMyNotifications,
 } from "../lib/notificationsApi";
 
-/** Compteur non lus + Realtime. 0 si pas de session. */
+/** Compteur non lus (hors alertes admin) + Realtime. 0 si pas de session. */
 export function useUnreadNotifications() {
   const { supabaseSession } = useApp();
   const userId = supabaseSession?.user?.id || null;

@@ -18,12 +18,11 @@ import { rtlText, fonts, arrowBack, row, isRTL } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import {
   listMyNotifications,
-  markNotificationRead,
   markAllNotificationsRead,
   subscribeMyNotifications,
   NOTIFICATION_CATEGORY_LABELS,
 } from "../../lib/notificationsApi";
-import { navigateFromNotificationPayload } from "../../lib/notificationNavigation";
+import { openNotification } from "../../lib/notificationNavigation";
 
 function formatTime(iso) {
   if (!iso) return "";
@@ -110,17 +109,18 @@ export default function NotificationInboxScreen({ navigation }) {
   }, [hasMore, loadingMore, loading, load]);
 
   const openItem = async (item) => {
-    if (item.unread) {
-      await markNotificationRead(item.id);
-      setItems((prev) =>
-        prev.map((row) =>
-          row.id === item.id
-            ? { ...row, unread: false, readAt: new Date().toISOString() }
-            : row
-        )
-      );
+    const { marked } = await openNotification(navigation, {
+      id: item.id,
+      eventType: item.eventType,
+      payload: item.payload,
+      title: item.title,
+      body: item.body,
+      createdAt: item.createdAt,
+      category: item.category,
+    });
+    if (marked) {
+      setItems((prev) => prev.filter((row) => row.id !== item.id));
     }
-    navigateFromNotificationPayload(navigation, item.payload);
   };
 
   const handleMarkAll = () => {
@@ -136,39 +136,25 @@ export default function NotificationInboxScreen({ navigation }) {
             Alert.alert("تنبيه", res.error || "تعذر التحديث");
             return;
           }
-          const now = new Date().toISOString();
-          setItems((prev) =>
-            prev.map((row) => ({ ...row, unread: false, readAt: row.readAt || now }))
-          );
+          setItems([]);
         },
       },
     ]);
   };
-
-  const unreadCount = items.filter((i) => i.unread).length;
 
   const renderItem = ({ item }) => {
     const catLabel =
       NOTIFICATION_CATEGORY_LABELS[item.category] || item.category;
     return (
       <TouchableOpacity
-        style={[styles.card, item.unread ? styles.cardNew : styles.cardRead]}
+        style={styles.card}
         onPress={() => openItem(item)}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={item.title}
       >
         <View style={styles.cardTop}>
-          <View style={styles.senderRow}>
-            <View style={styles.iconBadge}>
-              <Ionicons
-                name={item.unread ? "mail-unread-outline" : "mail-open-outline"}
-                size={16}
-                color={colors.primary}
-              />
-            </View>
-            <Text style={styles.category}>{catLabel}</Text>
-          </View>
+          <Text style={styles.category}>{catLabel}</Text>
           <Text style={styles.time}>{formatTime(item.createdAt)}</Text>
         </View>
         <View style={styles.goldLine} />
@@ -210,7 +196,7 @@ export default function NotificationInboxScreen({ navigation }) {
         </LinearGradient>
       </View>
 
-      {unreadCount > 0 ? (
+      {items.length > 0 ? (
         <TouchableOpacity
           style={styles.markAllBtn}
           onPress={handleMarkAll}
@@ -247,13 +233,13 @@ export default function NotificationInboxScreen({ navigation }) {
           ListEmptyComponent={
             <View style={styles.emptyCard}>
               <Ionicons
-                name="mail-outline"
+                name="mail-unread-outline"
                 size={36}
                 color={colors.primary}
               />
-              <EmptyState text="لا توجد إشعارات" />
+              <EmptyState text="لا توجد إشعارات جديدة" />
               <Text style={styles.emptyHint}>
-                ستظهر هنا التنبيهات والتحديثات الخاصة بحسابك
+                تظهر هنا الإشعارات غير المقروءة فقط
               </Text>
             </View>
           }
@@ -343,39 +329,19 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.primarySoft,
     borderRadius: radii.lg,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    ...shadows.card,
-  },
-  cardNew: {
     borderColor: colors.borderGreen,
-    backgroundColor: colors.primarySoft,
-  },
-  cardRead: {
-    borderColor: colors.border,
+    ...shadows.card,
   },
   cardTop: {
     flexDirection: row,
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
-  },
-  senderRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    flexShrink: 1,
-  },
-  iconBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.card,
-    alignItems: "center",
-    justifyContent: "center",
   },
   category: {
     fontSize: 12,

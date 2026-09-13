@@ -288,7 +288,7 @@ export default function SupervisorProfileScreen({ navigation }) {
           </TouchableOpacity>
         </SectionCard>
 
-        <SectionCard title="الإشعارات" subtitle="استلام التنبيهات والتحديثات">
+        <SectionCard title="الإشعارات" subtitle="استلام الإشعارات والتحديثات">
           <View style={styles.switchRow}>
             <Text style={styles.switchLabel}>تفعيل الإشعارات</Text>
             {loadingNotifications || togglingNotifications ? (

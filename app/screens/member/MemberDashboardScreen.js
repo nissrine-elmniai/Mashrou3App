@@ -890,9 +890,9 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard title="الإشعارات">
+            <SectionCard title="التنبيهات">
               {adminAlerts.length === 0 ? (
-                <EmptyState text="لا توجد إشعارات جديدة" />
+                <EmptyState text="لا توجد تنبيهات جديدة" />
               ) : (
                 adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>

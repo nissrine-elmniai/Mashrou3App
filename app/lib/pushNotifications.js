@@ -1,4 +1,4 @@
-import { Platform, NativeModules } from "react-native";
+import { Platform } from "react-native";
 import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
@@ -6,23 +6,19 @@ import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase
 let notificationsModule = null;
 let deviceModule = null;
 let handlerConfigured = false;
-let pushModulesUnavailable = false;
 
-function canUsePushNativeModules() {
-  if (Platform.OS !== "ios" && Platform.OS !== "android") {
-    return false;
+function warnPushLoad(reason, extra) {
+  if (!__DEV__) return;
+  if (extra === undefined) {
+    console.warn("[push] loadPushModules:", reason);
+    return;
   }
-  const hasNotifications =
-    !!NativeModules.ExpoPushTokenManager || !!NativeModules.ExpoNotifications;
-  const hasDevice = !!NativeModules.ExpoDevice;
-  return hasNotifications && hasDevice;
+  console.warn("[push] loadPushModules:", reason, extra);
 }
 
-function isNativePushRuntimeAvailable() {
-  return (
-    requireOptionalNativeModule("ExpoDevice") != null &&
-    requireOptionalNativeModule("ExpoPushTokenManager") != null
-  );
+function resetPushModuleCache() {
+  notificationsModule = null;
+  deviceModule = null;
 }
 
 function resolveModuleNamespace(mod) {
@@ -37,19 +33,18 @@ function resolveModuleNamespace(mod) {
 }
 
 async function loadPushModules() {
-  if (pushModulesUnavailable) {
-    return null;
-  }
   if (notificationsModule && deviceModule) {
     return { notifications: notificationsModule, device: deviceModule };
   }
-  if (!canUsePushNativeModules()) {
-    pushModulesUnavailable = true;
-    return null;
-  }
 
-  if (!isNativePushRuntimeAvailable()) {
-    pushModulesUnavailable = true;
+  const hasDevice = requireOptionalNativeModule("ExpoDevice") != null;
+  const hasPushTokenManager =
+    requireOptionalNativeModule("ExpoPushTokenManager") != null;
+  if (!hasDevice || !hasPushTokenManager) {
+    warnPushLoad("native runtime unavailable", {
+      hasDevice,
+      hasPushTokenManager,
+    });
     return null;
   }
 
@@ -69,7 +64,13 @@ async function loadPushModules() {
       !device ||
       typeof device.isDevice !== "boolean"
     ) {
-      pushModulesUnavailable = true;
+      warnPushLoad("JS module API incomplete", {
+        hasNotifications: !!notifications,
+        setNotificationHandler: typeof notifications?.setNotificationHandler,
+        getExpoPushTokenAsync: typeof notifications?.getExpoPushTokenAsync,
+        hasDeviceModule: !!device,
+        isDevice: typeof device?.isDevice,
+      });
       return null;
     }
 
@@ -79,7 +80,6 @@ async function loadPushModules() {
     if (!handlerConfigured) {
       notifications.setNotificationHandler({
         handleNotification: async () => ({
-          shouldShowAlert: true,
           shouldPlaySound: false,
           shouldSetBadge: true,
           shouldShowBanner: true,
@@ -91,10 +91,7 @@ async function loadPushModules() {
 
     return { notifications, device };
   } catch (e) {
-    pushModulesUnavailable = true;
-    if (__DEV__) {
-      console.warn("[push] native modules unavailable:", e?.message || e);
-    }
+    warnPushLoad("import failed", e?.message || e);
     return null;
   }
 }
@@ -164,6 +161,7 @@ export async function registerForPushNotifications(userId, options = {}) {
     return { ok: false, error: "معرّف المستخدم مفقود" };
   }
 
+  resetPushModuleCache();
   const modules = await loadPushModules();
   if (!modules) {
     return pushNativeUnavailableError();
@@ -233,6 +231,7 @@ export async function unregisterPushNotifications(userId) {
     return { ok: false, error: "معرّف المستخدم مفقود" };
   }
 
+  resetPushModuleCache();
   const modules = await loadPushModules();
   if (!modules) {
     return { ok: true };
@@ -269,9 +268,20 @@ export async function unregisterPushNotifications(userId) {
 }
 
 function extractNotificationPayload(notification) {
-  const data = notification?.request?.content?.data;
-  if (data && typeof data === "object") return data;
-  return {};
+  const content = notification?.request?.content || {};
+  const raw = content.data;
+  const data =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? { ...raw } : {};
+  const receivedAt = notification?.date
+    ? new Date(notification.date).toISOString()
+    : null;
+  return {
+    ...data,
+    title: content.title || data.title || "",
+    body: content.body || data.body || "",
+    createdAt: receivedAt,
+    category: data.category || null,
+  };
 }
 
 function notificationResponseKey(notification) {

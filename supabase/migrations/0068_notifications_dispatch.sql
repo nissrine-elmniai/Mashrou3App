@@ -270,8 +270,8 @@ begin
     p_user_id,
     'systeme',
     'test_push',
-    'إشعار تجريبي',
-    'إذا وصل هذا الإشعار فسلسلة الإرسال تعمل (قاعدة → Edge → Expo).',
+    'تمّ',
+    'هذا إشعار تجريبي — إن ظهر لكم فالقناة إلى الجهاز سليمة.',
     jsonb_build_object('screen', 'NotificationInbox'),
     'notifications',
     v_source

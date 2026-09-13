@@ -46,9 +46,9 @@ begin
       new.membre_id,
       'presence',
       'presence_absence',
-      'تسجيل غياب',
+      'الحصة',
       format(
-        'تم تسجيل غيابك في حصة «%s» يوم %s.',
+        'سُجِّل غياب في حصة «%s» يوم %s. إن كان هناك عذر، يمكن مراجعة المشرف.',
         v_nom,
         v_date_label
       ),

@@ -73,7 +73,8 @@ export function mapNotificationRow(row) {
 }
 
 /**
- * Liste paginée, plus récentes d'abord.
+ * Liste paginée des non-lues, plus récentes d'abord.
+ * Hors catégorie alertes (cloche / gate admin, autre flux).
  * @param {{ offset?: number, limit?: number }} [options]
  */
 export async function listMyNotifications(options = {}) {
@@ -89,6 +90,8 @@ export async function listMyNotifications(options = {}) {
         .select(
           "id, user_id, category, event_type, title, body, payload, source_table, source_id, read_at, created_at"
         )
+        .is("read_at", null)
+        .neq("category", "alertes")
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1),
       SUPABASE_TIMEOUT_MS,
@@ -115,6 +118,7 @@ export async function listMyNotifications(options = {}) {
   }
 }
 
+/** Compte les non-lues hors catégorie alertes (badge inbox). */
 export async function countUnreadNotifications() {
   if (!isSupabaseConfigured()) {
     return { ok: true, count: 0 };
@@ -124,7 +128,8 @@ export async function countUnreadNotifications() {
       supabase
         .from("notifications")
         .select("id", { count: "exact", head: true })
-        .is("read_at", null),
+        .is("read_at", null)
+        .neq("category", "alertes"),
       SUPABASE_TIMEOUT_MS,
       "عدّ الإشعارات غير المقروءة"
     );
@@ -177,7 +182,8 @@ export async function markAllNotificationsRead() {
         .from("notifications")
         .update({ read_at: new Date().toISOString() })
         .eq("user_id", userId)
-        .is("read_at", null),
+        .is("read_at", null)
+        .neq("category", "alertes"),
       SUPABASE_TIMEOUT_MS,
       "تعليم الكل كمقروء"
     );
@@ -199,8 +205,6 @@ export function emptyNotificationPreferences() {
     progression: true,
     alertes: true,
     systeme: true,
-    quietHoursStart: null,
-    quietHoursEnd: null,
   };
 }
 
@@ -214,8 +218,6 @@ function mapPrefsRow(row) {
     progression: row.progression !== false,
     alertes: row.alertes !== false,
     systeme: row.systeme !== false,
-    quietHoursStart: row.quiet_hours_start || null,
-    quietHoursEnd: row.quiet_hours_end || null,
   };
 }
 

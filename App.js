@@ -345,6 +345,14 @@ function RootNavigator() {
           }
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="NotificationDetail"
+          getComponent={() =>
+            require("./app/screens/notifications/NotificationDetailScreen")
+              .default
+          }
+          options={{ headerShown: false }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
     <PushNotificationBridge navigationRef={navigationRef} />

@@ -8,7 +8,7 @@ export default function ProfileNotificationsCard({ onPress }) {
   return (
     <View style={[styles.card, shadows.card]}>
       <ProfileCardHeader
-        titleIcon="notifications-outline"
+        titleIcon="options-outline"
         title="إعدادات الإشعارات"
         actionIcon="chevron-back"
         onAction={onPress}

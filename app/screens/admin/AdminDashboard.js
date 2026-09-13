@@ -36,8 +36,8 @@ import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 const QUICK_ACTIONS = [
   {
     key: "notify",
-    label: "إشعار",
-    shortLabel: "إشعار جديد",
+    label: "تنبيه",
+    shortLabel: "تنبيه جديد",
     route: "AdminNotifications",
     icon: Megaphone,
   },

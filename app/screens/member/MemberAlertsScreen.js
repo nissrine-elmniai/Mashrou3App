@@ -93,7 +93,7 @@ export default function MemberAlertsScreen({ navigation }) {
               <Ionicons name={arrowBack} size={22} color="#fff" />
             </TouchableOpacity>
             <View style={styles.headerTextWrap}>
-              <Text style={styles.headerTitle}>الإشعارات</Text>
+              <Text style={styles.headerTitle}>التنبيهات</Text>
            
             </View>
           </View>
@@ -124,7 +124,7 @@ export default function MemberAlertsScreen({ navigation }) {
                 size={36}
                 color={colors.primary}
               />
-              <EmptyState text="لا توجد إشعارات جديدة" />
+              <EmptyState text="لا توجد تنبيهات جديدة" />
               <Text style={styles.emptyHint}>
                 تظهر هنا فقط التنبيهات المرسلة بعد تاريخ تسجيلك
               </Text>

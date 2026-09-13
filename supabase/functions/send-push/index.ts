@@ -1,7 +1,9 @@
 // Deploy :
 //   npx supabase functions deploy send-push
 // Secrets auto : SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-// Appel attendu : Authorization Bearer <service_role> (pg_net / cron).
+// Appel attendu : Authorization Bearer JWT service_role (pg_net / cron).
+// Auth : rôle JWT (gateway a déjà validé la signature). Clé opaque sb_secret_
+// acceptée en repli si elle égale SUPABASE_SERVICE_ROLE_KEY.
 // Claim atomique : RPC claim_pending_push_notifications (SKIP LOCKED).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -36,6 +38,7 @@ type NotificationRow = {
   payload: Record<string, unknown> | null;
   push_sent_at: string | null;
   push_attempts: number;
+  read_at?: string | null;
 };
 
 type PushTokenRow = {
@@ -58,9 +61,10 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: "إعدادات الخادم ناقصة" }, 500);
     }
 
-    const authHeader = req.headers.get("Authorization") || "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!token || token !== serviceKey) {
+    const authHeader = req.headers.get("Authorization");
+    const auth = authorizeServiceRole(authHeader, serviceKey);
+    if (!auth.ok) {
+      console.error("send-push 401:", auth.reason);
       return json({ ok: false, error: "غير مصرح" }, 401);
     }
 
@@ -130,6 +134,14 @@ Deno.serve(async (req) => {
       const enabled = !col || prefs == null || prefs[col] !== false;
 
       if (!enabled) {
+        await markProcessed(admin, row.id, row.push_attempts, {
+          terminal: true,
+          error: null,
+        });
+        continue;
+      }
+
+      if (row.read_at) {
         await markProcessed(admin, row.id, row.push_attempts, {
           terminal: true,
           error: null,
@@ -313,6 +325,55 @@ async function sendExpoBatch(
       status: "error",
       message: e instanceof Error ? e.message : "expo_fetch",
     }));
+  }
+}
+
+function authorizeServiceRole(
+  authHeader: string | null,
+  serviceKey: string
+): { ok: true } | { ok: false; reason: string } {
+  if (!authHeader || !authHeader.trim()) {
+    return { ok: false, reason: "header absent" };
+  }
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    return { ok: false, reason: "header absent" };
+  }
+
+  const payload = decodeJwtPayload(token);
+  if (payload) {
+    const role = payload.role;
+    if (role === "service_role") {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason: `rôle inattendu: ${role == null ? "absent" : String(role)}`,
+    };
+  }
+
+  // Pas un JWT : clé opaque (sb_secret_ ou secret env). Pas de comparaison
+  // du JWT legacy à la variable d'environnement — ça casse à la rotation.
+  if (token === serviceKey) {
+    return { ok: true };
+  }
+  return { ok: false, reason: "format invalide" };
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    const jsonText = atob(b64 + pad);
+    const payload = JSON.parse(jsonText);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return null;
+    }
+    return payload as Record<string, unknown>;
+  } catch {
+    return null;
   }
 }
 

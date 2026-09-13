@@ -1,15 +1,7 @@
--- 0072_presence_rappel_cron_15min.sql
--- 1) Cadence du job presence-reminder-check : */15 (au lieu de 0 */6).
---    check_presence_reminders() n'est PAS modifié : le ON CONFLICT …
---    WHERE dernier_rappel_le >= 12 h empêche tout UPDATE (donc tout
---    trigger) tant que 12 h ne sont pas écoulées. INSERT initial inchangé.
--- 2) Textes du trigger 0070 : 1er envoi vs relance (même event_type / source_id).
---
--- Borne basse de la fenêtre = heure_debut (inchangée). Avec */15 le 1er
--- rappel part ~15 min après le DÉBUT, pas après la fin : le texte nb<=1
--- reste donc neutre (pas « انتهت »). Décalage de la détection vers
--- heure_fin : à traiter plus tard — variante 1 (borne basse = heure_fin,
--- window_end = heure_debut + 48 h inchangé).
+-- 0075_notification_copy.sql
+-- Reformulation des titres/corps (choix produit, lot 1.5 B).
+-- Logique inchangée : mêmes INSERT, payloads, source_id.
+-- 0068 / 0071 / 0072 déjà collés : ne pas les recoller.
 
 create or replace function private.notify_presence_rappel()
 returns trigger
@@ -125,31 +117,121 @@ begin
 end;
 $$;
 
-revoke all on function private.notify_presence_rappel() from public;
-grant execute on function private.notify_presence_rappel() to postgres, service_role;
-
-do $$
+create or replace function private.notify_presence_absence()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 declare
-  v_jobid bigint;
+  v_nom text;
+  v_date_label text;
 begin
-  select jobid into v_jobid
-  from cron.job
-  where jobname = 'presence-reminder-check';
-
-  if v_jobid is not null then
-    perform cron.unschedule(v_jobid);
+  if new.statut::text is distinct from 'absent' then
+    return new;
   end if;
 
-  perform cron.schedule(
-    'presence-reminder-check',
-    '*/15 * * * *',
-    $cron$select public.check_presence_reminders();$cron$
-  );
-exception
-  when undefined_table then
-    raise notice 'pg_cron non disponible : planifier check_presence_reminders() manuellement (*/15).';
-  when insufficient_privilege then
-    raise notice 'Privilèges pg_cron insuffisants : cadence */15 via le dashboard Supabase.';
-end $$;
+  if tg_op = 'UPDATE' and old.statut::text is not distinct from 'absent' then
+    return new;
+  end if;
+
+  select s.nom into v_nom
+  from public.seances s
+  where s.id = new.seance_id;
+
+  v_nom := coalesce(nullif(trim(v_nom), ''), 'الحصة');
+  v_date_label := to_char(new.date, 'YYYY/MM/DD');
+
+  begin
+    insert into public.notifications (
+      user_id,
+      category,
+      event_type,
+      title,
+      body,
+      payload,
+      source_table,
+      source_id
+    )
+    values (
+      new.membre_id,
+      'presence',
+      'presence_absence',
+      'الحصة',
+      format(
+        'سُجِّل غياب في حصة «%s» يوم %s. إن كان هناك عذر، يمكن مراجعة المشرف.',
+        v_nom,
+        v_date_label
+      ),
+      jsonb_build_object(
+        'screen', 'MemberDashboardScreen',
+        'params', jsonb_build_object(),
+        'seance_id', new.seance_id,
+        'date', new.date,
+        'event_type', 'presence_absence'
+      ),
+      'presences',
+      new.id::text
+    );
+  exception
+    when unique_violation then
+      null;
+    when others then
+      raise notice 'notify_presence_absence: %', SQLERRM;
+  end;
+
+  return new;
+end;
+$$;
+
+create or replace function public.enqueue_test_notification(p_user_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_id uuid;
+  v_source text := gen_random_uuid()::text;
+begin
+  if v_uid is null then
+    raise exception 'يجب تسجيل الدخول';
+  end if;
+  if p_user_id is null then
+    raise exception 'معرّف المستخدم مفقود';
+  end if;
+  if p_user_id is distinct from v_uid and not private.is_admin() then
+    raise exception 'غير مصرح';
+  end if;
+  if not exists (select 1 from public.profiles where id = p_user_id) then
+    raise exception 'المستخدم غير موجود';
+  end if;
+
+  insert into public.notifications (
+    user_id,
+    category,
+    event_type,
+    title,
+    body,
+    payload,
+    source_table,
+    source_id
+  )
+  values (
+    p_user_id,
+    'systeme',
+    'test_push',
+    'تمّ',
+    'هذا إشعار تجريبي — إن ظهر لكم فالقناة إلى الجهاز سليمة.',
+    jsonb_build_object('screen', 'NotificationInbox'),
+    'notifications',
+    v_source
+  )
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
 
 notify pgrst, 'reload schema';

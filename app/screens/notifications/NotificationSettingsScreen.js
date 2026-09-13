@@ -169,7 +169,7 @@ export default function NotificationSettingsScreen({ navigation }) {
             )}
           </View>
           <Text style={styles.hint}>
-            يسجّل هذا الجهاز لاستلام التنبيهات حتى عند إغلاق التطبيق
+            يسجّل هذا الجهاز لاستلام الإشعارات حتى عند إغلاق التطبيق
           </Text>
         </View>
 
