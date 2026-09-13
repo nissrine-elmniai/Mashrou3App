@@ -8,6 +8,7 @@ import { colors } from "../constants/theme";
 import { fonts } from "../constants/rtl";
 import { handleAuthDeepLink } from "../lib/authLinking";
 import { supabase } from "../lib/supabase";
+import PushNotificationBridge from "../components/PushNotificationBridge";
 
 import LoginScreen from "../screens/LoginScreen";
 import SupervisorLoginScreen from "../screens/supervisor/SupervisorLoginScreen";
@@ -97,6 +98,34 @@ function sharedChatScreens(Stack) {
       <Stack.Screen
         name="ResetPassword"
         component={ResetPasswordScreen}
+        options={hidden}
+      />
+    </>
+  );
+}
+
+function notificationScreens(Stack) {
+  return (
+    <>
+      <Stack.Screen
+        name="NotificationInbox"
+        getComponent={() =>
+          require("../screens/notifications/NotificationInboxScreen").default
+        }
+        options={hidden}
+      />
+      <Stack.Screen
+        name="NotificationSettings"
+        getComponent={() =>
+          require("../screens/notifications/NotificationSettingsScreen").default
+        }
+        options={hidden}
+      />
+      <Stack.Screen
+        name="NotificationDetail"
+        getComponent={() =>
+          require("../screens/notifications/NotificationDetailScreen").default
+        }
         options={hidden}
       />
     </>
@@ -197,6 +226,7 @@ function AdminStack() {
         component={SupervisorMemberProfileScreen}
         options={hidden}
       />
+      {notificationScreens(AdminStackNav)}
       {sharedChatScreens(AdminStackNav)}
     </AdminStackNav.Navigator>
   );
@@ -238,6 +268,7 @@ function SupervisorStack() {
         component={SupervisorAttendanceDetailScreen}
         options={hidden}
       />
+      {notificationScreens(SupervisorStackNav)}
       {sharedChatScreens(SupervisorStackNav)}
     </SupervisorStackNav.Navigator>
   );
@@ -289,6 +320,7 @@ function MemberStack() {
         getComponent={() => require("../screens/member/MemberAlertsScreen").default}
         options={hidden}
       />
+      {notificationScreens(MemberStackNav)}
       {sharedChatScreens(MemberStackNav)}
     </MemberStackNav.Navigator>
   );
@@ -345,8 +377,11 @@ export default function RootNavigator() {
   }, []);
 
   return (
-    <NavigationContainer ref={navigationRef} linking={linking} direction="rtl">
-      {signedIn ? stackForRole(currentUser.role) : <AuthStack />}
-    </NavigationContainer>
+    <>
+      <NavigationContainer ref={navigationRef} linking={linking} direction="rtl">
+        {signedIn ? stackForRole(currentUser.role) : <AuthStack />}
+      </NavigationContainer>
+      <PushNotificationBridge navigationRef={navigationRef} />
+    </>
   );
 }

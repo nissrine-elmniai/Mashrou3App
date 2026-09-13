@@ -281,7 +281,7 @@ export default function AdminSeasonsScreen({ navigation }) {
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="التنبيهات"
+          accessibilityLabel="طلبات التسجيل"
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
         </TouchableOpacity>

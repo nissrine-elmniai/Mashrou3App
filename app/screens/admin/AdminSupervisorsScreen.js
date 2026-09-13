@@ -312,6 +312,8 @@ export default function AdminSupervisorsScreen({ navigation }) {
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="طلبات التسجيل"
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
         </TouchableOpacity>
