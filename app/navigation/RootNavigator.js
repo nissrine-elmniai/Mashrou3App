@@ -334,8 +334,15 @@ function stackForRole(role) {
 
 export default function RootNavigator() {
   const navigationRef = useRef(null);
+  const [navTick, setNavTick] = React.useState(0);
   const { currentUser } = useApp();
   const signedIn = Boolean(currentUser?.role);
+
+  useEffect(() => {
+    if (!signedIn) return undefined;
+    const id = requestAnimationFrame(() => setNavTick((n) => n + 1));
+    return () => cancelAnimationFrame(id);
+  }, [signedIn]);
 
   useEffect(() => {
     const goResetPassword = () => {
@@ -378,10 +385,15 @@ export default function RootNavigator() {
 
   return (
     <>
-      <NavigationContainer ref={navigationRef} linking={linking} direction="rtl">
+      <NavigationContainer
+        ref={navigationRef}
+        linking={linking}
+        direction="rtl"
+        onReady={() => setNavTick((n) => n + 1)}
+      >
         {signedIn ? stackForRole(currentUser.role) : <AuthStack />}
       </NavigationContainer>
-      <PushNotificationBridge navigationRef={navigationRef} />
+      <PushNotificationBridge navigationRef={navigationRef} navTick={navTick} />
     </>
   );
 }
