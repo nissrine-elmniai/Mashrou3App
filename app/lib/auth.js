@@ -90,32 +90,6 @@ export async function fetchProfile(userId) {
   return { ok: true, profile: data };
 }
 
-/**
- * Ligne legacy `public.users` (nom, prenom, telephone, role FR).
- * Absente sur certaines bases — retourne user: null sans erreur.
- */
-export async function fetchAppUserRow(userId) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  if (!userId) {
-    return { ok: false, error: "معرّف المستخدم مفقود" };
-  }
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", userId)
-    .maybeSingle();
-  if (error) {
-    const msg = error?.message || "";
-    if (/relation.*does not exist|Could not find the table/i.test(msg)) {
-      return { ok: true, user: null };
-    }
-    return { ok: false, error: mapSupabaseAuthError(error) };
-  }
-  return { ok: true, user: data || null };
-}
-
 function pickProfileText(value) {
   const text = String(value ?? "").trim();
   return text || null;
@@ -195,7 +169,6 @@ function mapProfilesWriteError(error) {
  * Colonnes envoyées uniquement si présentes dans `fields` :
  * first_name, last_name (toujours), phone / genre / date_naissance (optionnels).
  * Jamais email, canonical_email, account_status, created_at, role, roles.
- * Recopie best-effort vers public.users (legacy) si la table existe.
  */
 export async function updateOwnProfile(userId, fields = {}) {
   if (!isSupabaseConfigured()) {
@@ -256,19 +229,6 @@ export async function updateOwnProfile(userId, fields = {}) {
     // RLS qui bloque sans lever d'erreur : 0 ligne renvoyée par .select()
     if (!data) {
       return { ok: false, error: "تعذّر حفظ التعديلات" };
-    }
-
-    try {
-      const usersPatch = {
-        nom: lastName,
-        prenom: firstName,
-      };
-      if (hasPhone) {
-        usersPatch.telephone = phone;
-      }
-      await supabase.from("users").update(usersPatch).eq("id", userId);
-    } catch {
-      /* table users absente ou RLS — profiles reste la source de vérité */
     }
 
     return { ok: true, profile: data };

@@ -15,7 +15,7 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import { ROLE_LABELS } from "../../constants/roles";
-import { fetchProfile, fetchAppUserRow, formatBirthDateLabel, toSlashDate, isPlaceholderBirthDate } from "../../lib/auth";
+import { fetchProfile, formatBirthDateLabel, toSlashDate, isPlaceholderBirthDate } from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
 import {
   getPushNotificationsToggleState,
@@ -75,7 +75,7 @@ function SectionCard({ title, subtitle, onEdit, children }) {
   );
 }
 
-/** Profil superviseur — champs affichés : identité + users + profiles (dates). */
+/** Profil superviseur — identité et dates depuis profiles. */
 export default function SupervisorProfileScreen({ navigation }) {
   const {
     currentUser,
@@ -85,7 +85,6 @@ export default function SupervisorProfileScreen({ navigation }) {
   } = useApp();
   const insets = useSafeAreaInsets();
   const [profileRow, setProfileRow] = useState(null);
-  const [usersRow, setUsersRow] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
@@ -155,13 +154,9 @@ export default function SupervisorProfileScreen({ navigation }) {
     let cancelled = false;
     setLoadingProfile(true);
     (async () => {
-      const [profileRes, usersRes] = await Promise.all([
-        fetchProfile(authId),
-        fetchAppUserRow(authId),
-      ]);
+      const profileRes = await fetchProfile(authId);
       if (cancelled) return;
       if (profileRes.ok) setProfileRow(profileRes.profile);
-      if (usersRes.ok) setUsersRow(usersRes.user);
       setLoadingProfile(false);
     })();
     return () => {
@@ -170,15 +165,15 @@ export default function SupervisorProfileScreen({ navigation }) {
   }, [authId]);
 
   const firstName =
-    profileRow?.first_name || usersRow?.prenom || currentUser?.firstName || "";
+    profileRow?.first_name || currentUser?.firstName || "";
   const lastName =
-    profileRow?.last_name || usersRow?.nom || currentUser?.lastName || "";
+    profileRow?.last_name || currentUser?.lastName || "";
   const fullName = `${firstName} ${lastName}`.trim();
   const roleKey = profileRow?.role || currentUser?.role;
   const phone =
-    profileRow?.phone || usersRow?.telephone || currentUser?.phone;
+    profileRow?.phone || currentUser?.phone;
   const email =
-    usersRow?.email || profileRow?.email || currentUser?.email;
+    profileRow?.email || currentUser?.email;
   const gender =
     formatGenderLabel(profileRow?.genre) ||
     formatGenderLabel(currentUser?.gender);
@@ -191,16 +186,6 @@ export default function SupervisorProfileScreen({ navigation }) {
     (savedProfile) => {
       if (savedProfile) {
         setProfileRow(savedProfile);
-        setUsersRow((prev) =>
-          prev
-            ? {
-                ...prev,
-                prenom: savedProfile.first_name ?? prev.prenom,
-                nom: savedProfile.last_name ?? prev.nom,
-                telephone: savedProfile.phone ?? prev.telephone,
-              }
-            : prev
-        );
       }
       updateCurrentUserProfile({
         firstName: savedProfile?.first_name ?? firstName,

@@ -19,7 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { rtlText, row, arrowBack } from "../../constants/rtl";
 import { useApp } from "../../context/AppContext";
 import { formatAccountStatusLabel } from "../../constants/roles";
-import { fetchProfile, fetchAppUserRow, formatBirthDateLabel } from "../../lib/auth";
+import { fetchProfile, formatBirthDateLabel } from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
@@ -102,7 +102,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const [tab, setTab] = useState("profile");
   const [loading, setLoading] = useState(true);
   const [profileRow, setProfileRow] = useState(null);
-  const [usersRow, setUsersRow] = useState(null);
   const [seances, setSeances] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -117,10 +116,9 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       let cancelled = false;
       const saisonId = activeSeason?.id || null;
       (async () => {
-        const [profRes, userRes, seaRes, inscRes, memRes, progRes] =
+        const [profRes, seaRes, inscRes, memRes, progRes] =
           await Promise.all([
             fetchProfile(supervisorId),
-            fetchAppUserRow(supervisorId),
             getAllSeances({ saisonId }),
             getAllAcceptedInscriptions({ saisonId }),
             getMemberProfiles(),
@@ -128,7 +126,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
           ]);
         if (cancelled) return;
         if (profRes.ok) setProfileRow(profRes.profile);
-        if (userRes.ok) setUsersRow(userRes.user);
         if (seaRes.ok) setSeances(seaRes.seances);
         if (inscRes.ok) setInscriptions(inscRes.inscriptions);
         if (memRes.ok) setProfiles(memRes.members);
@@ -144,7 +141,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const firstName = profileRow?.first_name || params.firstName || "";
   const lastName = profileRow?.last_name || params.lastName || "";
   const fullName = `${firstName} ${lastName}`.trim();
-  const email = profileRow?.email || usersRow?.email || params.email || "";
+  const email = profileRow?.email || params.email || "";
   const avatarUrl = profileRow?.avatar_url || params.avatarUrl || null;
 
   const supervisorSeances = useMemo(
@@ -311,7 +308,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               <InfoRow
                 icon="call-outline"
                 label={L.phone}
-                value={usersRow?.telephone || profileRow?.phone}
+                value={profileRow?.phone}
               />
               <InfoRow
                 icon="male-female-outline"
