@@ -1,10 +1,20 @@
 import { SEASON_TYPES } from "../constants/roles";
 
+function seasonTypeOf(season) {
+  return String(season?.type || "")
+    .trim()
+    .toLowerCase();
+}
+
 /** Musim ordinaire actif (ou le premier musim ordinaire en secours). */
 export function getActiveRegularSeason(seasons = []) {
+  const list = seasons || [];
   return (
-    seasons.find((s) => s.active && s.type === SEASON_TYPES.REGULAR) ||
-    seasons.find((s) => s.type === SEASON_TYPES.REGULAR) ||
+    list.find(
+      (s) => s.active && seasonTypeOf(s) === SEASON_TYPES.REGULAR
+    ) ||
+    list.find((s) => seasonTypeOf(s) === SEASON_TYPES.REGULAR) ||
+    list.find((s) => s.active) ||
     null
   );
 }

@@ -30,7 +30,7 @@ function rowToSeason(row) {
   return {
     id: row.id,
     name: row.name,
-    type: row.type,
+    type: String(row.type || "regular").trim().toLowerCase() || "regular",
     startDate: row.start_date,
     endDate: row.end_date,
     version: row.version != null ? Number(row.version) : null,

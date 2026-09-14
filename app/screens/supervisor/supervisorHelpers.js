@@ -368,7 +368,7 @@ export function formatMemberCount(count) {
 /** Libellé bannière : alertes admin non acquittées (RG9). */
 export function formatNewAlertsBannerLabel(count) {
   const n = Number(count) || 0;
-  if (n === 1) return "لديك تنبيه واحد جديد";
-  if (n === 2) return "لديك تنبيهان جديدان";
-  return `لديك ${n} تنبيهات جديدة`;
+  if (n === 1) return "لديك إشعار واحد جديد";
+  if (n === 2) return "لديك إشعاران جديدان";
+  return `لديك ${n} إشعارات جديدة`;
 }

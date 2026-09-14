@@ -14,7 +14,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import ProfileAvatar from "../../components/ProfileAvatar";
-import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import {
@@ -22,6 +21,7 @@ import {
   SUPERVISOR_FETCH_DEGRADED_MESSAGE,
 } from "./hooks/useSupervisorMembers";
 import { getUnacknowledgedAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
@@ -36,6 +36,7 @@ import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { formatUnreadBadge, countUnseenConversations } from "../../lib/messagesApi";
 import { formatCountBadge } from "../../data/seenAt";
+import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -57,11 +58,13 @@ const NAV_TABS = [
  * les écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
 export default function SupervisorDashboard({ navigation }) {
-  const { currentUser, logout } = useApp();
+  const { currentUser, logout, seasons } = useApp();
 
   const [tab, setTab] = useState("home");
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [pendingAlertCount, setPendingAlertCount] = useState(0);
+  const { count: unreadNotifCount } = useUnreadNotifications();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
 
   const {
     myGroups,
@@ -133,9 +136,13 @@ export default function SupervisorDashboard({ navigation }) {
 
   // Compte non-acquitté centralisé (RG9) : absence de alert_acknowledgments.alert_id.
   const loadPendingAlertCount = useCallback(async () => {
-    const res = await getUnacknowledgedAlerts();
+    const res = await getUnacknowledgedAlerts({
+      scopeToCurrentSeason: true,
+      saisonId: activeSeasonId,
+      role: "supervisor",
+    });
     if (res.ok) setPendingAlertCount(res.alerts.length);
-  }, []);
+  }, [activeSeasonId]);
 
   useEffect(() => {
     loadPendingAlertCount();
@@ -171,7 +178,8 @@ export default function SupervisorDashboard({ navigation }) {
     [markPresenceSeen, markMembersSeen, markProgressSeen]
   );
 
-  const openAlerts = () => navigation.navigate("SupervisorAlerts");
+  const openInbox = () => navigation.navigate("SupervisorAlerts");
+  const headerBadgeCount = pendingAlertCount + unreadNotifCount;
   const messageMembers = useMemo(
     () =>
       (members || []).map((m) => ({
@@ -201,19 +209,18 @@ export default function SupervisorDashboard({ navigation }) {
               <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={22} color="white" />
               </TouchableOpacity>
-              <InboxHeaderButton navigation={navigation} color="white" />
               <TouchableOpacity
                 style={styles.headerIconWrap}
-                onPress={openAlerts}
+                onPress={openInbox}
                 hitSlop={8}
                 accessibilityRole="button"
-                accessibilityLabel="تنبيهات الإدارة"
+                accessibilityLabel="الإشعارات"
               >
                 <Ionicons name="notifications-outline" size={22} color="white" />
-                {pendingAlertCount > 0 ? (
+                {headerBadgeCount > 0 ? (
                   <View style={styles.headerBellBadge}>
                     <Text style={styles.headerBellBadgeText}>
-                      {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                      {headerBadgeCount > 9 ? "9+" : headerBadgeCount}
                     </Text>
                   </View>
                 ) : null}

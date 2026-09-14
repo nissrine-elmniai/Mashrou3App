@@ -21,11 +21,11 @@ import SupervisorDashboard from "../screens/supervisor/SupervisorDashboard";
 import ChatConversationScreen from "../screens/supervisor/ChatConversationScreen";
 import SupervisorMemberProfileScreen from "../screens/supervisor/MemberProfileScreen";
 import SupervisorProfileScreen from "../screens/supervisor/SupervisorProfileScreen";
-import SupervisorAlertsScreen from "../screens/supervisor/SupervisorAlertsScreen";
 import SupervisorAttendanceDetailScreen from "../screens/supervisor/SupervisorAttendanceDetailScreen";
 import SupervisorMessagesScreen from "../screens/supervisor/SupervisorMessagesScreen";
 import GroupChatScreen from "../screens/chat/GroupChatScreen";
 import GroupInfoScreen from "../screens/chat/GroupInfoScreen";
+import UnifiedInboxScreen from "../screens/notifications/UnifiedInboxScreen";
 
 const AuthStackNav = createStackNavigator();
 const AdminStackNav = createStackNavigator();
@@ -109,9 +109,7 @@ function notificationScreens(Stack) {
     <>
       <Stack.Screen
         name="NotificationInbox"
-        getComponent={() =>
-          require("../screens/notifications/NotificationInboxScreen").default
-        }
+        component={UnifiedInboxScreen}
         options={hidden}
       />
       <Stack.Screen
@@ -255,7 +253,7 @@ function SupervisorStack() {
       />
       <SupervisorStackNav.Screen
         name="SupervisorAlerts"
-        component={SupervisorAlertsScreen}
+        component={UnifiedInboxScreen}
         options={hidden}
       />
       <SupervisorStackNav.Screen
@@ -317,7 +315,7 @@ function MemberStack() {
       />
       <MemberStackNav.Screen
         name="MemberAlerts"
-        getComponent={() => require("../screens/member/MemberAlertsScreen").default}
+        component={UnifiedInboxScreen}
         options={hidden}
       />
       {notificationScreens(MemberStackNav)}
