@@ -124,8 +124,34 @@ export async function respondToInvitation({ invitationId, statut, dateChoisie = 
   }
 }
 
+const MY_TEST_SELECT =
+  "*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at, type, date_test, quran_quantity, form_url), resultat:test_resultats!test_resultats_test_invitation_id_fkey(id, note, commentaire, created_at)";
+
+/** Aplatit invitation + résultat pour mapMemberTestToExam. */
+function flattenInvitationResult(row) {
+  const resultatRaw = row?.resultat;
+  const resultat = Array.isArray(resultatRaw) ? resultatRaw[0] : resultatRaw;
+  if (!resultat) return null;
+  const test = row?.test || {};
+  return {
+    id: resultat.id,
+    note: resultat.note,
+    created_at: resultat.created_at,
+    test,
+    invitation: {
+      id: row.id,
+      membre_id: row.membre_id,
+      test_id: row.test_id,
+      statut: row.statut,
+      test,
+    },
+  };
+}
+
 /**
- * Résultats de tests du membre connecté (via ses invitations).
+ * Résultats de tests du membre connecté.
+ * Filtre sur test_invitations.membre_id (colonne réelle) — PostgREST
+ * n'accepte pas .eq("invitation.membre_id", …) sur un alias de relation.
  * @returns { ok, results }
  */
 export async function getMyTestResults() {
@@ -140,22 +166,71 @@ export async function getMyTestResults() {
   try {
     const { data, error } = await withTimeout(
       supabase
-        .from("test_resultats")
-        .select(
-          "*, invitation:test_invitations!test_resultats_test_invitation_id_fkey(*, test:tests!test_invitations_test_id_fkey(titre, created_at))"
-        )
-        .eq("invitation.membre_id", userId)
+        .from("test_invitations")
+        .select(MY_TEST_SELECT)
+        .eq("membre_id", userId)
         .order("created_at", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
       "قراءة نتائج الاختبار"
     );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "test_resultats") };
+    if (!error) {
+      return {
+        ok: true,
+        results: (data || []).map(flattenInvitationResult).filter(Boolean),
+      };
     }
-    return { ok: true, results: data || [] };
+
+    const twoStep = await getMyTestResultsByInvitationIds(userId);
+    if (twoStep.ok) return twoStep;
+    return { ok: false, error: mapTableError(error, "test_invitations") };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+async function getMyTestResultsByInvitationIds(userId) {
+  const { data: invitations, error: invErr } = await withTimeout(
+    supabase
+      .from("test_invitations")
+      .select(
+        "*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at, type, date_test, quran_quantity, form_url)"
+      )
+      .eq("membre_id", userId)
+      .order("created_at", { ascending: false }),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة دعوات الاختبار"
+  );
+  if (invErr) {
+    return { ok: false, error: mapTableError(invErr, "test_invitations") };
+  }
+  const rows = invitations || [];
+  const ids = rows.map((row) => row.id).filter(Boolean);
+  if (ids.length === 0) {
+    return { ok: true, results: [] };
+  }
+
+  const { data: notes, error: resErr } = await withTimeout(
+    supabase
+      .from("test_resultats")
+      .select("id, note, commentaire, created_at, test_invitation_id")
+      .in("test_invitation_id", ids)
+      .order("created_at", { ascending: false }),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة نتائج الاختبار"
+  );
+  if (resErr) {
+    return { ok: false, error: mapTableError(resErr, "test_resultats") };
+  }
+
+  const byInvitation = new Map(rows.map((row) => [row.id, row]));
+  const results = (notes || [])
+    .map((resultat) => {
+      const invitation = byInvitation.get(resultat.test_invitation_id);
+      if (!invitation) return null;
+      return flattenInvitationResult({ ...invitation, resultat });
+    })
+    .filter(Boolean);
+  return { ok: true, results };
 }
 
 export const TEST_TYPE_LABELS = {
@@ -306,6 +381,89 @@ export async function recordTestResult({ invitationId, note, commentaire = null 
     return { ok: true, result: data };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+export function mapTestToDashboardExam(test) {
+  const statut = test?.statut;
+  return {
+    id: test.id,
+    title: test.titre || "اختبار",
+    status:
+      statut === "annule"
+        ? "cancelled"
+        : statut === "termine"
+          ? "completed"
+          : "planned",
+    createdAt: test.created_at || null,
+    date: test.date_test || test.created_at || null,
+  };
+}
+
+export function mapMemberTestToExam(row) {
+  const invitation = row?.invitation || row;
+  const test = invitation?.test || row?.test || {};
+  const note = row?.note;
+  return {
+    id: row?.id || invitation?.id,
+    title: test.titre || "اختبار",
+    date: row?.created_at || test.date_test || invitation?.created_at || null,
+    score: note == null ? "" : String(note),
+    level: TEST_TYPE_LABELS[test.type] || test.titre || "",
+    memberId: invitation?.membre_id || null,
+  };
+}
+
+/** Compteur admin (head request). */
+export async function countTestsAdmin() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", count: 0 };
+  }
+  try {
+    const { count, error } = await withTimeout(
+      supabase.from("tests").select("id", { count: "exact", head: true }),
+      SUPABASE_TIMEOUT_MS,
+      "عدّ الاختبارات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "tests"), count: 0 };
+    }
+    return { ok: true, count: count || 0 };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      count: 0,
+    };
+  }
+}
+
+/** Derniers tests pour le fil d'activité admin. */
+export async function listRecentTestsAdmin(limit = 10) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", tests: [] };
+  }
+  const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("tests")
+        .select("id, titre, statut, created_at, date_test")
+        .order("created_at", { ascending: false })
+        .limit(take),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة آخر الاختبارات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "tests"), tests: [] };
+    }
+    return { ok: true, tests: data || [] };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      tests: [],
+    };
   }
 }
 

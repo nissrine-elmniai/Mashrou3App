@@ -23,6 +23,7 @@ import {
   latestProgressionRow,
 } from "../../lib/progressApi";
 import { SEASON_TYPES } from "../../constants/roles";
+import { NOTIF_CATEGORY } from "../../constants/notifications";
 import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
 import { getMyObjectif } from "../../lib/objectifsApi";
 import { colors, radii, shadows } from "../../constants/theme";
@@ -38,7 +39,7 @@ import {
   getVisibleAlerts,
   getUnacknowledgedAlerts,
   subscribeToNewAlerts,
-  resolveMemberAlertCutoff,
+  resolveMemberSeasonAlertCutoff,
 } from "../../lib/alertsApi";
 import {
   getMemberProfileFields,
@@ -52,6 +53,7 @@ import {
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
+import { getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
 import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
@@ -162,10 +164,12 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser,
     seasons,
     registrations,
-    exams,
     logout,
     submitSeasonRegistration,
     getNotificationsForUser,
+    getMenuBadgeCounts,
+    markCategoryNotificationsRead,
+    notifications,
     getMemberPrograms,
     updateCurrentUserAvatar,
   } = useApp();
@@ -217,20 +221,25 @@ export default function MemberDashboardScreen({ navigation }) {
     absentCount: 0,
     records: [],
   });
+  const [myExams, setMyExams] = useState([]);
 
   const messagesUnread = useMemo(() => {
     const dm = sumUnreadForContactIds(threads, [sessionState.superviseurId]);
     return dm + (Number(groupsUnread) || 0);
   }, [threads, groupsUnread, sessionState.superviseurId]);
 
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
+
   const loadProgressEntries = useCallback(async () => {
     setActivitiesLoading(true);
-    const res = await getMyProgress();
+    const res = await getMyProgress({
+      saisonId: activeSeasonId || undefined,
+    });
     if (res.ok) {
       setProgressEntries(res.entries || []);
     }
     setActivitiesLoading(false);
-  }, []);
+  }, [activeSeasonId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -238,14 +247,34 @@ export default function MemberDashboardScreen({ navigation }) {
     }, [loadProgressEntries])
   );
 
+  const loadMyExams = useCallback(async () => {
+    const res = await getMyTestResults();
+    if (!res.ok) {
+      setMyExams([]);
+      return;
+    }
+    setMyExams((res.results || []).map(mapMemberTestToExam));
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMyExams();
+    }, [loadMyExams])
+  );
+
   const loadAlerts = useCallback(async () => {
+    const scope = {
+      scopeToCurrentSeason: true,
+      saisonId: activeSeasonId,
+      role: "member",
+    };
     const [visible, pending] = await Promise.all([
-      getVisibleAlerts({ sinceMemberRegistration: true, limit: 3 }),
-      getUnacknowledgedAlerts({ sinceMemberRegistration: true }),
+      getVisibleAlerts({ ...scope, limit: 3 }),
+      getUnacknowledgedAlerts(scope),
     ]);
     if (visible.ok) setAdminAlerts(visible.alerts);
     if (pending.ok) setPendingAlertCount(pending.alerts.length);
-  }, []);
+  }, [activeSeasonId]);
 
   useEffect(() => {
     loadAlerts();
@@ -259,15 +288,15 @@ export default function MemberDashboardScreen({ navigation }) {
   );
 
   useEffect(() => {
-    if (!authId) {
+    if (!authId || !activeSeasonId) {
       setActivitySinceMs(null);
-      setActivityCutoffReady(false);
+      setActivityCutoffReady(!!authId && !activeSeasonId);
       return undefined;
     }
     let cancelled = false;
     setActivityCutoffReady(false);
     (async () => {
-      const res = await resolveMemberAlertCutoff(authId);
+      const res = await resolveMemberSeasonAlertCutoff(authId, activeSeasonId);
       if (cancelled) return;
       if (res.ok && res.sinceIso) {
         const ms = new Date(res.sinceIso).getTime();
@@ -280,7 +309,7 @@ export default function MemberDashboardScreen({ navigation }) {
     return () => {
       cancelled = true;
     };
-  }, [authId]);
+  }, [authId, activeSeasonId]);
 
   const openRegular = getOpenRegistrationSeasons(seasons, SEASON_TYPES.REGULAR);
   const openSummer = getOpenRegistrationSeasons(seasons, SEASON_TYPES.SUMMER);
@@ -470,7 +499,6 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser?.hifzAmount,
   ]);
 
-  const myExams = exams.filter((e) => e.memberId === currentUser?.id);
   const myMemberPrograms = getMemberPrograms();
 
   const activePrograms = myMemberPrograms.length;
@@ -555,7 +583,61 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const userNotifications = useMemo(
     () => getNotificationsForUser(currentUser),
-    [currentUser, getNotificationsForUser]
+    [currentUser, getNotificationsForUser, notifications]
+  );
+
+  const memberMenuBadges = useMemo(() => {
+    const sinceIso =
+      Number.isFinite(activitySinceMs) && activitySinceMs > 0
+        ? new Date(activitySinceMs).toISOString()
+        : null;
+    return getMenuBadgeCounts(currentUser, {
+      saisonId: activeSeasonId,
+      sinceIso,
+    });
+  }, [
+    getMenuBadgeCounts,
+    currentUser,
+    activeSeasonId,
+    activitySinceMs,
+    notifications,
+  ]);
+
+  const tabsWithBadges = useMemo(
+    () =>
+      TABS.map((t) => {
+        if (t.key === "registration") {
+          return {
+            ...t,
+            badgeCount: memberMenuBadges[NOTIF_CATEGORY.REGISTRATION] || 0,
+          };
+        }
+        return t;
+      }),
+    [memberMenuBadges]
+  );
+
+  const handleTabChange = useCallback(
+    (nextTab) => {
+      if (nextTab === "registration") {
+        const sinceIso =
+          Number.isFinite(activitySinceMs) && activitySinceMs > 0
+            ? new Date(activitySinceMs).toISOString()
+            : null;
+        markCategoryNotificationsRead(
+          NOTIF_CATEGORY.REGISTRATION,
+          currentUser,
+          { saisonId: activeSeasonId, sinceIso }
+        );
+      }
+      setTab(nextTab);
+    },
+    [
+      activitySinceMs,
+      activeSeasonId,
+      currentUser,
+      markCategoryNotificationsRead,
+    ]
   );
 
   const recentActivities = useMemo(() => {
@@ -569,8 +651,10 @@ export default function MemberDashboardScreen({ navigation }) {
       return candidates.length ? Math.min(...candidates) : null;
     })();
 
+    // Saison active sans date d'inscription → aucun historique (nouveau contexte).
     const isAfterRegistration = (at) => {
       if (!at || at <= 0) return false;
+      if (activeSeasonId && sinceMs == null) return false;
       if (sinceMs == null) return true;
       return at >= sinceMs;
     };
@@ -578,6 +662,10 @@ export default function MemberDashboardScreen({ navigation }) {
     const phrases = memberActivityPhrases(currentUser?.gender);
 
     progressEntries.forEach((entry, idx) => {
+      const entrySeason = entry.saison_id || entry.saisonId || null;
+      if (activeSeasonId && entrySeason && entrySeason !== activeSeasonId) {
+        return;
+      }
       const metrics = computeProgressMetrics(entry);
       const hizb = formatHizbCount(metrics?.nbHizbCompletes ?? 0);
       const tumun = tumunStoredToUi(metrics?.tumunCourant ?? entry.tumun_courant);
@@ -597,6 +685,9 @@ export default function MemberDashboardScreen({ navigation }) {
     });
 
     myRegs.forEach((r) => {
+      if (activeSeasonId && r.seasonId && r.seasonId !== activeSeasonId) {
+        return;
+      }
       const season = seasons.find((s) => s.id === r.seasonId);
       const atAccepted = parseActivityTimestamp(r.acceptedAt);
       const atCreated = parseActivityTimestamp(r.createdAt);
@@ -690,6 +781,7 @@ export default function MemberDashboardScreen({ navigation }) {
     currentUser?.gender,
     activityCutoffReady,
     activitySinceMs,
+    activeSeasonId,
     sessionState.registrationDate,
     sessionState.groupName,
     progressEntries,
@@ -712,7 +804,6 @@ export default function MemberDashboardScreen({ navigation }) {
         style: "destructive",
         onPress: async () => {
           await logout();
-          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
         },
       },
     ]);
@@ -1005,7 +1096,11 @@ export default function MemberDashboardScreen({ navigation }) {
       </ScrollView>
 
       <View style={styles.bottomWrap}>
-        <MemberBottomTabBar tabs={TABS} activeKey={tab} onChange={setTab} />
+        <MemberBottomTabBar
+          tabs={tabsWithBadges}
+          activeKey={tab}
+          onChange={handleTabChange}
+        />
       </View>
       <View
         style={[styles.fabWrap, { bottom: 68 + Math.max(insets.bottom, 16) }]}

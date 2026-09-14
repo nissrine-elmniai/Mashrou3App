@@ -23,6 +23,11 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import {
+  countTestsAdmin,
+  listRecentTestsAdmin,
+  mapTestToDashboardExam,
+} from "../../lib/testsApi";
+import {
   ROLES,
   userHasRole,
   REGISTRATION_STATUS,
@@ -221,7 +226,6 @@ function buildRecentActivities({
 
 function DashboardHome({ navigation, stats, activities }) {
   const members = stats?.members ?? 0;
-  const pendingRegs = stats?.pendingRegs ?? 0;
   // Hero = membres du saison. 1 → عضو مسجّل, sinon → أعضاء مسجّلون.
   const secondaryStats = [
     { key: "supervisors", label: "المشرفون", value: stats?.supervisors ?? 0 },
@@ -235,13 +239,6 @@ function DashboardHome({ navigation, stats, activities }) {
         <View style={dhStyles.heroRow}>
           <Text style={dhStyles.heroValue}>{members}</Text>
           <Text style={dhStyles.heroLabel}>{membersLabel(members)}</Text>
-          {pendingRegs > 0 ? (
-            <View style={dhStyles.pendingBadge}>
-              <Text style={dhStyles.pendingBadgeText}>
-                {pendingRegs} معلق
-              </Text>
-            </View>
-          ) : null}
         </View>
         <View style={dhStyles.statDivider} />
         <View style={dhStyles.secondaryRow}>
@@ -309,7 +306,6 @@ export default function AdminDashboard({ navigation }) {
   const {
     stats,
     currentUser,
-    exams,
     seasons,
     registrations,
     notifications,
@@ -322,22 +318,35 @@ export default function AdminDashboard({ navigation }) {
     supervisors: 0,
     seances: 0,
   });
+  const [examCount, setExamCount] = useState(0);
+  const [recentExams, setRecentExams] = useState([]);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
         if (!activeSeason?.id) {
-          setSeasonStats({ members: 0, supervisors: 0, seances: 0 });
-          return;
+          if (!cancelled) {
+            setSeasonStats({ members: 0, supervisors: 0, seances: 0 });
+          }
+        } else {
+          const res = await getSeasonDashboardStats(activeSeason.id);
+          if (!cancelled && res.ok) {
+            setSeasonStats({
+              members: res.members,
+              supervisors: res.supervisors,
+              seances: res.seances,
+            });
+          }
         }
-        const res = await getSeasonDashboardStats(activeSeason.id);
-        if (!cancelled && res.ok) {
-          setSeasonStats({
-            members: res.members,
-            supervisors: res.supervisors,
-            seances: res.seances,
-          });
+        const [countRes, listRes] = await Promise.all([
+          countTestsAdmin(),
+          listRecentTestsAdmin(8),
+        ]);
+        if (cancelled) return;
+        if (countRes.ok) setExamCount(countRes.count || 0);
+        if (listRes.ok) {
+          setRecentExams((listRes.tests || []).map(mapTestToDashboardExam));
         }
       })();
       return () => {
@@ -360,7 +369,7 @@ export default function AdminDashboard({ navigation }) {
     members: seasonStats.members,
     supervisors: seasonStats.supervisors,
     seances: seasonStats.seances,
-    exams: stats?.exams ?? exams?.length ?? 0,
+    exams: examCount,
     pendingRegs: stats?.pendingRegs ?? pendingRegs,
   };
 
@@ -372,11 +381,11 @@ export default function AdminDashboard({ navigation }) {
               (r) => !r.seasonId || r.seasonId === activeSeason.id
             )
           : registrations,
-        exams,
+        exams: recentExams,
         users: [],
         notifications,
       }),
-    [registrations, exams, notifications, activeSeason]
+    [registrations, recentExams, notifications, activeSeason]
   );
 
   return (
@@ -408,13 +417,6 @@ export default function AdminDashboard({ navigation }) {
           accessibilityLabel="التنبيهات"
         >
           <Bell size={24} color={colors.muted} pointerEvents="none" />
-          {derivedStats.pendingRegs > 0 ? (
-            <View style={styles.bellBadge}>
-              <Text style={styles.bellBadgeText}>
-                {derivedStats.pendingRegs > 9 ? "9+" : derivedStats.pendingRegs}
-              </Text>
-            </View>
-          ) : null}
         </TouchableOpacity>
       </View>
 

@@ -75,30 +75,58 @@ function detailParams(payload) {
   };
 }
 
+function collectRouteNames(state, into = new Set()) {
+  if (!state) return into;
+  (state.routeNames || []).forEach((name) => into.add(name));
+  (state.routes || []).forEach((route) => {
+    if (route?.name) into.add(route.name);
+    if (route?.state) collectRouteNames(route.state, into);
+  });
+  return into;
+}
+
+/** True si l'écran existe dans le navigator actuellement monté (pas Auth). */
+export function navigationHasScreen(navigation, name) {
+  if (!navigation || !name) return false;
+  try {
+    if (typeof navigation.isReady === "function" && !navigation.isReady()) {
+      return false;
+    }
+    const state = navigation.getRootState?.() || navigation.getState?.();
+    return collectRouteNames(state).has(name);
+  } catch {
+    return false;
+  }
+}
+
+function tryNavigate(navigation, name, params) {
+  if (!navigationHasScreen(navigation, name)) return false;
+  navigation.navigate(name, params);
+  return true;
+}
+
 /**
  * Navigation depuis le payload d'une notification (tap push ou inbox).
  * Destination métier si connue ; sinon NotificationDetail (repli automatique).
+ * Ne navigue pas si la stack Auth est encore affichée (écran absent).
  */
 export function navigateFromNotificationPayload(navigation, payload) {
   if (!navigation || !payload || typeof payload !== "object") {
     return false;
   }
   const dedicated = dedicatedScreenFor(payload);
+  const dedicatedParams =
+    payload.params && typeof payload.params === "object" ? payload.params : {};
   try {
-    if (dedicated) {
-      const params =
-        payload.params && typeof payload.params === "object" ? payload.params : {};
-      navigation.navigate(dedicated, params);
+    if (dedicated && tryNavigate(navigation, dedicated, dedicatedParams)) {
       return true;
     }
-    navigation.navigate("NotificationDetail", detailParams(payload));
-    return true;
+    return tryNavigate(navigation, "NotificationDetail", detailParams(payload));
   } catch (e) {
     console.warn("[notif] navigate:", e?.message || e);
     if (dedicated) {
       try {
-        navigation.navigate("NotificationDetail", detailParams(payload));
-        return true;
+        return tryNavigate(navigation, "NotificationDetail", detailParams(payload));
       } catch (e2) {
         console.warn("[notif] navigate detail:", e2?.message || e2);
       }

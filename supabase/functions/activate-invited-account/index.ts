@@ -16,6 +16,27 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+const RATE_WINDOW_MS = 15 * 60 * 1000;
+const RATE_MAX = 8;
+const rateHits = new Map<string, number[]>();
+
+function isRateLimited(key: string): boolean {
+  const now = Date.now();
+  const prev = (rateHits.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (prev.length >= RATE_MAX) {
+    rateHits.set(key, prev);
+    return true;
+  }
+  prev.push(now);
+  rateHits.set(key, prev);
+  return false;
+}
+
+function clientIp(req: Request): string {
+  const forwarded = req.headers.get("x-forwarded-for") || "";
+  return forwarded.split(",")[0].trim() || "unknown";
+}
+
 function canonicalEmail(email: string) {
   const mail = String(email || "").trim().toLowerCase();
   if (!mail) return "";
@@ -51,9 +72,12 @@ Deno.serve(async (req) => {
     if (!displayEmail || !displayEmail.includes("@")) {
       return json({ ok: false, error: "أدخل بريداً إلكترونياً صالحاً" }, 200);
     }
-    if (password.length < 6) {
+    if (isRateLimited(`email:${displayEmail}`) || isRateLimited(`ip:${clientIp(req)}`)) {
+      return json({ ok: false, error: "حاول مرة أخرى لاحقاً" }, 200);
+    }
+    if (password.length < 8) {
       return json(
-        { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" },
+        { ok: false, error: "كلمة المرور قصيرة جداً (8 أحرف على الأقل)" },
         200
       );
     }

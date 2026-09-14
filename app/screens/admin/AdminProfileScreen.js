@@ -140,7 +140,6 @@ export default function AdminProfileScreen({ navigation }) {
         style: "destructive",
         onPress: async () => {
           await logout();
-          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
         },
       },
     ]);

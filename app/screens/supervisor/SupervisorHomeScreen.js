@@ -10,6 +10,8 @@ import BroadcastMessageModal from "./components/BroadcastMessageModal";
 import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
 import { formatRelativeTime } from "../../lib/messagesApi";
 import { useSupervisorActivity } from "./hooks/useSupervisorActivity";
+import { useApp } from "../../context/AppContext";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 /**
  * Données séance/membres fournies par SupervisorDashboard (un seul fetch hook).
@@ -25,6 +27,8 @@ export default function SupervisorHomeScreen({
   threads = [],
   dataSource = "mock",
 }) {
+  const { seasons } = useApp();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [recentAlerts, setRecentAlerts] = useState([]);
   const { activities } = useSupervisorActivity({
@@ -32,12 +36,18 @@ export default function SupervisorHomeScreen({
     members,
     threads,
     enabled: dataSource === "supabase",
+    saisonId: activeSeasonId,
   });
 
   const loadRecentAlerts = useCallback(async () => {
-    const res = await getVisibleAlerts();
+    const res = await getVisibleAlerts({
+      scopeToCurrentSeason: true,
+      saisonId: activeSeasonId,
+      role: "supervisor",
+      limit: 3,
+    });
     if (res.ok) setRecentAlerts(res.alerts.slice(0, 3));
-  }, []);
+  }, [activeSeasonId]);
 
   useEffect(() => {
     loadRecentAlerts();

@@ -13,6 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
 import {
@@ -238,49 +239,56 @@ export default function GroupChatScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.card} />
+      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
 
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <TouchableOpacity
-          style={styles.header}
-          onPress={openInfo}
-          activeOpacity={0.7}
-        >
+        <View style={styles.headerWrap}>
           <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => navigation.goBack()}
-            activeOpacity={0.7}
+            style={styles.headerTouch}
+            onPress={openInfo}
+            activeOpacity={0.85}
           >
-            <Ionicons name={arrowBack} size={22} color={colors.text} />
-          </TouchableOpacity>
-          <View style={styles.avatarWrap}>
-            {headerAvatarUrl ? (
-              <ProfileAvatar
-                userId={groupId}
-                avatarUrl={headerAvatarUrl}
-                cacheKey={headerAvatarUrl || groupId}
-                fallbackLetter={avatarLetter}
-                size={42}
-                softBackgroundColor={colors.primarySoft}
-                letterColor={colors.primary}
-              />
-            ) : (
-              <View style={styles.groupAvatarFallback}>
-                <Ionicons name="people" size={22} color={colors.primary} />
+            <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+              <TouchableOpacity
+                style={styles.backBtn}
+                onPress={() => navigation.goBack()}
+                activeOpacity={0.7}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="رجوع"
+              >
+                <Ionicons name={arrowBack} size={22} color="#fff" />
+              </TouchableOpacity>
+              <View style={styles.avatarWrap}>
+                {headerAvatarUrl ? (
+                  <ProfileAvatar
+                    userId={groupId}
+                    avatarUrl={headerAvatarUrl}
+                    cacheKey={headerAvatarUrl || groupId}
+                    fallbackLetter={avatarLetter}
+                    size={42}
+                    softBackgroundColor="rgba(255,255,255,0.28)"
+                    letterColor="#fff"
+                  />
+                ) : (
+                  <View style={styles.groupAvatarFallback}>
+                    <Ionicons name="people" size={22} color="#fff" />
+                  </View>
+                )}
               </View>
-            )}
-          </View>
-          <View style={styles.headerText}>
-            <Text style={styles.contactName} numberOfLines={1}>
-              {headerName}
-            </Text>
-            <Text style={styles.headerHint}>اضغط لعرض المعلومات</Text>
-          </View>
-          <Ionicons name="information-circle-outline" size={22} color={colors.muted} />
-        </TouchableOpacity>
+              <View style={styles.headerText}>
+                <Text style={styles.contactName} numberOfLines={1}>
+                  {headerName}
+                </Text>
+                <Text style={styles.headerHint}>اضغط لعرض المعلومات</Text>
+              </View>
+              <Ionicons name="information-circle-outline" size={22} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
 
         <FlatList
           data={[...messages].reverse()}
@@ -317,22 +325,31 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
 
+  headerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  headerTouch: { borderRadius: radii.lg, overflow: "hidden" },
   header: {
     flexDirection: row,
     alignItems: "center",
     gap: 12,
-    padding: 16,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
   },
-  backBtn: { padding: 2 },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   avatarWrap: { position: "relative" },
   groupAvatarFallback: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: "rgba(255,255,255,0.28)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -340,12 +357,12 @@ const styles = StyleSheet.create({
   contactName: {
     fontFamily: fonts.bold,
     fontSize: 16,
-    color: colors.text,
+    color: "#fff",
     ...rtlTextBold,
   },
   headerHint: {
     fontSize: 11,
-    color: colors.muted,
+    color: "rgba(255,255,255,0.85)",
     marginTop: 2,
     fontFamily: fonts.regular,
     ...rtlText,
@@ -360,7 +377,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   bubbleMine: { backgroundColor: colors.primary, borderBottomRightRadius: 4 },
-  bubbleOther: { backgroundColor: colors.card, borderBottomLeftRadius: 4 },
+  bubbleOther: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    borderBottomLeftRadius: 4,
+  },
   senderName: {
     fontSize: 12,
     fontFamily: fonts.bold,
@@ -385,10 +407,13 @@ const styles = StyleSheet.create({
     flexDirection: row,
     alignItems: "center",
     gap: 10,
-    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 10,
     backgroundColor: colors.card,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
   },
   input: {
     flex: 1,

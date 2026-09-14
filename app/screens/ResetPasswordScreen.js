@@ -17,6 +17,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../constants/theme";
 import { supabase, mapSupabaseAuthError } from "../lib/supabase";
 import { row } from "../constants/rtl";
+import {
+  isPasswordTooShort,
+  passwordTooShortMessage,
+} from "../constants/security";
 
 /**
  * Écran atteint via le lien "mot de passe oublié" reçu par e-mail
@@ -44,8 +48,8 @@ export default function ResetPasswordScreen({ navigation }) {
       Alert.alert("خطأ", "كلمة المرور غير متطابقة");
       return;
     }
-    if (password.length < 6) {
-      Alert.alert("خطأ", "كلمة المرور قصيرة جداً (6 أحرف على الأقل)");
+    if (isPasswordTooShort(password)) {
+      Alert.alert("خطأ", passwordTooShortMessage());
       return;
     }
 

@@ -9,10 +9,17 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { colors } from "../../constants/theme";
-import { rtlTextBold, row as rtlRow, fonts, arrowBack } from "../../constants/rtl";
+import { colors, radii, shadows } from "../../constants/theme";
+import {
+  rtlText,
+  row,
+  fonts,
+  arrowBack,
+  isRTL,
+} from "../../constants/rtl";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { EmptyState } from "../../components/ui";
 import { getMyCurrentInscription, mergeInboxRows } from "../../lib/messagesApi";
@@ -38,6 +45,8 @@ function supervisorContactFromSeance(seance) {
     seanceId: seance.id,
   };
 }
+
+const alignEdge = isRTL ? "flex-start" : "flex-end";
 
 export default function MemberChatInboxScreen({ navigation }) {
   const { threads, loading: threadsLoading } = useInboxThreads();
@@ -113,19 +122,31 @@ export default function MemberChatInboxScreen({ navigation }) {
     !loading && (chatGroups || []).length === 0 && dmRows.length === 0;
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-          accessibilityLabel="رجوع"
-        >
-          <Ionicons name={arrowBack} size={22} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>الرسائل</Text>
-        <View style={styles.headerBtn} />
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <StatusBar style="dark" />
+
+      <View style={styles.headerWrap}>
+        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => navigation.goBack()}
+              hitSlop={8}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="رجوع"
+            >
+              <Ionicons name={arrowBack} size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerTitle}>الرسائل</Text>
+              <Text style={styles.headerSubtitle}>
+                تواصل مع مشرف حصتك ومجموعة الجلسة
+              </Text>
+            </View>
+            <Ionicons name="chatbubbles-outline" size={22} color="#fff" />
+          </View>
+        </LinearGradient>
       </View>
 
       {loading ? (
@@ -133,48 +154,60 @@ export default function MemberChatInboxScreen({ navigation }) {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : isEmpty ? (
-        <EmptyState
-          text={
-            supervisor
-              ? "لا توجد رسائل بعد"
-              : "لا توجد حصة نشطة للتواصل مع المشرف"
-          }
-        />
+        <View style={[styles.emptyCard, shadows.card]}>
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={36}
+            color={colors.primary}
+          />
+          <EmptyState
+            text={
+              supervisor
+                ? "لا توجد رسائل بعد"
+                : "لا توجد حصة نشطة للتواصل مع المشرف"
+            }
+          />
+        </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scroll}
+        >
           {/* Superviseur épinglé en tête, même ligne que le groupe (surlignage si non lu). */}
           {dmRows.map((row) => (
-            <ChatThreadRow
-              key={`${row.role}-${row.id}`}
-              name={row.name}
-              preview={row.lastMessage}
-              time={row.time}
-              userId={row.id}
-              avatarLetter={row.avatarLetter}
-              avatarUrl={row.avatarUrl}
-              avatarPrimary={!row.avatarUrl}
-              highlighted={!!row.unread}
-              unread={row.unread}
-              unreadCount={row.unreadCount}
-              onPress={() => openThread(row)}
-            />
+            <View key={`${row.role}-${row.id}`} style={[styles.threadCard, shadows.card]}>
+              <ChatThreadRow
+                name={row.name}
+                preview={row.lastMessage}
+                time={row.time}
+                userId={row.id}
+                avatarLetter={row.avatarLetter}
+                avatarUrl={row.avatarUrl}
+                avatarPrimary={!row.avatarUrl}
+                highlighted={!!row.unread}
+                unread={row.unread}
+                unreadCount={row.unreadCount}
+                onPress={() => openThread(row)}
+              />
+            </View>
           ))}
           {(chatGroups || []).map((group) => (
-            <ChatThreadRow
-              key={`group-${group.id}`}
-              name={group.name}
-              preview={group.lastMessage}
-              time={group.time}
-              userId={group.id}
-              avatarLetter={(group.name || "م").charAt(0)}
-              avatarUrl={group.avatarUrl}
-              avatarPrimary={!group.avatarUrl}
-              isGroup
-              highlighted={!!group.unread}
-              unread={group.unread}
-              unreadCount={group.unreadCount}
-              onPress={() => openGroupChat(group)}
-            />
+            <View key={`group-${group.id}`} style={[styles.threadCard, shadows.card]}>
+              <ChatThreadRow
+                name={group.name}
+                preview={group.lastMessage}
+                time={group.time}
+                userId={group.id}
+                avatarLetter={(group.name || "م").charAt(0)}
+                avatarUrl={group.avatarUrl}
+                avatarPrimary={!group.avatarUrl}
+                isGroup
+                highlighted={!!group.unread}
+                unread={group.unread}
+                unreadCount={group.unreadCount}
+                onPress={() => openGroupChat(group)}
+              />
+            </View>
           ))}
         </ScrollView>
       )}
@@ -183,27 +216,69 @@ export default function MemberChatInboxScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  headerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
   header: {
-    flexDirection: rtlRow,
+    borderRadius: radii.lg,
+    overflow: "hidden",
+    paddingTop: 16,
+    paddingBottom: 18,
+    paddingHorizontal: 14,
+  },
+  headerRow: {
+    flexDirection: row,
     alignItems: "center",
     gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    backgroundColor: colors.primary,
   },
   headerBtn: {
-    padding: 4,
-    minWidth: 30,
+    width: 36,
+    height: 36,
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTitle: {
+  headerTextWrap: {
     flex: 1,
-    color: "white",
+    alignItems: alignEdge,
+  },
+  headerTitle: {
+    color: "#fff",
     fontSize: 18,
     fontFamily: fonts.bold,
-    ...rtlTextBold,
+    ...rtlText,
+  },
+  headerSubtitle: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 12,
+    marginTop: 4,
+    fontFamily: fonts.regular,
+    ...rtlText,
   },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
+  scroll: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 24,
+    gap: 10,
+  },
+  threadCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    overflow: "hidden",
+  },
+  emptyCard: {
+    marginHorizontal: 16,
+    marginTop: 24,
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.borderGreen,
+    padding: 28,
+    alignItems: "center",
+  },
 });

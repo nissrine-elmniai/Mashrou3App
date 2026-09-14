@@ -58,6 +58,7 @@ export function useSupervisorActivity({
   members = [],
   threads = [],
   enabled = true,
+  saisonId: _saisonId = null,
 }) {
   const usingSupabase = enabled && isSupabaseConfigured() && !!seanceId;
   const [fetched, setFetched] = useState({

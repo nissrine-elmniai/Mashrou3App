@@ -361,6 +361,7 @@ export function MemberBottomTabBar({ tabs, activeKey, onChange }) {
       {tabs.map((t) => {
         const active = t.key === activeKey;
         const Icon = t.icon;
+        const badge = Number(t.badgeCount) || 0;
         return (
           <TouchableOpacity
             key={t.key}
@@ -368,11 +369,20 @@ export function MemberBottomTabBar({ tabs, activeKey, onChange }) {
             onPress={() => onChange(t.key)}
             activeOpacity={0.7}
           >
-            <Icon
-              size={22}
-              color={active ? colors.primary : colors.muted}
-              strokeWidth={active ? 2.4 : 2}
-            />
+            <View style={styles.bottomTabIconWrap}>
+              <Icon
+                size={22}
+                color={active ? colors.primary : colors.muted}
+                strokeWidth={active ? 2.4 : 2}
+              />
+              {badge > 0 ? (
+                <View style={styles.bottomTabBadge}>
+                  <Text style={styles.bottomTabBadgeText}>
+                    {badge > 9 ? "9+" : String(badge)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <Text
               style={[
                 styles.bottomTabLabel,
@@ -712,6 +722,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 4,
+  },
+  bottomTabIconWrap: {
+    position: "relative",
+    width: 28,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bottomTabBadge: {
+    position: "absolute",
+    top: -6,
+    end: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: colors.red || "#D32F2F",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bottomTabBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontFamily: fonts.bold,
   },
   bottomTabLabel: {
     fontSize: 11,

@@ -7,8 +7,12 @@ import React, {
   useState,
 } from "react";
 import { ActivityIndicator, View, StyleSheet } from "react-native";
-import { DEMO_PASSWORD, emptyState, bootstrapUsers, bootstrapSeasons } from "../data/seed";
+import { emptyState, bootstrapUsers, bootstrapSeasons } from "../data/seed";
 import { loadAppState, saveAppState, clearAppState } from "../data/storage";
+import {
+  isPasswordTooShort,
+  passwordTooShortMessage,
+} from "../constants/security";
 import {
   ACCOUNT_STATUS,
   DASHBOARD_BY_ROLE,
@@ -22,6 +26,10 @@ import {
   userHasRole,
   withMergedRoles,
 } from "../constants/roles";
+import {
+  NOTIF_CATEGORY,
+  inferNotificationCategory,
+} from "../constants/notifications";
 import { colors } from "../constants/theme";
 import {
   isSupabaseConfigured,
@@ -52,7 +60,7 @@ import {
 } from "../lib/saisonsApi";
 import { snapshotSeasonsBeforeClose } from "../lib/seasonStatsApi";
 import { getActiveRegularSeason, isSeasonRegistrationAvailable } from "../lib/seasonScope";
-import { getPendingSupervisorInvitation } from "../lib/supervisorInvitationsApi";
+import { getPendingSupervisorInvitation, deactivateSupervisorsForSaisons } from "../lib/supervisorInvitationsApi";
 import { canonicalEmail } from "../lib/authEmail";
 
 /** ISO YYYY-MM-DD pour colonnes Postgres `date`. Accepte aussi YYYY/MM/DD (placeholders admin). Pas de parse JJ/MM/AAAA. */
@@ -222,13 +230,18 @@ export function AppProvider({ children }) {
   useEffect(() => {
     (async () => {
       const saved = await loadAppState();
-      let loadedUsers = bootstrapUsers;
+      const remoteMode = isSupabaseConfigured();
+      let loadedUsers = remoteMode ? [] : bootstrapUsers;
       let loadedSeasons = bootstrapSeasons;
       if (saved) {
         loadedUsers =
           Array.isArray(saved.users) && saved.users.length > 0
-            ? saved.users
-            : bootstrapUsers;
+            ? remoteMode
+              ? saved.users
+                  .filter((u) => u.authId)
+                  .map((u) => ({ ...u, password: null }))
+              : saved.users
+            : loadedUsers;
         loadedSeasons =
           Array.isArray(saved.seasons) && saved.seasons.length > 0
             ? saved.seasons
@@ -236,10 +249,10 @@ export function AppProvider({ children }) {
         setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
         setRegistrations(saved.registrations || []);
-        setGroups(saved.groups || []);
-        setProgress(saved.progress || []);
-        setAttendance(saved.attendance || []);
-        setExams(saved.exams || []);
+        setGroups(remoteMode ? [] : saved.groups || []);
+        setProgress(remoteMode ? [] : saved.progress || []);
+        setAttendance(remoteMode ? [] : saved.attendance || []);
+        setExams(remoteMode ? [] : saved.exams || []);
         setNotifications(saved.notifications || []);
         setMemberPrograms(
           migrateMemberPrograms(
@@ -249,7 +262,17 @@ export function AppProvider({ children }) {
       } else {
         setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
-        setMemberPrograms(migrateMemberPrograms(emptyState.memberPrograms || []));
+        if (remoteMode) {
+          setGroups([]);
+          setProgress([]);
+          setAttendance([]);
+          setExams([]);
+        }
+        setMemberPrograms(
+          remoteMode
+            ? []
+            : migrateMemberPrograms(emptyState.memberPrograms || [])
+        );
       }
 
       if (isSupabaseConfigured()) {
@@ -267,25 +290,31 @@ export function AppProvider({ children }) {
         if (sessionResult.session?.user) {
           const profileResult = await fetchProfile(sessionResult.session.user.id);
           if (profileResult.ok) {
-            const mail = profileResult.profile.email?.toLowerCase();
-            const local =
-              loadedUsers.find((u) => u.email?.toLowerCase() === mail) ||
-              loadedUsers.find((u) => u.authId === profileResult.profile.id);
-            const restoredBase = profileToAppUser(
-              profileResult.profile,
-              local || {}
-            );
-            if (local) restoredBase.id = local.id;
-            restored = applySupabaseSessionRole(
-              restoredBase,
-              profileResult.profile,
-              local,
-              null
-            );
-            setSupabaseSession(sessionResult.session);
-            maybeRegisterSessionPush(profileResult.profile.id, {
-              requestPermission: false,
-            });
+            const status = profileResult.profile.account_status;
+            if (status === ACCOUNT_STATUS.INACTIVE) {
+              await signOutAuth();
+              setSupabaseSession(null);
+            } else {
+              const mail = profileResult.profile.email?.toLowerCase();
+              const local =
+                loadedUsers.find((u) => u.email?.toLowerCase() === mail) ||
+                loadedUsers.find((u) => u.authId === profileResult.profile.id);
+              const restoredBase = profileToAppUser(
+                profileResult.profile,
+                local || {}
+              );
+              if (local) restoredBase.id = local.id;
+              restored = applySupabaseSessionRole(
+                restoredBase,
+                profileResult.profile,
+                local,
+                null
+              );
+              setSupabaseSession(sessionResult.session);
+              maybeRegisterSessionPush(profileResult.profile.id, {
+                requestPermission: false,
+              });
+            }
           }
         }
       } else if (saved?.currentUserId) {
@@ -305,7 +334,9 @@ export function AppProvider({ children }) {
       return;
     }
     saveAppState({
-      users,
+      users: isSupabaseConfigured()
+        ? users.map((u) => ({ ...u, password: null }))
+        : users,
       seasons,
       registrations,
       groups,
@@ -520,6 +551,13 @@ export function AppProvider({ children }) {
         error: "الحساب غير مفعّل بعد — أنشئ كلمة المرور من شاشة إنشاء الحساب",
       };
     }
+    if (user.accountStatus === ACCOUNT_STATUS.INACTIVE) {
+      return {
+        ok: false,
+        error:
+          "هذا الحساب معطّل بعد انتهاء الموسم السابق. تواصل مع الإدارة لإعادة تفعيله في الموسم الجديد.",
+      };
+    }
     if (user.password !== password) {
       return { ok: false, error: "البريد الإلكتروني أو كلمة المرور غير صحيحة" };
     }
@@ -713,6 +751,8 @@ export function AppProvider({ children }) {
       title: "طلب انضمام جديد",
       body: `طلب انضمام من ${name} — راجعه من طلبات الانضمام`,
       audience: "admin",
+      category: NOTIF_CATEGORY.REGISTRATIONS,
+      saisonId: registration.seasonId || null,
     });
     return { ok: true, registration };
   };
@@ -726,6 +766,9 @@ export function AppProvider({ children }) {
     password,
     gender = "غير محدد",
   }) => {
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
+    }
     if (
       users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase())
     ) {
@@ -757,8 +800,8 @@ export function AppProvider({ children }) {
     if (!exists) {
       return { ok: false, error: "لا يوجد حساب بهذا البريد" };
     }
-    if (!newPassword || newPassword.length < 4) {
-      return { ok: false, error: "كلمة المرور قصيرة جداً" };
+    if (isPasswordTooShort(newPassword)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     setUsers((prev) =>
       prev.map((u) =>
@@ -826,6 +869,8 @@ export function AppProvider({ children }) {
         title: "فتح باب التسجيل",
         body: `تم فتح استمارة التسجيل: ${season.name}`,
         audience: "members",
+        category: NOTIF_CATEGORY.REGISTRATION,
+        saisonId: season.id,
       });
     }
     return { ok: true, season };
@@ -883,11 +928,43 @@ export function AppProvider({ children }) {
       }
       await snapshotSeasonsBeforeClose(previousRegularIds);
       await archiveSeancesForSaisonIds(previousRegularIds);
+
+      // Désactiver les comptes superviseurs de l'ancienne saison (historique conservé)
+      const deact = await deactivateSupervisorsForSaisons(previousRegularIds);
+      if (!deact.ok && !deact.skipped) {
+        setSeasons(previousSeasonsSnapshot);
+        return {
+          ok: false,
+          error: deact.error || "تعذر تعطيل مشرفي الموسم السابق",
+        };
+      }
+      if (deact.count > 0) {
+        setUsers((prev) =>
+          prev.map((u) => {
+            if (!userHasRole(u, ROLES.SUPERVISOR) || userHasRole(u, ROLES.ADMIN)) {
+              return u;
+            }
+            if (u.accountStatus === ACCOUNT_STATUS.INACTIVE) return u;
+            return { ...u, accountStatus: ACCOUNT_STATUS.INACTIVE };
+          })
+        );
+      }
+
       const upsert = await upsertSaison(season);
       if (!upsert.ok) {
         setSeasons(previousSeasonsSnapshot);
         return { ok: false, error: upsert.error || "تعذر حفظ الموسم الجديد" };
       }
+    } else {
+      // Mode local : désactiver les superviseurs mock
+      setUsers((prev) =>
+        prev.map((u) => {
+          if (!userHasRole(u, ROLES.SUPERVISOR) || userHasRole(u, ROLES.ADMIN)) {
+            return u;
+          }
+          return { ...u, accountStatus: ACCOUNT_STATUS.INACTIVE };
+        })
+      );
     }
 
     const alertMessage = registrationOpens
@@ -897,12 +974,16 @@ export function AppProvider({ children }) {
       title: "انطلاق موسم جديد",
       body: alertMessage,
       audience: "members",
+      saisonId: season.id,
+      category: NOTIF_CATEGORY.REGISTRATION,
     });
 
     let alertOk = true;
     let alertError = null;
     try {
-      const alertRes = await sendRemoteAlert(alertMessage, "members");
+      const alertRes = await sendRemoteAlert(alertMessage, "members", {
+        saisonId: season.id,
+      });
       if (!alertRes?.ok) {
         alertOk = false;
         alertError = alertRes?.error || null;
@@ -953,9 +1034,11 @@ export function AppProvider({ children }) {
       title: "فتح باب التسجيل",
       body: alertMessage,
       audience: "members",
+      saisonId: season.id,
+      category: NOTIF_CATEGORY.REGISTRATION,
     });
     try {
-      await sendRemoteAlert(alertMessage, "members");
+      await sendRemoteAlert(alertMessage, "members", { saisonId: season.id });
     } catch {
       /* alerte non bloquante */
     }
@@ -999,9 +1082,13 @@ export function AppProvider({ children }) {
         title: "فتح باب التسجيل",
         body: alertMessage,
         audience: "members",
+        saisonId: season.id,
+        category: NOTIF_CATEGORY.REGISTRATION,
       });
       try {
-        await sendRemoteAlert(alertMessage, "members");
+        await sendRemoteAlert(alertMessage, "members", {
+          saisonId: season.id,
+        });
       } catch {
         /* alerte non bloquante */
       }
@@ -1165,6 +1252,8 @@ export function AppProvider({ children }) {
       title: "إعادة تسجيل موسم",
       body: "وصل طلب إعادة تسجيل من عضو حالي — راجعه من طلبات التسجيل",
       audience: "admin",
+      category: NOTIF_CATEGORY.REGISTRATIONS,
+      saisonId: registration.seasonId || null,
     });
     return { ok: true, registration };
   };
@@ -1356,8 +1445,8 @@ export function AppProvider({ children }) {
   const activateInvite = async ({ email, password, confirmPassword }) => {
     const mail = String(email || "").trim().toLowerCase();
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
-    if (!password || password.length < 6) {
-      return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     if (password !== confirmPassword) {
       return { ok: false, error: "كلمة المرور غير متطابقة" };
@@ -1717,8 +1806,8 @@ export function AppProvider({ children }) {
   }) => {
     const mail = canonicalEmail(email);
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
-    if (!password || password.length < 6) {
-      return { ok: false, error: "كلمة المرور قصيرة جداً (6 أحرف على الأقل)" };
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     if (password !== confirmPassword) {
       return { ok: false, error: "كلمة المرور غير متطابقة" };
@@ -1960,6 +2049,8 @@ export function AppProvider({ children }) {
           body: `أُسندت إلى المجموعة: ${target.name}`,
           audience: "user",
           userId: memberId,
+          category: NOTIF_CATEGORY.SESSIONS,
+          saisonId: target.seasonId || null,
         });
       }
 
@@ -2015,6 +2106,7 @@ export function AppProvider({ children }) {
       title: "تم حذف مشرف",
       body: `تم حذف ${target.firstName} ${target.lastName}`,
       audience: "admin",
+      category: NOTIF_CATEGORY.SUPERVISORS,
     });
 
     return { ok: true };
@@ -2118,6 +2210,7 @@ export function AppProvider({ children }) {
       title: "تمت إضافة مشرف",
       body: `تم تعيين ${user.firstName} ${user.lastName} على ${assignedGroup?.name || typedName}`,
       audience: "admin",
+      category: NOTIF_CATEGORY.SUPERVISORS,
     });
 
     return {
@@ -2137,10 +2230,13 @@ export function AppProvider({ children }) {
     gender,
     groupId,
     email,
-    password = "123456",
+    password,
   }) => {
     if (!firstName?.trim() || !lastName?.trim()) {
       return { ok: false, error: "املأ الاسم واللقب" };
+    }
+    if (isPasswordTooShort(password)) {
+      return { ok: false, error: passwordTooShortMessage() };
     }
     const mail =
       email?.trim().toLowerCase() || `member_${Date.now()}@mosque.ma`;
@@ -2385,6 +2481,7 @@ export function AppProvider({ children }) {
       body: `درجتك: ${score} — المستوى: ${level}`,
       audience: "user",
       userId: memberId,
+      category: NOTIF_CATEGORY.TESTS,
     });
     return exam;
   };
@@ -2428,6 +2525,7 @@ export function AppProvider({ children }) {
           body: `${exam.title} — بتاريخ ${exam.date}`,
           audience: "user",
           userId: memberId,
+          category: NOTIF_CATEGORY.TESTS,
         });
       });
     }
@@ -2457,13 +2555,27 @@ export function AppProvider({ children }) {
     return { ok: true };
   };
 
-  function pushNotification({ title, body, audience = "all", userId = null }) {
+  function pushNotification({
+    title,
+    body,
+    audience = "all",
+    userId = null,
+    saisonId = null,
+    category = null,
+  }) {
+    const resolvedCategory = inferNotificationCategory({
+      title,
+      category,
+      audience,
+    });
     const item = {
       id: uid("n"),
       title,
       body,
       audience,
       userId,
+      saisonId: saisonId || null,
+      category: resolvedCategory,
       createdAt: new Date().toISOString(),
       readBy: [],
     };
@@ -2480,17 +2592,45 @@ export function AppProvider({ children }) {
       members: "تنبيه للأعضاء",
       supervisors: "تنبيه للمشرفين",
     };
+    const activeSeason =
+      seasons.find((s) => s.active && s.type === SEASON_TYPES.REGULAR) ||
+      seasons.find((s) => s.active) ||
+      null;
     pushNotification({
       title: titleByAudience[target] || "تنبيه من الإدارة",
       body,
       audience: target,
+      saisonId: activeSeason?.id || null,
+      category:
+        target === "admin"
+          ? NOTIF_CATEGORY.NOTIFICATIONS
+          : NOTIF_CATEGORY.ALERTS,
     });
     return { ok: true, audience: target };
   };
 
-  const getNotificationsForUser = (user = currentUser) => {
+  const getNotificationsForUser = (user = currentUser, options = {}) => {
     if (!user) return [];
+    const scopeSeasonId =
+      options.saisonId != null
+        ? String(options.saisonId || "").trim() || null
+        : null;
+    const strictSeason = !!options.strictSeason;
+    const sinceMs = (() => {
+      if (!options.sinceIso) return null;
+      const ms = new Date(options.sinceIso).getTime();
+      return Number.isFinite(ms) ? ms : null;
+    })();
     return notifications.filter((n) => {
+      if (scopeSeasonId) {
+        const nSeason = n.saisonId || null;
+        if (nSeason && nSeason !== scopeSeasonId) return false;
+        if (strictSeason && !nSeason) return false;
+      }
+      if (sinceMs != null) {
+        const at = new Date(n.createdAt || 0).getTime();
+        if (!Number.isFinite(at) || at < sinceMs) return false;
+      }
       if (n.audience === "all") return true;
       if (n.audience === "user" && n.userId === user.id) return true;
       if (n.audience === "admin" && userHasRole(user, ROLES.ADMIN)) return true;
@@ -2507,6 +2647,31 @@ export function AppProvider({ children }) {
     });
   };
 
+  const notificationCategoryOf = (n) =>
+    inferNotificationCategory({
+      title: n?.title,
+      category: n?.category,
+      audience: n?.audience,
+    });
+
+  /**
+   * Badges menu : compteurs par catégorie (non lus uniquement).
+   * Admin : saison active si saisonId fourni ; sinon toutes.
+   * Membre : passer saisonId + sinceIso (après inscription).
+   */
+  const getMenuBadgeCounts = (user = currentUser, options = {}) => {
+    if (!user) return {};
+    const list = getNotificationsForUser(user, options);
+    const counts = {};
+    for (const n of list) {
+      const uidReader = user.id;
+      if ((n.readBy || []).includes(uidReader)) continue;
+      const cat = notificationCategoryOf(n);
+      counts[cat] = (counts[cat] || 0) + 1;
+    }
+    return counts;
+  };
+
   const markNotificationRead = (notificationId, userId = currentUser?.id) => {
     if (!userId) return;
     setNotifications((prev) =>
@@ -2515,6 +2680,26 @@ export function AppProvider({ children }) {
           ? { ...n, readBy: [...n.readBy, userId] }
           : n
       )
+    );
+  };
+
+  /** Marque comme lues toutes les notifs d'une catégorie visibles pour l'utilisateur. */
+  const markCategoryNotificationsRead = (
+    category,
+    user = currentUser,
+    options = {}
+  ) => {
+    if (!user?.id || !category) return;
+    const visibleIds = new Set(
+      getNotificationsForUser(user, options).map((n) => n.id)
+    );
+    setNotifications((prev) =>
+      prev.map((n) => {
+        if (!visibleIds.has(n.id)) return n;
+        if (notificationCategoryOf(n) !== category) return n;
+        if ((n.readBy || []).includes(user.id)) return n;
+        return { ...n, readBy: [...(n.readBy || []), user.id] };
+      })
     );
   };
 
@@ -2598,7 +2783,6 @@ export function AppProvider({ children }) {
     exams,
     notifications,
     stats,
-    DEMO_PASSWORD,
     isSupabaseConfigured: isSupabaseConfigured(),
     login,
     logout,
@@ -2644,7 +2828,9 @@ export function AppProvider({ children }) {
     markExamCompleted,
     sendAlert,
     getNotificationsForUser,
+    getMenuBadgeCounts,
     markNotificationRead,
+    markCategoryNotificationsRead,
     getUserById,
     getSupervisors,
     getMemberGroup,

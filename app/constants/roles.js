@@ -124,15 +124,17 @@ export function registrationStepIndex(status) {
   }
 }
 
-/** Compte pas encore activé (invitation) */
+/** Compte pas encore activé (invitation) / actif / désactivé (fin de saison superviseur) */
 export const ACCOUNT_STATUS = {
   INVITED: "invited",
   ACTIVE: "active",
+  INACTIVE: "inactive",
 };
 
 export const ACCOUNT_STATUS_LABELS = {
+  invited: "بانتظار التفعيل",
   active: "نشط",
-  invited: "مدعو",
+  inactive: "معطّل (موسم سابق)",
 };
 
 /** Libellé arabe de profiles.account_status. Vide / inconnu → « — ». */
