@@ -74,12 +74,17 @@ export default function AdminNotificationsScreen({ navigation }) {
 
   const pendingCount = stats?.pendingRegs ?? 0;
 
-  // Admin : toutes les saisons (historique conservé). Filtre optionnel = saison active.
+  // Admin : uniquement les alertes de la saison courante.
   const loadHistory = useCallback(async () => {
-    const res = await getAllAlertsAdmin();
+    if (!activeSeasonId) {
+      setHistory([]);
+      setLoadingHistory(false);
+      return;
+    }
+    const res = await getAllAlertsAdmin({ saisonId: activeSeasonId });
     if (res.ok) setHistory(res.alerts);
     setLoadingHistory(false);
-  }, []);
+  }, [activeSeasonId]);
 
   useEffect(() => {
     loadHistory();

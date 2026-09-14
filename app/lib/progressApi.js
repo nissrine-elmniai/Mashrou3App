@@ -388,6 +388,23 @@ export async function flushMemberProgressDelta() {
   }
 }
 
+async function getSeanceAcceptedMembreIds(seanceId) {
+  const { data: inscriptions, error: iError } = await withTimeout(
+    supabase
+      .from("inscriptions")
+      .select("membre_id")
+      .eq("seance_id", seanceId)
+      .eq("statut", "accepte"),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة الحصة"
+  );
+  if (iError) {
+    return { ok: false, error: mapTableError(iError, "inscriptions"), ids: [] };
+  }
+  const ids = (inscriptions || []).map((i) => i.membre_id).filter(Boolean);
+  return { ok: true, ids };
+}
+
 /**
  * Progressions des membres d'une séance (côté superviseur), avec le profil
  * de chaque membre joint. @returns { ok, entries }
@@ -401,20 +418,12 @@ export async function getSeanceMemberProgress(seanceId) {
   }
 
   try {
-    const { data: inscriptions, error: iError } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select("membre_id")
-        .eq("seance_id", seanceId)
-        .eq("statut", "accepte"),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة الحصة"
-    );
-    if (iError) {
-      return { ok: false, error: mapTableError(iError, "inscriptions") };
+    const membersRes = await getSeanceAcceptedMembreIds(seanceId);
+    if (!membersRes.ok) {
+      return { ok: false, error: membersRes.error };
     }
 
-    const membreIds = (inscriptions || []).map((i) => i.membre_id);
+    const membreIds = membersRes.ids;
     if (membreIds.length === 0) {
       return { ok: true, entries: [] };
     }
@@ -433,6 +442,53 @@ export async function getSeanceMemberProgress(seanceId) {
     return { ok: true, entries: data || [] };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Nombre de membres (distincts) de la séance ayant une saisie `date` > sinceIso.
+ * @returns {{ ok: boolean, count?: number, error?: string }}
+ */
+export async function countMembersWithNewProgress(seanceId, sinceIso) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", count: 0 };
+  }
+  if (!seanceId || !sinceIso) {
+    return { ok: true, count: 0 };
+  }
+
+  try {
+    const membersRes = await getSeanceAcceptedMembreIds(seanceId);
+    if (!membersRes.ok) {
+      return { ok: false, error: membersRes.error, count: 0 };
+    }
+    const ids = membersRes.ids;
+    if (ids.length === 0) {
+      return { ok: true, count: 0 };
+    }
+
+    const { data, error } = await withTimeout(
+      supabase
+        .from("progression")
+        .select("membre_id")
+        .in("membre_id", ids)
+        .gt("date", sinceIso),
+      SUPABASE_TIMEOUT_MS,
+      "عد تقدم الأعضاء"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "progression"), count: 0 };
+    }
+    const unique = new Set(
+      (data || []).map((row) => row?.membre_id).filter(Boolean)
+    );
+    return { ok: true, count: unique.size };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      count: 0,
+    };
   }
 }
 

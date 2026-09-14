@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -10,16 +10,18 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import ProfileAvatar from "../../components/ProfileAvatar";
-import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import {
   useSupervisorMembers,
   SUPERVISOR_FETCH_DEGRADED_MESSAGE,
 } from "./hooks/useSupervisorMembers";
+import { getUnacknowledgedAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 import SupervisorHomeScreen from "./SupervisorHomeScreen";
 import SupervisorMembersScreen from "./SupervisorMembersScreen";
@@ -33,6 +35,8 @@ import {
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { formatUnreadBadge, countUnseenConversations } from "../../lib/messagesApi";
+import { formatCountBadge } from "../../data/seenAt";
+import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
 
@@ -54,20 +58,33 @@ const NAV_TABS = [
  * les écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
 export default function SupervisorDashboard({ navigation }) {
-  const { currentUser, logout } = useApp();
+  const { currentUser, logout, seasons } = useApp();
 
   const [tab, setTab] = useState("home");
   const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [pendingAlertCount, setPendingAlertCount] = useState(0);
+  const { count: unreadNotifCount } = useUnreadNotifications();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
 
   const {
     myGroups,
     activeGroup,
     members,
+    membersByLatestProgress,
     membersWithStatus,
     attendancePct,
     avgProgress,
     isMarkingWindowOpen,
     showPresenceReminder,
+    showUnmarkedPresenceDot,
+    presenceDotSeen,
+    newMembersCount,
+    newProgressCount,
+    markMembersSeen,
+    markProgressSeen,
+    markPresenceSeen,
+    refreshNewMembersCount,
+    refreshNewProgressCount,
     loading,
     progressLoading,
     fetchError,
@@ -108,6 +125,7 @@ export default function SupervisorDashboard({ navigation }) {
         style: "destructive",
         onPress: async () => {
           await logout();
+          navigation.reset({ index: 0, routes: [{ name: "Login" }] });
         },
       },
     ]);
@@ -116,12 +134,52 @@ export default function SupervisorDashboard({ navigation }) {
   const showDegradedBanner = !!fetchError;
   const degradedMessage = SUPERVISOR_FETCH_DEGRADED_MESSAGE;
 
+  // Compte non-acquitté centralisé (RG9) : absence de alert_acknowledgments.alert_id.
+  const loadPendingAlertCount = useCallback(async () => {
+    const res = await getUnacknowledgedAlerts({
+      scopeToCurrentSeason: true,
+      saisonId: activeSeasonId,
+      role: "supervisor",
+    });
+    if (res.ok) setPendingAlertCount(res.alerts.length);
+  }, [activeSeasonId]);
+
+  useEffect(() => {
+    loadPendingAlertCount();
+    return subscribeToNewAlerts(() => loadPendingAlertCount());
+  }, [loadPendingAlertCount]);
+
+  const skipFocusRefetch = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      loadPendingAlertCount();
+      refreshNewMembersCount();
+      refreshNewProgressCount();
+      if (skipFocusRefetch.current) {
+        skipFocusRefetch.current = false;
+        return;
+      }
+      refetch();
+    }, [loadPendingAlertCount, refetch, refreshNewMembersCount, refreshNewProgressCount])
+  );
+
   useEffect(() => {
     registerSupervisorAttendanceSaved(refetch);
     return () => unregisterSupervisorAttendanceSaved();
   }, [refetch]);
 
-  const openAlerts = () => navigation.navigate("SupervisorAlerts");
+  const changeTab = useCallback(
+    (nextTab) => {
+      if (nextTab === "attendance") markPresenceSeen();
+      if (nextTab === "members") markMembersSeen();
+      if (nextTab === "progress") markProgressSeen();
+      setTab(nextTab);
+    },
+    [markPresenceSeen, markMembersSeen, markProgressSeen]
+  );
+
+  const openInbox = () => navigation.navigate("SupervisorAlerts");
+  const headerBadgeCount = pendingAlertCount + unreadNotifCount;
   const messageMembers = useMemo(
     () =>
       (members || []).map((m) => ({
@@ -151,15 +209,21 @@ export default function SupervisorDashboard({ navigation }) {
               <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={22} color="white" />
               </TouchableOpacity>
-              <InboxHeaderButton navigation={navigation} color="white" />
               <TouchableOpacity
                 style={styles.headerIconWrap}
-                onPress={openAlerts}
+                onPress={openInbox}
                 hitSlop={8}
                 accessibilityRole="button"
-                accessibilityLabel="تنبيهات الإدارة"
+                accessibilityLabel="الإشعارات"
               >
                 <Ionicons name="notifications-outline" size={22} color="white" />
+                {headerBadgeCount > 0 ? (
+                  <View style={styles.headerBellBadge}>
+                    <Text style={styles.headerBellBadgeText}>
+                      {headerBadgeCount > 9 ? "9+" : headerBadgeCount}
+                    </Text>
+                  </View>
+                ) : null}
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.profileBtn}
@@ -206,7 +270,7 @@ export default function SupervisorDashboard({ navigation }) {
                 avgProgress={avgProgress}
                 isMarkingWindowOpen={isMarkingWindowOpen}
                 showPresenceReminder={showPresenceReminder}
-                onChangeTab={setTab}
+                onChangeTab={changeTab}
                 threads={threads}
                 dataSource={dataSource}
               />
@@ -229,7 +293,7 @@ export default function SupervisorDashboard({ navigation }) {
             )}
             {tab === "progress" && (
               <SupervisorProgressScreen
-                members={members}
+                members={membersByLatestProgress}
                 activeGroup={activeGroup}
                 progressLoading={progressLoading}
                 avgProgress={avgProgress}
@@ -242,7 +306,7 @@ export default function SupervisorDashboard({ navigation }) {
                 seanceId={selectedGroupId}
                 groupName={activeGroup?.name || null}
                 members={messageMembers}
-                onBack={() => setTab("home")}
+                onBack={() => changeTab("home")}
               />
             )}
           </>
@@ -253,11 +317,17 @@ export default function SupervisorDashboard({ navigation }) {
         {NAV_TABS.map((t) => {
           const isActive = tab === t.key;
           const showUnread = t.key === "messages" && unseenConversations > 0;
+          const newMembersLabel = formatCountBadge(newMembersCount);
+          const showNewMembers = t.key === "members" && newMembersLabel !== "";
+          const newProgressLabel = formatCountBadge(newProgressCount);
+          const showNewProgress = t.key === "progress" && newProgressLabel !== "";
+          const showPresenceDot =
+            t.key === "attendance" && showUnmarkedPresenceDot && !presenceDotSeen;
           return (
             <TouchableOpacity
               key={t.key}
               style={styles.bottomBarItem}
-              onPress={() => setTab(t.key)}
+              onPress={() => changeTab(t.key)}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel={t.label}
@@ -274,6 +344,27 @@ export default function SupervisorDashboard({ navigation }) {
                       {formatUnreadBadge(unseenConversations)}
                     </Text>
                   </View>
+                ) : null}
+                {showNewMembers ? (
+                  <View style={styles.tabBadge}>
+                    <Text style={[styles.tabBadgeText, { writingDirection: "ltr" }]}>
+                      {`\u2066${newMembersLabel}\u2069`}
+                    </Text>
+                  </View>
+                ) : null}
+                {showNewProgress ? (
+                  <View style={styles.tabBadge}>
+                    <Text style={[styles.tabBadgeText, { writingDirection: "ltr" }]}>
+                      {`\u2066${newProgressLabel}\u2069`}
+                    </Text>
+                  </View>
+                ) : null}
+                {showPresenceDot ? (
+                  <View
+                    style={styles.tabPresenceDot}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                  />
                 ) : null}
               </View>
               <Text
@@ -394,5 +485,16 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 9,
     fontFamily: fonts.bold,
+  },
+  tabPresenceDot: {
+    position: "absolute",
+    top: -3,
+    end: -3,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.gold,
+    borderWidth: 2,
+    borderColor: colors.card,
   },
 });

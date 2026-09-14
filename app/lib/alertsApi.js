@@ -44,7 +44,25 @@ const ALERTS_SENDER_SELECT_NO_SAISON_FALLBACK =
   "id, message, title, body, audience, created_at, created_by";
 
 async function fetchAlertsWithSender(queryBuilder) {
-  let res = await withTimeout(queryBuilder(ALERTS_SENDER_SELECT), SUPABASE_TIMEOUT_MS, "قراءة التنبيهات");
+  // Toujours préférer un select qui conserve saison_id : sans ça le filtre
+  // client (saison exacte) vide toute la liste alors que les lignes existent en DB.
+  let res = await withTimeout(
+    queryBuilder(ALERTS_SENDER_SELECT),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة التنبيهات"
+  );
+
+  if (
+    res.error &&
+    /relationship|PGRST200|Could not find|avatar_url/i.test(res.error.message || "")
+  ) {
+    res = await withTimeout(
+      queryBuilder(ALERTS_SENDER_SELECT_FALLBACK),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة التنبيهات"
+    );
+  }
+
   if (
     res.error &&
     /saison_id|column.*does not exist/i.test(res.error.message || "")
@@ -55,22 +73,12 @@ async function fetchAlertsWithSender(queryBuilder) {
       "قراءة التنبيهات"
     );
   }
+
   if (
     res.error &&
-    /relationship|PGRST200|Could not find|avatar_url/i.test(res.error.message || "")
-  ) {
-    const clause = /saison_id|column.*does not exist/i.test(res.error.message || "")
-      ? ALERTS_SENDER_SELECT_NO_SAISON_FALLBACK
-      : ALERTS_SENDER_SELECT.replace(", avatar_url", "");
-    res = await withTimeout(
-      queryBuilder(clause),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة التنبيهات"
-    );
-  }
-  if (
-    res.error &&
-    /relationship|PGRST200|Could not find|saison_id/i.test(res.error.message || "")
+    /relationship|PGRST200|Could not find|avatar_url|saison_id/i.test(
+      res.error.message || ""
+    )
   ) {
     res = await withTimeout(
       queryBuilder(ALERTS_SENDER_SELECT_NO_SAISON_FALLBACK),
@@ -78,7 +86,43 @@ async function fetchAlertsWithSender(queryBuilder) {
       "قراءة التنبيهات"
     );
   }
+
   return res;
+}
+
+/** Saison régulière active côté DB (secours si le client n'a pas encore hydraté seasons). */
+async function resolveActiveRegularSaisonIdFromDb() {
+  try {
+    let res = await withTimeout(
+      supabase
+        .from("saisons")
+        .select("id")
+        .eq("type", "regular")
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الموسم النشط"
+    );
+    if (!res.error && res.data?.id) return String(res.data.id);
+
+    res = await withTimeout(
+      supabase
+        .from("saisons")
+        .select("id")
+        .eq("type", "regular")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الموسم"
+    );
+    if (!res.error && res.data?.id) return String(res.data.id);
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 function mapAlertRow(a) {
@@ -375,27 +419,32 @@ function filterAlertsSince(alerts, sinceIso) {
 
 /**
  * Filtre saison + date d'inscription :
- * 1) même saison (les alertes sans saison_id sont exclues si saisonId fourni)
- * 2) created_at >= sinceIso
- * Si pas encore inscrit (sinceIso null) → liste vide.
+ * 1) uniquement les alertes de la saison courante (saison_id exact)
+ * 2) si sinceIso connu : created_at >= sinceIso
+ * Si saisonId manquant alors qu'on scope : liste vide.
+ * Si les lignes n'ont pas de saison_id (select legacy) : on ne filtre pas par saison.
+ * Si sinceIso manquant : on garde les alertes de la saison (pas liste vide).
  */
 function filterAlertsForSeasonScope(alerts, { saisonId = null, sinceIso = null } = {}) {
   const season = String(saisonId || "").trim() || null;
-  if (season && !sinceIso) {
-    return [];
-  }
+  if (!season) return [];
   let list = alerts || [];
-  if (season) {
+  const anyHasSeason = list.some((a) => {
+    const aSeason = String(a.saisonId || a.saison_id || "").trim() || null;
+    return !!aSeason;
+  });
+  if (anyHasSeason) {
     list = list.filter((a) => {
-      const aSeason = a.saisonId || a.saison_id || null;
+      const aSeason = String(a.saisonId || a.saison_id || "").trim() || null;
       return aSeason === season;
     });
   }
+  if (!sinceIso) return list;
   return filterAlertsSince(list, sinceIso);
 }
 
 async function resolveScopedCutoff(options = {}) {
-  const saisonId = String(options.saisonId || "").trim() || null;
+  let saisonId = String(options.saisonId || "").trim() || null;
   const scopeToCurrentSeason = !!options.scopeToCurrentSeason || !!saisonId;
   const role = options.role || "member";
 
@@ -404,6 +453,10 @@ async function resolveScopedCutoff(options = {}) {
       return resolveMemberAlertCutoff(options.authId || null);
     }
     return { ok: true, sinceIso: null, saisonId: null };
+  }
+
+  if (!saisonId) {
+    saisonId = await resolveActiveRegularSaisonIdFromDb();
   }
 
   if (role === "supervisor") {
@@ -592,8 +645,8 @@ export async function sendAlert(message, audience, options = {}) {
 }
 
 /**
- * (Admin) Historique des alertes. Filtre saison optionnel (null = toutes).
- * @param {{ saisonId?: string|null }} [options]
+ * (Admin) Historique des alertes.
+ * @param {{ saisonId?: string|null }} [options] — si fourni, uniquement cette saison
  */
 export async function getAllAlertsAdmin(options = {}) {
   if (!isSupabaseConfigured()) {
@@ -729,20 +782,23 @@ export async function getVisibleAlertsWithAckStatus(options = {}) {
         supabase.from("alert_acknowledgments").select("alert_id"),
         SUPABASE_TIMEOUT_MS,
         "قراءة الإقرارات"
-      ),
+      ).catch(() => ({ data: [], error: null })),
       scoped
         ? resolveScopedCutoff(options)
         : Promise.resolve({ ok: true, sinceIso: null, saisonId: null }),
     ]);
 
-    if (visibleRes.error || acksRes.error) {
+    if (visibleRes.error) {
       return {
         ok: false,
-        error: mapTableError(visibleRes.error || acksRes.error, "alerts"),
+        error: mapTableError(visibleRes.error, "alerts"),
       };
     }
 
-    const acked = new Set((acksRes.data || []).map((a) => a.alert_id));
+    // Les acks sont optionnels pour l'affichage : en cas d'échec, on montre quand même.
+    const acked = new Set(
+      acksRes?.error ? [] : (acksRes?.data || []).map((a) => a.alert_id)
+    );
     let alerts = (visibleRes.data || []).map((a) => ({
       ...mapAlertRow(a),
       acknowledged: acked.has(a.id),
