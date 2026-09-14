@@ -8,7 +8,8 @@ import { formatUnreadBadge } from "../lib/messagesApi";
 import { useUnreadNotifications } from "../hooks/useUnreadNotifications";
 
 /**
- * Bouton inbox (distinct de la cloche « تنبيهات الإدارة »).
+ * Bouton inbox → UnifiedInboxScreen (même destination que la cloche
+ * membre/superviseur). Badge = notifications non lues uniquement (hors alertes).
  */
 export default function InboxHeaderButton({
   navigation,

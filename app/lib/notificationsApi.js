@@ -19,7 +19,7 @@ export const NOTIFICATION_CATEGORY_LABELS = {
   inscriptions: "التسجيلات",
   seances: "الحصص والمواسم",
   progression: "التقدم",
-  alertes: "تنبيهات الإدارة",
+  alertes: "إشعارات الإدارة",
   systeme: "النظام",
 };
 
