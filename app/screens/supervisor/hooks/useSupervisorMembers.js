@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../../../context/AppContext";
 import { deriveLevel, getLatestSeanceOccurrence } from "../supervisorHelpers";
 import {
@@ -11,7 +11,8 @@ import {
   getSeancePresenceForDate,
   getPresenceReminderForOccurrence,
 } from "../../../lib/presenceApi";
-import { getMemberProgressionSummary } from "../../../lib/progressApi";
+import { getMemberProgressionSummary, countMembersWithNewProgress } from "../../../lib/progressApi";
+import { getSeenAt, setSeenAt } from "../../../data/seenAt";
 
 /** Message UI mode dégradé (mock après échec Supabase réel). */
 export const SUPERVISOR_FETCH_DEGRADED_MESSAGE =
@@ -30,6 +31,12 @@ function weeklyPresenceToMemberStatus(presence, occurrence = {}) {
   if (presence === "absent") return "absent";
   if (occurrence.withinMarkingWindow) return "absent";
   return "none";
+}
+
+function isWeeklyPresenceMarked(weeklyPresenceByMember) {
+  return Object.values(weeklyPresenceByMember || {}).some(
+    (s) => s === "present" || s === "absent"
+  );
 }
 
 function buildGroupFromSeance(seance, seanceMembers = []) {
@@ -113,12 +120,80 @@ function applyProgressToMembers(members, byId) {
   }));
 }
 
+function latestProgressDateMs(member) {
+  const iso = member?.prog?.entry?.date;
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
+}
+
+function latestProgressRowId(member) {
+  return String(member?.prog?.entry?.id || "");
+}
+
+/** Copie triée : dernière saisie (`date`) d'abord ; sans saisie en fin. */
+function sortMembersByLatestProgress(members) {
+  return [...(members || [])].sort((a, b) => {
+    const aMs = latestProgressDateMs(a);
+    const bMs = latestProgressDateMs(b);
+    if (aMs != null && bMs == null) return -1;
+    if (aMs == null && bMs != null) return 1;
+    if (aMs == null && bMs == null) return 0;
+    if (bMs !== aMs) return bMs - aMs;
+    return latestProgressRowId(b).localeCompare(latestProgressRowId(a));
+  });
+}
+
 function memberGlobalPct(member) {
   const raw = member?.prog?.metrics?.globalPct;
   if (raw == null || raw === "") return null;
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
   return Math.min(100, Math.max(0, n));
+}
+
+function inscriptionDateIso(row) {
+  return row?.dateInscription || row?.registrationDate || null;
+}
+
+/** Membres dont dateInscription est strictement postérieure à seenAt. Sans date = ignoré. */
+function countNewMembersSince(memberRows, seenAtIso) {
+  const seenMs = Date.parse(seenAtIso);
+  if (!Number.isFinite(seenMs)) return 0;
+  return (memberRows || []).reduce((n, row) => {
+    const iso = inscriptionDateIso(row);
+    if (!iso) return n;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t) || t <= seenMs) return n;
+    return n + 1;
+  }, 0);
+}
+
+async function resolveNewMembersCount(userId, seanceId, memberRows) {
+  if (!userId || !seanceId) return 0;
+  const existing = await getSeenAt("members", userId, seanceId);
+  if (!existing) {
+    await setSeenAt("members", userId, seanceId, new Date().toISOString());
+    return 0;
+  }
+  return countNewMembersSince(memberRows, existing);
+}
+
+async function resolveNewProgressCount(userId, seanceId) {
+  if (!userId || !seanceId) return 0;
+  const existing = await getSeenAt("progress", userId, seanceId);
+  if (!existing) {
+    await setSeenAt("progress", userId, seanceId, new Date().toISOString());
+    return 0;
+  }
+  const res = await countMembersWithNewProgress(seanceId, existing);
+  return res.ok ? res.count || 0 : 0;
+}
+
+async function resolvePresenceDotSeen(userId, seanceId, sessionDate) {
+  if (!userId || !seanceId || !sessionDate) return false;
+  const existing = await getSeenAt("presence", userId, seanceId);
+  return existing === String(sessionDate);
 }
 
 /**
@@ -161,7 +236,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
   const supervisorAuthId = supabaseSession?.user?.id || null;
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const refetch = () => setRefreshKey((k) => k + 1);
+  const refetch = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   const [fetchState, setFetchState] = useState({
     loading: false,
@@ -176,6 +251,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
     globalAttendancePct: null,
     showPresenceReminder: false,
     progressLoaded: true,
+    newMembersCount: 0,
+    newProgressCount: 0,
+    presenceDotSeen: false,
   });
 
   useEffect(() => {
@@ -189,12 +267,19 @@ export function useSupervisorMembers(selectedGroupId = null) {
         globalAttendancePct: null,
         showPresenceReminder: false,
         progressLoaded: true,
+        newMembersCount: 0,
+        newProgressCount: 0,
+        presenceDotSeen: false,
       });
       return;
     }
 
     let cancelled = false;
-    setFetchState({ loading: true, loaded: false, error: null });
+    setFetchState((prev) => ({
+      loading: true,
+      loaded: prev.loaded,
+      error: null,
+    }));
 
     (async () => {
       try {
@@ -214,6 +299,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
             globalAttendancePct: null,
             showPresenceReminder: false,
             progressLoaded: true,
+            newMembersCount: 0,
+            newProgressCount: 0,
+            presenceDotSeen: false,
           });
           setFetchState({
             loading: false,
@@ -233,6 +321,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
             globalAttendancePct: null,
             showPresenceReminder: false,
             progressLoaded: true,
+            newMembersCount: 0,
+            newProgressCount: 0,
+            presenceDotSeen: false,
           });
           setFetchState({ loading: false, loaded: true, error: null });
           return;
@@ -257,6 +348,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
             globalAttendancePct: null,
             showPresenceReminder: false,
             progressLoaded: true,
+            newMembersCount: 0,
+            newProgressCount: 0,
+            presenceDotSeen: false,
           });
           setFetchState({
             loading: false,
@@ -272,6 +366,16 @@ export function useSupervisorMembers(selectedGroupId = null) {
           buildGroupFromSeance(s, s.id === seance.id ? seanceMembers : [])
         );
         const members = mapSeanceMembersToRows(seanceMembers, group);
+        const newMembersCount = await resolveNewMembersCount(
+          supervisorAuthId,
+          seance.id,
+          seanceMembers
+        );
+        const newProgressCount = await resolveNewProgressCount(
+          supervisorAuthId,
+          seance.id
+        );
+        if (cancelled) return;
 
         let weeklyPresenceByMember = {};
         let occurrenceMeta = null;
@@ -280,6 +384,12 @@ export function useSupervisorMembers(selectedGroupId = null) {
           new Date(),
           seance.heure_debut || null
         );
+        const presenceDotSeen = await resolvePresenceDotSeen(
+          supervisorAuthId,
+          seance.id,
+          occurrence.sessionDate
+        );
+        if (cancelled) return;
         if (occurrence.sessionDate && occurrence.sessionStarted) {
           occurrenceMeta = occurrence;
           const presRes = await getSeancePresenceForDate(
@@ -300,9 +410,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
         let showPresenceReminder = false;
         if (occurrence.withinMarkingWindow && occurrence.sessionDate) {
-          const isMarked = Object.values(weeklyPresenceByMember).some(
-            (s) => s === "present" || s === "absent"
-          );
+          const isMarked = isWeeklyPresenceMarked(weeklyPresenceByMember);
           if (!isMarked) {
             const rappelRes = await getPresenceReminderForOccurrence(
               seance.id,
@@ -358,6 +466,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
           globalAttendancePct,
           showPresenceReminder,
           progressLoaded: memberIds.length === 0,
+          newMembersCount,
+          newProgressCount,
+          presenceDotSeen,
         });
         setFetchState({ loading: false, loaded: true, error: null });
 
@@ -385,6 +496,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
             globalAttendancePct: null,
             showPresenceReminder: false,
             progressLoaded: true,
+            newMembersCount: 0,
+            newProgressCount: 0,
+            presenceDotSeen: false,
           });
           setFetchState({
             loading: false,
@@ -400,7 +514,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
     };
   }, [supervisorAuthId, selectedGroupId, refreshKey]);
 
-  const loading = !!supervisorAuthId && fetchState.loading;
+  const loading = !!supervisorAuthId && fetchState.loading && !fetchState.loaded;
   const fetchError =
     supervisorAuthId && !fetchState.loading && fetchState.error
       ? fetchState.error
@@ -420,6 +534,11 @@ export function useSupervisorMembers(selectedGroupId = null) {
     ? supabaseData.members
     : mockMembers;
 
+  const membersByLatestProgress = useMemo(
+    () => sortMembersByLatestProgress(members),
+    [members]
+  );
+
   const activeGroup =
     myGroups.find((g) => g.id === selectedGroupId) || myGroups[0] || null;
 
@@ -428,6 +547,11 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
   const isMarkingWindowOpen =
     usingSupabase && occurrenceMeta?.withinMarkingWindow === true;
+
+  const isPresenceMarked = isWeeklyPresenceMarked(weeklyPresenceByMember);
+
+  const showUnmarkedPresenceDot =
+    isMarkingWindowOpen && members.length > 0 && !isPresenceMarked;
 
   const showPresenceReminder =
     usingSupabase && supabaseData.showPresenceReminder === true;
@@ -479,16 +603,85 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
   const progressLoading = usingSupabase && supabaseData.progressLoaded === false;
 
+  const newMembersCount = usingSupabase ? supabaseData.newMembersCount || 0 : 0;
+  const newProgressCount = usingSupabase ? supabaseData.newProgressCount || 0 : 0;
+  const presenceDotSeen = usingSupabase && supabaseData.presenceDotSeen === true;
+
+  const markMembersSeen = useCallback(async () => {
+    const seanceId = selectedGroupId;
+    if (!supervisorAuthId || !seanceId) return;
+    await setSeenAt("members", supervisorAuthId, seanceId, new Date().toISOString());
+    setSupabaseData((prev) => ({ ...prev, newMembersCount: 0 }));
+  }, [supervisorAuthId, selectedGroupId]);
+
+  const markProgressSeen = useCallback(async () => {
+    const seanceId = selectedGroupId;
+    if (!supervisorAuthId || !seanceId) return;
+    await setSeenAt("progress", supervisorAuthId, seanceId, new Date().toISOString());
+    setSupabaseData((prev) => ({ ...prev, newProgressCount: 0 }));
+  }, [supervisorAuthId, selectedGroupId]);
+
+  const markPresenceSeen = useCallback(async () => {
+    const seanceId = selectedGroupId;
+    const sessionDate = occurrenceMeta?.sessionDate;
+    if (!supervisorAuthId || !seanceId) return;
+    if (sessionDate) {
+      await setSeenAt("presence", supervisorAuthId, seanceId, String(sessionDate));
+    }
+    setSupabaseData((prev) => ({ ...prev, presenceDotSeen: true }));
+  }, [supervisorAuthId, selectedGroupId, occurrenceMeta?.sessionDate]);
+
+  const refreshNewMembersCount = useCallback(async () => {
+    const seanceId = selectedGroupId;
+    if (!supervisorAuthId || !seanceId) return;
+    const existing = await getSeenAt("members", supervisorAuthId, seanceId);
+    if (!existing) {
+      await setSeenAt("members", supervisorAuthId, seanceId, new Date().toISOString());
+      setSupabaseData((prev) => ({ ...prev, newMembersCount: 0 }));
+      return;
+    }
+    setSupabaseData((prev) => ({
+      ...prev,
+      newMembersCount: countNewMembersSince(prev.members, existing),
+    }));
+  }, [supervisorAuthId, selectedGroupId]);
+
+  const refreshNewProgressCount = useCallback(async () => {
+    const seanceId = selectedGroupId;
+    if (!supervisorAuthId || !seanceId) return;
+    const existing = await getSeenAt("progress", supervisorAuthId, seanceId);
+    if (!existing) {
+      await setSeenAt("progress", supervisorAuthId, seanceId, new Date().toISOString());
+      setSupabaseData((prev) => ({ ...prev, newProgressCount: 0 }));
+      return;
+    }
+    const res = await countMembersWithNewProgress(seanceId, existing);
+    setSupabaseData((prev) => ({
+      ...prev,
+      newProgressCount: res.ok ? res.count || 0 : 0,
+    }));
+  }, [supervisorAuthId, selectedGroupId]);
+
   return {
     myGroups,
     activeGroup,
     members,
+    membersByLatestProgress,
     membersWithStatus,
     attendancePct,
     avgProgress,
     presentCount,
     isMarkingWindowOpen,
+    showUnmarkedPresenceDot,
+    presenceDotSeen,
     showPresenceReminder,
+    newMembersCount,
+    newProgressCount,
+    markMembersSeen,
+    markProgressSeen,
+    markPresenceSeen,
+    refreshNewMembersCount,
+    refreshNewProgressCount,
     loading,
     progressLoading,
     fetchError,

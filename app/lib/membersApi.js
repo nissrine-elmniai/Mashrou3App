@@ -256,7 +256,9 @@ export async function getSeanceMembers(seanceId) {
             })`
           )
           .eq("seance_id", seanceId)
-          .eq("statut", "accepte"),
+          .eq("statut", "accepte")
+          .order("date_inscription", { ascending: false, nullsFirst: false })
+          .order("membre_id", { ascending: false }),
         SUPABASE_TIMEOUT_MS,
         "قراءة أعضاء الحصة"
       );
@@ -654,7 +656,7 @@ export async function updateMemberSeance({
       const { data, error } = await withTimeout(
         supabase
           .from("inscriptions")
-          .update({ seance_id: newSeanceId })
+          .update({ seance_id: newSeanceId, date_inscription: new Date().toISOString() })
           .eq("id", existing.id)
           .select("id, seance_id, saison_id")
           .maybeSingle(),
