@@ -65,7 +65,7 @@ import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
 import AlertSenderFace from "../../components/AlertSenderFace";
-import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import MemberProgramsPanel from "./MemberProgramsPanel";
 import MemberRegistrationPanel from "./MemberRegistrationPanel";
 
@@ -177,7 +177,6 @@ export default function MemberDashboardScreen({ navigation }) {
   const authId = currentUser?.authId || currentUser?.id || null;
   const { threads } = useInboxThreads();
   const { totalUnread: groupsUnread } = useChatGroups();
-  const { count: unreadNotifCount } = useUnreadNotifications();
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
@@ -898,24 +897,25 @@ export default function MemberDashboardScreen({ navigation }) {
                   <Ionicons name="log-out-outline" size={22} color="white" />
                 </TouchableOpacity>
                 {tab === "home" ? (
-                  <TouchableOpacity
-                    style={styles.headerIconWrap}
-                    onPress={() => navigation.navigate("MemberAlerts")}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                    accessibilityLabel="الإشعارات"
-                  >
-                    <Ionicons name="notifications-outline" size={22} color="white" />
-                    {pendingAlertCount + unreadNotifCount > 0 ? (
-                      <View style={styles.headerBellBadge}>
-                        <Text style={styles.headerBellBadgeText}>
-                          {pendingAlertCount + unreadNotifCount > 9
-                            ? "9+"
-                            : pendingAlertCount + unreadNotifCount}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </TouchableOpacity>
+                  <>
+                    <InboxHeaderButton navigation={navigation} color="white" />
+                    <TouchableOpacity
+                      style={styles.headerIconWrap}
+                      onPress={() => navigation.navigate("MemberAlerts")}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="تنبيهات الإدارة"
+                    >
+                      <Ionicons name="notifications-outline" size={22} color="white" />
+                      {pendingAlertCount > 0 ? (
+                        <View style={styles.headerBellBadge}>
+                          <Text style={styles.headerBellBadgeText}>
+                            {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  </>
                 ) : null}
               </View>
             ) : null}
@@ -981,9 +981,9 @@ export default function MemberDashboardScreen({ navigation }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard title="الإشعارات">
+            <SectionCard title="التنبيهات">
               {adminAlerts.length === 0 ? (
-                <EmptyState text="لا توجد إشعارات جديدة" />
+                <EmptyState text="لا توجد تنبيهات جديدة" />
               ) : (
                 adminAlerts.map((n) => (
                   <View key={n.id} style={styles.notifItem}>

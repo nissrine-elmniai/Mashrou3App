@@ -276,8 +276,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         {pendingCount > 0 ? (
           <View style={styles.hintBanner}>
             <Text style={styles.hintBannerText}>
-              {pendingCount} طلب بانتظار قرارك — طلبات الانضمام ترسل دعوة
-              بالبريد، وإعادة التسجيل تقبل العضو الحالي دون إنشاء حساب جديد
+              {pendingCount} طلب جديد بانتظار قرارك
             </Text>
           </View>
         ) : null}
