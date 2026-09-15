@@ -13,10 +13,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { Menu, Bell } from "lucide-react-native";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, fonts, arrowBack, row, isRTL } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
+import { useAdminSidebar } from "../../components/AdminSidebar";
+import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { ROLES, resolveSessionRole } from "../../constants/roles";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
@@ -88,6 +91,11 @@ export default function UnifiedInboxScreen({ navigation }) {
   const { currentUser, seasons } = useApp();
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const sessionRole = resolveSessionRole(currentUser);
+  const isAdmin = sessionRole === ROLES.ADMIN;
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(
+    navigation,
+    "inbox"
+  );
   let alertsRole = null;
   if (sessionRole === ROLES.SUPERVISOR) alertsRole = "supervisor";
   else if (sessionRole === ROLES.MEMBER) alertsRole = "member";
@@ -273,38 +281,8 @@ export default function UnifiedInboxScreen({ navigation }) {
     );
   };
 
-  return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
-
-      <View style={styles.headerWrap}>
-        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
-          <View style={styles.headerRow}>
-            <TouchableOpacity
-              style={styles.headerBtn}
-              onPress={() => navigation.goBack()}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="رجوع"
-            >
-              <Ionicons name={arrowBack} size={22} color="#fff" />
-            </TouchableOpacity>
-            <View style={styles.headerTextWrap}>
-              <Text style={styles.headerTitle}>الإشعارات</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.headerBtn}
-              onPress={() => navigation.navigate("NotificationSettings")}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="إعدادات الإشعارات"
-            >
-              <Ionicons name="settings-outline" size={22} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </LinearGradient>
-      </View>
-
+  const listBody = (
+    <>
       {unreadNotifCount > 0 ? (
         <TouchableOpacity
           style={styles.markAllBtn}
@@ -359,6 +337,76 @@ export default function UnifiedInboxScreen({ navigation }) {
           }
         />
       )}
+    </>
+  );
+
+  if (isAdmin) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
+        <View style={styles.adminTopBar}>
+          <TouchableOpacity
+            onPress={openSidebar}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="فتح القائمة"
+          >
+            <Menu size={24} color={colors.text} pointerEvents="none" />
+          </TouchableOpacity>
+          <Text style={styles.adminTopBarTitle}>الإشعارات</Text>
+          <AdminTopBarAvatar
+            currentUser={currentUser}
+            onPress={() => navigation.navigate("AdminProfile")}
+          />
+          <TouchableOpacity
+            onPress={() => navigation.navigate("AdminRegistrations")}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="طلبات التسجيل"
+          >
+            <Bell size={24} color={colors.muted} pointerEvents="none" />
+          </TouchableOpacity>
+        </View>
+        {listBody}
+        {messagesFab}
+        {sidebar}
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.bg} />
+
+      <View style={styles.headerWrap}>
+        <LinearGradient colors={colors.gradientHeader} style={styles.header}>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => navigation.goBack()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="رجوع"
+            >
+              <Ionicons name={arrowBack} size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerTitle}>الإشعارات</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => navigation.navigate("NotificationSettings")}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="إعدادات الإشعارات"
+            >
+              <Ionicons name="settings-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </LinearGradient>
+      </View>
+
+      {listBody}
     </SafeAreaView>
   );
 }
@@ -367,6 +415,22 @@ const alignEdge = isRTL ? "flex-start" : "flex-end";
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  adminTopBar: {
+    backgroundColor: colors.card,
+    padding: 16,
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  adminTopBarTitle: {
+    flex: 1,
+    fontFamily: fonts.bold,
+    color: colors.text,
+    fontSize: 16,
+    ...rtlText,
+  },
   headerWrap: {
     paddingHorizontal: 16,
     paddingTop: 16,

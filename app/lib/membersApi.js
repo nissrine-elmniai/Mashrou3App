@@ -229,7 +229,7 @@ export async function getSupervisorActiveSeance(supervisorAuthId, seanceId = nul
  *
  * Colonnes inscriptions : membre_id, seance_id, statut ('accepte' | …),
  * date_inscription (schéma distant) ou created_at (migration 0003).
- * Identité / genre : profiles (repli member_applications si genre vide).
+ * dateNaissance / genre : non disponibles via profiles — restent null (jointure membres non faite).
  *
  * @param {string} seanceId UUID de la séance
  * @returns {{ ok: boolean, members?: Array, error?: string }}
@@ -251,7 +251,7 @@ export async function getSeanceMembers(seanceId) {
         supabase
           .from("inscriptions")
           .select(
-            `membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email, phone, school, level, hifz_amount, genre, date_naissance${
+            `membre_id, statut, date_inscription, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email, phone, school, level, hifz_amount${
               withAvatar ? ", avatar_url" : ""
             })`
           )
@@ -288,8 +288,8 @@ export async function getSeanceMembers(seanceId) {
           ecole: contact.ecole,
           niveau: contact.niveau,
           quantiteHifz: contact.quantiteHifz,
-          dateNaissance: p.date_naissance || null,
-          genre: formatGenderLabel(p.genre),
+          dateNaissance: null,
+          genre: null,
           statutInscription: row.statut,
           dateInscription: row.date_inscription || null,
         };
@@ -297,7 +297,10 @@ export async function getSeanceMembers(seanceId) {
       .filter(Boolean);
 
     const userIds = members.map((m) => m.userId);
-    const appsByUser = await fetchLatestMemberApplications(userIds);
+    const [appsByUser, genreByUser] = await Promise.all([
+      fetchLatestMemberApplications(userIds),
+      fetchMembresGenreMap(userIds),
+    ]);
     const enrichedMembers = members.map((m) => {
       const app = appsByUser[m.userId];
       const merged = mergeContactFields(m, app);
@@ -307,7 +310,8 @@ export async function getSeanceMembers(seanceId) {
         ecole: merged.ecole,
         niveau: merged.niveau,
         quantiteHifz: merged.quantiteHifz,
-        genre: formatGenderLabel(m.genre) || formatGenderLabel(app?.genre) || null,
+        genre:
+          formatGenderLabel(genreByUser[m.userId] || app?.genre) || null,
       };
     });
 
@@ -338,6 +342,53 @@ export function formatGenderLabel(raw) {
     return "أنثى";
   }
   return text;
+}
+
+async function fetchMembreGenre(membreId) {
+  const { data, error } = await withTimeout(
+    supabase.from("membres").select("genre").eq("user_id", membreId).maybeSingle(),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة جنس العضو"
+  );
+
+  if (error) {
+    const msg = error?.message || "";
+    if (
+      /relation.*does not exist|Could not find the table/i.test(msg) ||
+      /permission|row-level security|RLS|42501|violates row/i.test(msg)
+    ) {
+      return null;
+    }
+    logSupabaseError("fetchMembreGenre", error);
+    return null;
+  }
+
+  return formatGenderLabel(data?.genre);
+}
+
+async function fetchMembresGenreMap(userIds) {
+  if (!userIds?.length) return {};
+  const { data, error } = await withTimeout(
+    supabase.from("membres").select("user_id, genre").in("user_id", userIds),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة جنس الأعضاء"
+  );
+  if (error) {
+    const msg = error?.message || "";
+    if (
+      /relation.*does not exist|Could not find the table/i.test(msg) ||
+      /permission|row-level security|RLS|42501|violates row/i.test(msg)
+    ) {
+      return {};
+    }
+    logSupabaseError("fetchMembresGenreMap", error);
+    return {};
+  }
+  const map = {};
+  for (const row of data || []) {
+    if (row.user_id) map[row.user_id] = row.genre;
+  }
+  return map;
 }
 
 function mergeContactFields(primary, fallback) {
@@ -436,10 +487,11 @@ export async function getMemberProfileFields(membreId) {
     const application = appsByUser[membreId];
     const merged = mergeContactFields(profileData, application);
 
+    // Genre : profiles.genre (saisi côté membre) → demande d'inscription → table membres (legacy).
     const genre =
       formatGenderLabel(profileData?.genre) ||
       formatGenderLabel(application?.genre) ||
-      null;
+      (await fetchMembreGenre(membreId));
 
     return {
       ok: true,

@@ -119,7 +119,7 @@ export default function BlockingAlertGate() {
             fallbackLetter={active.senderInitial || "إ"}
             senderName={active.senderName}
             size={80}
-            subtitle="إشعار إداري عاجل"
+            subtitle="تنبيه إداري عاجل"
           />
           <Text style={styles.message}>{active.message}</Text>
           <TouchableOpacity
@@ -134,7 +134,7 @@ export default function BlockingAlertGate() {
           </TouchableOpacity>
           {total > 1 ? (
             <Text style={styles.counter}>
-              تبقّى {total - 1} من الإشعارات غير المقروءة
+              تبقّى {total - 1} من التنبيهات غير المقروءة
             </Text>
           ) : null}
         </View>
