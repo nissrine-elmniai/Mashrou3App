@@ -32,6 +32,7 @@ import { rtlText, row, isRTL } from "../constants/rtl";
 import {
   ADMIN_MENU_TO_CATEGORY,
   formatMenuBadge,
+  formatPendingRegsBadge,
 } from "../constants/notifications";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
@@ -56,7 +57,7 @@ const MENU_ITEMS = [
   { id: "newSeason", label: "انطلاق موسم جديد", icon: CalendarPlus },
   { id: "registrations", label: "طلبات الانضمام", icon: FileText },
   { id: "sessions", label: "الحصص", icon: Calendar },
-  { id: "tests", label: "التقييمات", icon: ClipboardList },
+  { id: "tests", label: "الاختبارات", icon: ClipboardList },
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
   { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "chat", label: "المحادثات", icon: MessageSquare },
@@ -207,7 +208,9 @@ export function AdminSidebar({
               const badgeLabel =
                 item.id === "chat"
                   ? formatUnreadBadge(badgeCount)
-                  : formatMenuBadge(badgeCount);
+                  : item.id === "registrations"
+                    ? formatPendingRegsBadge(badgeCount)
+                    : formatMenuBadge(badgeCount);
               return (
                 <TouchableOpacity
                   key={item.id}
@@ -289,6 +292,7 @@ export function useAdminSidebar(navigation, activeItem = "home") {
     getMenuBadgeCounts,
     markCategoryNotificationsRead,
     notifications,
+    stats,
   } = useApp();
   const { threads, loading: threadsLoading } = useInboxThreads();
   const unreadTotal = useMemo(
@@ -303,8 +307,14 @@ export function useAdminSidebar(navigation, activeItem = "home") {
       const n = Number(byCategory[category]) || 0;
       if (n > 0) mapped[menuId] = n;
     });
+    const pendingRegs = Number(stats?.pendingRegs) || 0;
+    if (pendingRegs > 0) {
+      mapped.registrations = pendingRegs;
+    } else {
+      delete mapped.registrations;
+    }
     return mapped;
-  }, [currentUser, getMenuBadgeCounts, notifications]);
+  }, [currentUser, getMenuBadgeCounts, notifications, stats?.pendingRegs]);
 
   // Ouvrir une section (y compris via navigation hors sidebar) → marquer lue.
   useEffect(() => {

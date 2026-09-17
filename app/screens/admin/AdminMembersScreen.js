@@ -10,7 +10,7 @@ import {
   TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Menu, Bell, ClipboardList, Search, UserCheck } from "lucide-react-native";
+import { Menu, Bell, Search, UserCheck } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
@@ -33,7 +33,6 @@ const palette = {
   primary: "#2E7D32",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
-  softGold: "#FFF8E1",
   softBlue: "#E3F2FD",
   blue: "#1565C0",
   background: "#F5F5F5",
@@ -103,7 +102,7 @@ function inscriptionTime(inscription) {
 
 export default function AdminMembersScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "members");
-  const { stats, currentUser, seasons } = useApp();
+  const { currentUser, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
 
   const [loading, setLoading] = useState(true);
@@ -289,8 +288,6 @@ export default function AdminMembersScreen({ navigation }) {
     });
   };
 
-  const pendingCount = stats?.pendingRegs ?? 0;
-
   const emptyMessage = (() => {
     if (members.length === 0) return "لا يوجد أعضاء في التطبيق بعد";
     if (q) return "لا توجد نتائج مطابقة للبحث";
@@ -332,30 +329,6 @@ export default function AdminMembersScreen({ navigation }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {pendingCount > 0 ? (
-          <TouchableOpacity
-            style={styles.pendingBanner}
-            onPress={() => navigation.navigate("AdminRegistrations")}
-            activeOpacity={0.8}
-          >
-            <View style={styles.pendingBannerIcon}>
-              <ClipboardList
-                size={20}
-                color={palette.primary}
-                pointerEvents="none"
-              />
-            </View>
-            <View style={styles.pendingBannerTextWrap}>
-              <Text style={styles.pendingBannerTitle}>
-                طلبات تسجيل بانتظار المراجعة
-              </Text>
-              <Text style={styles.pendingBannerSub}>
-                {pendingCount} طلب — افتح طلبات التسجيل للقبول أو الرفض
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ) : null}
-
         <View style={styles.searchContainer}>
           <Search size={20} color={palette.placeholder} style={styles.searchIcon} />
           <TextInput
@@ -574,40 +547,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 28,
-  },
-  pendingBanner: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: palette.softGold,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#FFE082",
-  },
-  pendingBannerIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  pendingBannerTextWrap: {
-    flex: 1,
-  },
-  pendingBannerTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: palette.textPrimary,
-    marginBottom: 2,
-    ...rtlText,
-  },
-  pendingBannerSub: {
-    fontSize: 12,
-    color: palette.textSecondary,
-    ...rtlText,
   },
   searchContainer: {
     position: "relative",

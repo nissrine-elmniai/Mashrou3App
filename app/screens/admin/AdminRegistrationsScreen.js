@@ -31,7 +31,6 @@ const palette = {
   gold: "#FBC02D",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
-  softGold: "#FFF8E1",
   teal: "#00897B",
   background: "#F5F5F5",
   textSecondary: "#666666",
@@ -273,14 +272,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {pendingCount > 0 ? (
-          <View style={styles.hintBanner}>
-            <Text style={styles.hintBannerText}>
-              {pendingCount} طلب جديد بانتظار قرارك
-            </Text>
-          </View>
-        ) : null}
-
         {!isSummer ? (
           <View style={styles.filterRow}>
             {kindFilters.map(([key, label]) => (
@@ -539,20 +530,6 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: {
     padding: 16,
-  },
-  hintBanner: {
-    backgroundColor: palette.softGold,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "#FFE082",
-  },
-  hintBannerText: {
-    fontSize: 13,
-    color: palette.textPrimary,
-    fontWeight: "600",
-    ...rtlText,
   },
   filterRow: {
     flexDirection: row,
