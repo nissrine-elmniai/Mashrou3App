@@ -75,3 +75,10 @@ export function formatMenuBadge(count) {
   if (n <= 0) return "";
   return n > 9 ? "9+" : String(n);
 }
+
+/** Badge des demandes en attente sur « طلبات الانضمام ». */
+export function formatPendingRegsBadge(count) {
+  const n = Number(count) || 0;
+  if (n <= 0) return "";
+  return `+${n}`;
+}
