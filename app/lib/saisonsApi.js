@@ -17,6 +17,19 @@ function withTimeout(promise, ms, label) {
 
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
+  const code = String(error?.code || "");
+  if (/saisons_one_active_per_type/i.test(msg)) {
+    return "يوجد موسم نشط بالفعل من هذا النوع — أوقف الموسم الحالي أولاً";
+  }
+  if (/saisons_registration_requires_active/i.test(msg)) {
+    return "لا يمكن فتح التسجيل لموسم غير نشط";
+  }
+  if (code === "23505" || /duplicate key|23505/i.test(msg)) {
+    return "سجل مكرر — هذه العملية مسجلة مسبقاً";
+  }
+  if (code === "23514" || /violates check constraint|23514/i.test(msg)) {
+    return "البيانات لا تستوفي شروط الموسم";
+  }
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }

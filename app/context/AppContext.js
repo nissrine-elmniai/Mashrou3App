@@ -818,6 +818,26 @@ export function AppProvider({ children }) {
     return confirmPasswordResetWithOtp(email, token, newPassword);
   };
 
+  const persistDeactivatedSiblings = async (siblings) => {
+    const toClose = (siblings || []).filter(
+      (s) => s.active || s.registrationOpen
+    );
+    if (toClose.length === 0) return { ok: true };
+    const results = await Promise.all(
+      toClose.map((s) =>
+        upsertSaison({ ...s, active: false, registrationOpen: false })
+      )
+    );
+    const failed = results.find((r) => !r.ok);
+    if (failed) {
+      return {
+        ok: false,
+        error: failed.error || "تعذر إغلاق الموسم السابق",
+      };
+    }
+    return { ok: true };
+  };
+
   const createSeason = async (payload) => {
     const { openRegistration = false, activate = false, ...rest } = payload;
     const season = {
@@ -831,6 +851,7 @@ export function AppProvider({ children }) {
     const previousSameType = activate
       ? seasons.filter((s) => s.type === season.type && s.id !== season.id)
       : [];
+    const previousSeasonsSnapshot = seasons;
 
     setSeasons((prev) => {
       let next = [...prev, season];
@@ -852,16 +873,20 @@ export function AppProvider({ children }) {
     });
 
     if (isSupabaseConfigured()) {
+      // Désactiver les sœurs AVANT d'activer (index unique saisons_one_active_per_type).
+      // Le trigger 0080 archive les séances ; pas d'archivage client ici.
+      if (activate) {
+        const closed = await persistDeactivatedSiblings(previousSameType);
+        if (!closed.ok) {
+          setSeasons(previousSeasonsSnapshot);
+          return { ok: false, error: closed.error };
+        }
+      }
       const upsert = await upsertSaison(season);
       if (!upsert.ok) {
-        setSeasons((prev) => prev.filter((s) => s.id !== season.id));
+        setSeasons(previousSeasonsSnapshot);
         return { ok: false, error: upsert.error || "تعذر حفظ الموسم" };
       }
-      await Promise.all(
-        previousSameType.map((s) =>
-          upsertSaison({ ...s, active: false, registrationOpen: false })
-        )
-      );
     }
 
     if (openRegistration) {
@@ -918,6 +943,16 @@ export function AppProvider({ children }) {
     });
 
     if (isSupabaseConfigured()) {
+      // Snapshot AVANT close : computeSeasonStats ignore les séances
+      // archivee, et le trigger 0080 archive dès active → false.
+      const snapRes = await snapshotSeasonsBeforeClose(previousRegularIds);
+      if (!snapRes.ok && !snapRes.skipped) {
+        setSeasons(previousSeasonsSnapshot);
+        return {
+          ok: false,
+          error: snapRes.error || "تعذر حفظ إحصائيات الموسم السابق",
+        };
+      }
       const closeRes = await closeRegularSaisons(previousRegularIds);
       if (!closeRes.ok && !closeRes.skipped) {
         setSeasons(previousSeasonsSnapshot);
@@ -926,8 +961,16 @@ export function AppProvider({ children }) {
           error: closeRes.error || "تعذر إغلاق المواسم السابقة",
         };
       }
-      await snapshotSeasonsBeforeClose(previousRegularIds);
-      await archiveSeancesForSaisonIds(previousRegularIds);
+      // Filet client : le trigger 0080 a déjà archivé. Redondant si 0080
+      // est appliqué ; on remonte quand même l'erreur au lieu de l'avaler.
+      const archiveRes = await archiveSeancesForSaisonIds(previousRegularIds);
+      if (!archiveRes.ok && !archiveRes.skipped) {
+        setSeasons(previousSeasonsSnapshot);
+        return {
+          ok: false,
+          error: archiveRes.error || "تعذر أرشفة حصص الموسم السابق",
+        };
+      }
 
       // Désactiver les comptes superviseurs de l'ancienne saison (historique conservé)
       const deact = await deactivateSupervisorsForSaisons(previousRegularIds);
@@ -1011,18 +1054,27 @@ export function AppProvider({ children }) {
       active: true,
     };
     const previous = seasons;
+    const siblings = seasons.filter(
+      (s) => s.type === season.type && s.id !== seasonId
+    );
     setSeasons((prev) =>
       prev.map((s) => {
         if (s.id === seasonId) {
           return { ...s, registrationOpen: true, active: true };
         }
         if (s.type === season.type) {
-          return { ...s, active: false };
+          return { ...s, active: false, registrationOpen: false };
         }
         return s;
       })
     );
     if (isSupabaseConfigured()) {
+      // Sœurs d'abord (index unique) ; le trigger 0080 archive leurs séances.
+      const closed = await persistDeactivatedSiblings(siblings);
+      if (!closed.ok) {
+        setSeasons(previous);
+        return { ok: false, error: closed.error };
+      }
       const upsert = await upsertSaison(next);
       if (!upsert.ok) {
         setSeasons(previous);
@@ -1055,14 +1107,13 @@ export function AppProvider({ children }) {
     const season = seasons.find((s) => s.id === seasonId);
     if (!season) return { ok: false, error: "الموسم غير موجود" };
 
-    if (
-      open &&
-      season.type === SEASON_TYPES.REGULAR &&
-      !season.active
-    ) {
+    if (open && !season.active) {
       return {
         ok: false,
-        error: "افتح التسجيل عبر «انطلاق موسم جديد» فقط",
+        error:
+          season.type === SEASON_TYPES.REGULAR
+            ? "افتح التسجيل عبر «انطلاق موسم جديد» فقط"
+            : "افتح التسجيل عبر «إعلان استمارة التسجيل» — الموسم غير نشط",
       };
     }
 
@@ -1114,18 +1165,18 @@ export function AppProvider({ children }) {
     );
 
     if (isSupabaseConfigured()) {
+      // Sœurs d'abord (index unique saisons_one_active_per_type).
+      // Le trigger 0080 archive leurs séances ; pas d'archivage client ici.
+      const closed = await persistDeactivatedSiblings(siblings);
+      if (!closed.ok) {
+        setSeasons(previous);
+        return { ok: false, error: closed.error };
+      }
       const upsert = await upsertSaison({ ...target, active: true });
       if (!upsert.ok) {
         setSeasons(previous);
         return { ok: false, error: upsert.error || "تعذر تفعيل الموسم" };
       }
-      await Promise.all(
-        siblings
-          .filter((s) => s.active || s.registrationOpen)
-          .map((s) =>
-            upsertSaison({ ...s, active: false, registrationOpen: false })
-          )
-      );
     }
     return { ok: true };
   };
