@@ -718,6 +718,25 @@ export function sumUnreadForContactIds(threads = [], contactIds = []) {
   }, 0);
 }
 
+/**
+ * Total non-lus inbox membre : DM superviseur + messages de groupe.
+ * Si superviseurId est connu, on ne compte que ce correspondant.
+ * Sinon, repli sur les threads role === "supervisor" (inscription pas encore chargée).
+ */
+export function sumMemberInboxUnread(threads = [], groups = [], superviseurId = null) {
+  const dm = superviseurId
+    ? sumUnreadForContactIds(threads, [superviseurId])
+    : (threads || []).reduce((sum, t) => {
+        if (String(t.role || "").toLowerCase() !== "supervisor") return sum;
+        return sum + (Number(t.unreadCount) || 0);
+      }, 0);
+  const group = (groups || []).reduce(
+    (sum, g) => sum + (Number(g.unreadCount) || 0),
+    0
+  );
+  return dm + group;
+}
+
 /** Nombre de conversations (DM + groupes) avec au moins un message non lu. */
 export function countUnseenConversations(threads = [], groups = []) {
   const dm = (threads || []).filter(
