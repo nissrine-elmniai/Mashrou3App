@@ -48,7 +48,7 @@ import {
 import {
   getMyCurrentInscription,
   formatUnreadBadge,
-  sumUnreadForContactIds,
+  sumMemberInboxUnread,
 } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
@@ -65,7 +65,8 @@ import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
 import AlertSenderFace from "../../components/AlertSenderFace";
-import InboxHeaderButton from "../../components/InboxHeaderButton";
+import ProfileAvatar from "../../components/ProfileAvatar";
+import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import MemberProgramsPanel from "./MemberProgramsPanel";
 import MemberRegistrationPanel from "./MemberRegistrationPanel";
 
@@ -176,7 +177,8 @@ export default function MemberDashboardScreen({ navigation }) {
 
   const authId = currentUser?.authId || currentUser?.id || null;
   const { threads } = useInboxThreads();
-  const { totalUnread: groupsUnread } = useChatGroups();
+  const { groups: chatGroups } = useChatGroups();
+  const { count: unreadNotifCount } = useUnreadNotifications();
 
   const [tab, setTab] = useState("home");
   const [adminAlerts, setAdminAlerts] = useState([]);
@@ -223,10 +225,12 @@ export default function MemberDashboardScreen({ navigation }) {
   });
   const [myExams, setMyExams] = useState([]);
 
-  const messagesUnread = useMemo(() => {
-    const dm = sumUnreadForContactIds(threads, [sessionState.superviseurId]);
-    return dm + (Number(groupsUnread) || 0);
-  }, [threads, groupsUnread, sessionState.superviseurId]);
+  const messagesUnread = useMemo(
+    () =>
+      sumMemberInboxUnread(threads, chatGroups, sessionState.superviseurId),
+    [threads, chatGroups, sessionState.superviseurId]
+  );
+  const headerBadgeCount = pendingAlertCount + unreadNotifCount;
 
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
 
@@ -898,22 +902,39 @@ export default function MemberDashboardScreen({ navigation }) {
                 </TouchableOpacity>
                 {tab === "home" ? (
                   <>
-                    <InboxHeaderButton navigation={navigation} color="white" />
                     <TouchableOpacity
                       style={styles.headerIconWrap}
                       onPress={() => navigation.navigate("MemberAlerts")}
                       hitSlop={8}
                       accessibilityRole="button"
-                      accessibilityLabel="تنبيهات الإدارة"
+                      accessibilityLabel="الإشعارات"
                     >
                       <Ionicons name="notifications-outline" size={22} color="white" />
-                      {pendingAlertCount > 0 ? (
+                      {headerBadgeCount > 0 ? (
                         <View style={styles.headerBellBadge}>
                           <Text style={styles.headerBellBadgeText}>
-                            {pendingAlertCount > 9 ? "9+" : pendingAlertCount}
+                            {headerBadgeCount > 9 ? "9+" : headerBadgeCount}
                           </Text>
                         </View>
                       ) : null}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.profileBtn}
+                      onPress={() => setTab("profile")}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="الملف الشخصي"
+                    >
+                      <ProfileAvatar
+                        userId={authId}
+                        avatarUrl={currentUser?.avatarUrl}
+                        cacheKey={currentUser?.avatarUrl || authId}
+                        fallbackLetter={(currentUser?.firstName || fullName || "م").charAt(0)}
+                        size={32}
+                        softBackgroundColor="rgba(255,255,255,0.28)"
+                        letterColor="white"
+                        style={styles.profileAvatar}
+                      />
                     </TouchableOpacity>
                   </>
                 ) : null}
@@ -1118,14 +1139,14 @@ export default function MemberDashboardScreen({ navigation }) {
           }
         >
           <Ionicons name="chatbubble-ellipses" size={28} color="white" />
+          {messagesUnread > 0 ? (
+            <View style={styles.fabBadge} pointerEvents="none">
+              <Text style={styles.fabBadgeText}>
+                {formatUnreadBadge(messagesUnread)}
+              </Text>
+            </View>
+          ) : null}
         </TouchableOpacity>
-        {messagesUnread > 0 ? (
-          <View style={styles.fabBadge} pointerEvents="none">
-            <Text style={styles.fabBadgeText}>
-              {formatUnreadBadge(messagesUnread)}
-            </Text>
-          </View>
-        ) : null}
       </View>
 
       <ChangePasswordModal
@@ -1235,6 +1256,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerIconWrap: { position: "relative", padding: 2 },
+  profileBtn: { padding: 2 },
+  profileAvatar: {
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
   headerBellBadge: {
     position: "absolute",
     top: -4,
@@ -1396,19 +1422,19 @@ const styles = StyleSheet.create({
   },
   fabBadge: {
     position: "absolute",
-    top: -6,
-    end: -10,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    paddingHorizontal: 3,
+    top: -2,
+    end: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
     backgroundColor: colors.gold,
     justifyContent: "center",
     alignItems: "center",
   },
   fabBadgeText: {
     color: colors.text,
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: fonts.bold,
   },
 });

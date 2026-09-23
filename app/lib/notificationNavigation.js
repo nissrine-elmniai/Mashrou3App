@@ -109,6 +109,10 @@ function tryNavigate(navigation, name, params) {
  * Navigation depuis le payload d'une notification (tap push ou inbox).
  * Destination métier si connue ; sinon NotificationDetail (repli automatique).
  * Ne navigue pas si la stack Auth est encore affichée (écran absent).
+ *
+ * @returns {boolean} true si une navigation a abouti (écran dédié OU
+ *   repli NotificationDetail). false si rien n'a été ouvert (Auth, nav
+ *   absente, exception). Les appelants existants peuvent ignorer le booléen.
  */
 export function navigateFromNotificationPayload(navigation, payload) {
   if (!navigation || !payload || typeof payload !== "object") {
@@ -135,30 +139,53 @@ export function navigateFromNotificationPayload(navigation, payload) {
   }
 }
 
+async function markReadIfPossible(id) {
+  if (!id) return false;
+  const res = await markNotificationRead(id);
+  if (res?.ok) return true;
+  if (res?.error) {
+    console.warn("[notif] mark read:", res.error);
+  }
+  return false;
+}
+
 /**
- * Chemin unique inbox + tap push : read_at d'abord, puis navigation.
- * Si la cible n'existe pas / la nav échoue, read_at est déjà posé.
- * Si read_at échoue (réseau), on navigue quand même.
+ * Chemin unique inbox + tap push.
+ *
+ * Hors chat : read_at d'abord, puis navigation. Le texte de la notif EST
+ * l'information (« tu étais absent », « ta demande est refusée ») ; si la
+ * nav échoue, la ligne reste lue et l'inbox reste propre. Si read_at
+ * échoue (réseau), on navigue quand même.
+ *
+ * Chat : navigation d'abord, read_at seulement si elle a abouti (destination
+ * métier OU repli NotificationDetail — les deux comptent). Pourquoi ce
+ * branchement : le collapse 10 min n'envoie jamais le texte du message,
+ * seulement « رسالة جديدة من X ». Le contenu réel n'existe que derrière
+ * ChatConversation / GroupChat. Poser read_at avant une nav ratée ferait
+ * disparaître la ligne de l'inbox (filtre `read_at is null`) et
+ * l'utilisateur ne saurait plus qui lui a écrit. Ne pas « harmoniser »
+ * les deux branches : ce n'est pas un oubli, c'est la catégorie qui
+ * n'est plus auto-suffisante.
  */
 export async function openNotification(navigation, source = {}) {
   const payload = resolvePayload(source);
   const id = source.id || payload.notificationId || null;
-
-  let marked = false;
-  if (id) {
-    const res = await markNotificationRead(id);
-    marked = !!res?.ok;
-    if (!marked && res?.error) {
-      console.warn("[notif] mark read:", res.error);
-    }
-  }
-
-  const navigated = navigateFromNotificationPayload(navigation, {
+  const category = String(source.category || payload.category || "").trim();
+  const navPayload = {
     ...payload,
     title: source.title || payload.title || "",
     body: source.body || payload.body || "",
     createdAt: source.createdAt || payload.createdAt || payload.created_at || null,
     category: source.category || payload.category || null,
-  });
+  };
+
+  if (category === "chat") {
+    const navigated = navigateFromNotificationPayload(navigation, navPayload);
+    const marked = navigated ? await markReadIfPossible(id) : false;
+    return { marked, navigated };
+  }
+
+  const marked = await markReadIfPossible(id);
+  const navigated = navigateFromNotificationPayload(navigation, navPayload);
   return { marked, navigated };
 }

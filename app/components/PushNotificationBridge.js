@@ -19,8 +19,10 @@ function hasNavigablePayload(payload) {
 }
 
 /**
- * Relie le tap d'une push Expo à read_at + navigation (même chemin que l'inbox).
- * Attend JWT + stack de rôle (NotificationDetail n'existe pas sur Auth).
+ * Relie le tap d'une push Expo à openNotification (même chemin que l'inbox).
+ * L'ordre read_at / nav est décidé là-bas : chat = nav d'abord, le reste
+ * = read_at d'abord. Attend JWT + stack de rôle (NotificationDetail
+ * n'existe pas sur Auth).
  */
 export default function PushNotificationBridge({ navigationRef, navTick = 0 }) {
   const { supabaseSession, currentUser } = useApp();
