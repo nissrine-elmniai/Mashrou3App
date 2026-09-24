@@ -48,15 +48,13 @@ begin
   values (
     new.id,
     lower(new.email),
-    coalesce(new.raw_user_meta_data->>'role', 'member'),
-    coalesce(new.raw_user_meta_data->>'account_status', 'active'),
+    'member',
+    'active',
     new.raw_user_meta_data->>'first_name',
     new.raw_user_meta_data->>'last_name'
   )
   on conflict (id) do update set
     email = excluded.email,
-    role = excluded.role,
-    account_status = excluded.account_status,
     first_name = coalesce(excluded.first_name, public.profiles.first_name),
     last_name = coalesce(excluded.last_name, public.profiles.last_name),
     updated_at = now();

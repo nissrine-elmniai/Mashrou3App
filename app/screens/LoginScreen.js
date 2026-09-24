@@ -10,6 +10,7 @@ import {
   Platform,
   Image,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -23,15 +24,22 @@ export default function LoginScreen({ navigation }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const handleLogin = async () => {
+    if (submitting) return;
     if (!username || !password) {
       Alert.alert("تنبيه", "أدخل البريد وكلمة المرور");
       return;
     }
-    const result = await login(username, password);
-    if (!result.ok) {
-      Alert.alert("خطأ", result.error);
+    setSubmitting(true);
+    try {
+      const result = await login(username, password);
+      if (!result.ok) {
+        Alert.alert("خطأ", result.error);
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -106,8 +114,16 @@ export default function LoginScreen({ navigation }) {
               </View>
             </View>
 
-            <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
-              <Text style={styles.loginButtonText}>تسجيل الدخول</Text>
+            <TouchableOpacity
+              style={[styles.loginButton, submitting && { opacity: 0.7 }]}
+              onPress={handleLogin}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.loginButtonText}>تسجيل الدخول</Text>
+              )}
             </TouchableOpacity>
 
             <View style={styles.linksContainer}>

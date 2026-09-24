@@ -437,7 +437,13 @@ export async function signUpWithProfile({
     if (!invited.functionMissing) {
       return invited;
     }
-    // Fonction non déployée : repli temporaire sur signUp (nécessite SMTP OK)
+    if (role === ROLES.SUPERVISOR) {
+      return {
+        ok: false,
+        error: "تعذر تفعيل حساب المشرف. أعد المحاولة لاحقاً",
+      };
+    }
+    // Fonction non déployée (membre seulement) : repli signUp sans rôle privilegié
   }
 
   const mail = String(email || "").trim().toLowerCase();
@@ -446,7 +452,7 @@ export async function signUpWithProfile({
     password,
     options: {
       data: {
-        role,
+        role: ROLES.MEMBER,
         first_name: firstName || "",
         last_name: lastName || "",
         account_status: accountStatus,

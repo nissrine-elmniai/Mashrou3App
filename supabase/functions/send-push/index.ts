@@ -2,8 +2,7 @@
 //   npx supabase functions deploy send-push
 // Secrets auto : SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Appel attendu : Authorization Bearer JWT service_role (pg_net / cron).
-// Auth : rôle JWT (gateway a déjà validé la signature). Clé opaque sb_secret_
-// acceptée en repli si elle égale SUPABASE_SERVICE_ROLE_KEY.
+// Auth : Bearer === SUPABASE_SERVICE_ROLE_KEY (comparaison constant-time).
 // Claim atomique : RPC claim_pending_push_notifications (SKIP LOCKED).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -339,42 +338,28 @@ function authorizeServiceRole(
   if (!token) {
     return { ok: false, reason: "header absent" };
   }
-
-  const payload = decodeJwtPayload(token);
-  if (payload) {
-    const role = payload.role;
-    if (role === "service_role") {
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      reason: `rôle inattendu: ${role == null ? "absent" : String(role)}`,
-    };
+  if (!serviceKey) {
+    return { ok: false, reason: "clé serveur absente" };
   }
-
-  // Pas un JWT : clé opaque (sb_secret_ ou secret env). Pas de comparaison
-  // du JWT legacy à la variable d'environnement — ça casse à la rotation.
-  if (token === serviceKey) {
+  // Uniquement la clé réelle (JWT service_role ou sb_secret_).
+  // Ne jamais faire confiance au payload JWT décodé sans signature :
+  // un jeton forgé { role: "service_role" } passerait si verify_jwt est off.
+  if (timingSafeEqual(token, serviceKey)) {
     return { ok: true };
   }
-  return { ok: false, reason: "format invalide" };
+  return { ok: false, reason: "clé invalide" };
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  const parts = token.split(".");
-  if (parts.length !== 3 || !parts[1]) return null;
-  try {
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-    const jsonText = atob(b64 + pad);
-    const payload = JSON.parse(jsonText);
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      return null;
-    }
-    return payload as Record<string, unknown>;
-  } catch {
-    return null;
+function timingSafeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const aa = encoder.encode(a);
+  const bb = encoder.encode(b);
+  const len = Math.max(aa.length, bb.length);
+  let mismatch = aa.length ^ bb.length;
+  for (let i = 0; i < len; i++) {
+    mismatch |= (aa[i] ?? 0) ^ (bb[i] ?? 0);
   }
+  return mismatch === 0;
 }
 
 function json(payload: unknown, status = 200) {

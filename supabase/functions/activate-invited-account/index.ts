@@ -7,6 +7,8 @@
 //
 // Sécurité : uniquement si une invitation / demande acceptée existe en base
 // (member_applications.status = invited | supervisor_invitations.status = pending).
+// Si le compte Auth existe déjà : on vérifie le mot de passe fourni, on ne
+// le réécrit jamais (évite la prise de compte pendant la fenêtre d'invitation).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
@@ -90,6 +92,7 @@ Deno.serve(async (req) => {
     const admin = createClient(supabaseUrl, serviceKey);
 
     let memberAppRow: Record<string, unknown> | null = null;
+    let supervisorInvRow: Record<string, unknown> | null = null;
 
     if (role === "member") {
       const { data: apps, error: appErr } = await admin
@@ -166,6 +169,7 @@ Deno.serve(async (req) => {
           200
         );
       }
+      supervisorInvRow = inv as Record<string, unknown>;
     }
 
     const authMail = authEmailForRole(displayEmail, role);
@@ -198,13 +202,11 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Compte déjà créé (ex. tentative précédente) : maj MDP + confirm
-      const { data: linkData } = await admin.auth.admin.generateLink({
-        type: "recovery",
-        email: authMail,
-      });
-      const existingId = linkData?.user?.id;
-      if (!existingId) {
+      // Compte déjà créé : on NE change PAS le mot de passe (prise de compte).
+      // Relier l'invitation seulement si le mot de passe fourni est le bon
+      // (nouvelle tentative après un createUser réussi mais un lien invitation raté).
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      if (!anonKey) {
         return json(
           {
             ok: false,
@@ -214,21 +216,28 @@ Deno.serve(async (req) => {
           200
         );
       }
-      const { data: updated, error: updErr } = await admin.auth.admin.updateUserById(
-        existingId,
-        {
-          password,
-          email_confirm: true,
-          user_metadata: meta,
-        }
-      );
-      if (updErr) {
+      const anon = createClient(supabaseUrl, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { data: signed, error: signErr } = await anon.auth.signInWithPassword({
+        email: authMail,
+        password,
+      });
+      if (signErr || !signed?.user?.id) {
         return json(
-          { ok: false, error: updErr.message || "تعذر تحديث الحساب" },
+          {
+            ok: false,
+            error:
+              "هذا البريد مسجّل مسبقاً. سجّل الدخول أو استخدم استعادة كلمة المرور",
+          },
           200
         );
       }
-      userId = updated.user.id;
+      userId = signed.user.id;
+      await admin.auth.admin.updateUserById(userId, {
+        email_confirm: true,
+        user_metadata: meta,
+      });
     } else {
       userId = created.user!.id;
     }
@@ -241,8 +250,16 @@ Deno.serve(async (req) => {
       role,
       roles: [role],
       account_status: "active",
-      first_name: firstName || memberAppRow?.first_name || null,
-      last_name: lastName || memberAppRow?.last_name || null,
+      first_name:
+        firstName ||
+        memberAppRow?.first_name ||
+        supervisorInvRow?.first_name ||
+        null,
+      last_name:
+        lastName ||
+        memberAppRow?.last_name ||
+        supervisorInvRow?.last_name ||
+        null,
       updated_at: now,
     };
     if (memberAppRow) {
