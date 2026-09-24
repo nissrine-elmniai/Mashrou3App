@@ -1,4 +1,4 @@
--- 0081_progression_notifications.sql
+-- 0087_progression_notifications.sql
 -- Lot 5 — Notifications catégorie « progression ».
 --
 -- Schéma live vérifié (PROGRESS.md est périmé sur ce point) :

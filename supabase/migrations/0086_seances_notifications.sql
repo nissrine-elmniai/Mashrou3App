@@ -1,4 +1,4 @@
--- 0080_seances_notifications.sql
+-- 0086_seances_notifications.sql
 -- Lot 3 — Notifications catégorie « seances ».
 --
 -- Schéma live vérifié (les migrations du dépôt sont périmées sur ces points) :
