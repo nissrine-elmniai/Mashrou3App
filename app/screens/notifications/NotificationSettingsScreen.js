@@ -9,11 +9,13 @@ import {
   ActivityIndicator,
   Alert,
   StatusBar,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useApp } from "../../context/AppContext";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, fonts, arrowBack, row, isRTL } from "../../constants/rtl";
@@ -28,8 +30,28 @@ import {
   emptyNotificationPreferences,
   getNotificationPreferences,
   updateNotificationPreferences,
-  enqueueTestNotification,
+  updateQuietHours,
 } from "../../lib/notificationsApi";
+
+const QUIET_START_DEFAULT = "22:00";
+const QUIET_END_DEFAULT = "07:00";
+
+function hmToDate(hm) {
+  const date = new Date();
+  const match = String(hm || "").match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    date.setHours(22, 0, 0, 0);
+    return date;
+  }
+  date.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  return date;
+}
+
+function dateToHm(date) {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
 
 export default function NotificationSettingsScreen({ navigation }) {
   const { currentUser, supabaseSession } = useApp();
@@ -41,7 +63,9 @@ export default function NotificationSettingsScreen({ navigation }) {
   const [prefs, setPrefs] = useState(emptyNotificationPreferences());
   const [loadingPrefs, setLoadingPrefs] = useState(true);
   const [savingKey, setSavingKey] = useState(null);
-  const [sendingTest, setSendingTest] = useState(false);
+  const [savingQuiet, setSavingQuiet] = useState(false);
+  const [quietPicker, setQuietPicker] = useState(null);
+  const [quietDraft, setQuietDraft] = useState(null);
 
   const loadDevice = useCallback(async () => {
     if (!authId) {
@@ -111,18 +135,84 @@ export default function NotificationSettingsScreen({ navigation }) {
     setPrefs(res.preferences);
   };
 
-  const handleTest = async () => {
-    setSendingTest(true);
-    const res = await enqueueTestNotification(authId);
-    setSendingTest(false);
+  const quietStartShown =
+    quietPicker === "start" && quietDraft
+      ? quietDraft
+      : prefs.quietHoursStart || QUIET_START_DEFAULT;
+  const quietEndShown =
+    quietPicker === "end" && quietDraft
+      ? quietDraft
+      : prefs.quietHoursEnd || QUIET_END_DEFAULT;
+
+  const applyQuietHours = async (next) => {
+    const prev = prefs;
+    setPrefs(next);
+    setSavingQuiet(true);
+    const res = await updateQuietHours(authId, {
+      enabled: next.quietHoursEnabled === true,
+      start: next.quietHoursStart,
+      end: next.quietHoursEnd,
+    });
+    setSavingQuiet(false);
     if (!res.ok) {
-      Alert.alert("تنبيه", res.error || "تعذر إرسال الإشعار التجريبي");
+      setPrefs(prev);
+      Alert.alert("تنبيه", res.error || "تعذر حفظ الساعات الهادئة");
       return;
     }
-    Alert.alert(
-      "تم",
-      "أُرسل إشعار تجريبي. يظهر في الصندوق فورًا، والدفعة تصل إن كان الجهاز مسجّلًا."
-    );
+    if (res.preferences) setPrefs(res.preferences);
+  };
+
+  const handleQuietToggle = (nextEnabled) => {
+    if (savingQuiet) return;
+    setQuietPicker(null);
+    setQuietDraft(null);
+    if (nextEnabled) {
+      applyQuietHours({
+        ...prefs,
+        quietHoursEnabled: true,
+        quietHoursStart: prefs.quietHoursStart || QUIET_START_DEFAULT,
+        quietHoursEnd: prefs.quietHoursEnd || QUIET_END_DEFAULT,
+      });
+      return;
+    }
+    applyQuietHours({
+      ...prefs,
+      quietHoursEnabled: false,
+    });
+  };
+
+  const commitQuietTime = (field, hhmm) => {
+    const start = field === "start" ? hhmm : prefs.quietHoursStart || QUIET_START_DEFAULT;
+    const end = field === "end" ? hhmm : prefs.quietHoursEnd || QUIET_END_DEFAULT;
+    const stored = field === "start" ? prefs.quietHoursStart : prefs.quietHoursEnd;
+    if (stored === hhmm) return;
+    applyQuietHours({
+      ...prefs,
+      quietHoursEnabled: true,
+      quietHoursStart: start,
+      quietHoursEnd: end,
+    });
+  };
+
+  const onQuietTimeChange = (event, selected) => {
+    const field = quietPicker;
+    if (Platform.OS !== "ios") setQuietPicker(null);
+    if (event?.type === "dismissed" || !selected || !field) return;
+    const hhmm = dateToHm(selected);
+    if (Platform.OS === "ios") {
+      setQuietDraft(hhmm);
+      return;
+    }
+    commitQuietTime(field, hhmm);
+  };
+
+  const confirmIosQuietTime = () => {
+    const field = quietPicker;
+    const hhmm =
+      quietDraft || (field === "start" ? quietStartShown : quietEndShown);
+    setQuietPicker(null);
+    setQuietDraft(null);
+    if (field && hhmm) commitQuietTime(field, hhmm);
   };
 
   return (
@@ -204,16 +294,84 @@ export default function NotificationSettingsScreen({ navigation }) {
           )}
         </View>
 
-        <TouchableOpacity
-          style={styles.testBtn}
-          onPress={handleTest}
-          disabled={sendingTest || !authId}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.testBtnText}>
-            {sendingTest ? "جاري الإرسال..." : "إرسال إشعار تجريبي"}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>الساعات الهادئة</Text>
+          {loadingPrefs ? (
+            <ActivityIndicator color={colors.primary} style={styles.loader} />
+          ) : (
+            <>
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>تفعيل الساعات الهادئة</Text>
+                {savingQuiet ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Switch
+                    value={prefs.quietHoursEnabled === true}
+                    onValueChange={handleQuietToggle}
+                    trackColor={{ true: colors.primary, false: colors.border }}
+                    thumbColor="white"
+                    disabled={!authId}
+                  />
+                )}
+              </View>
+              <Text style={styles.hint}>
+                لن تصلك الإشعارات خلال هذه الفترة، وستُرسل بعد انتهائها
+              </Text>
+              {prefs.quietHoursEnabled === true ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.timeRow}
+                    onPress={() => {
+                      setQuietDraft(null);
+                      setQuietPicker("start");
+                    }}
+                    disabled={savingQuiet}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="من"
+                  >
+                    <Text style={styles.switchLabel}>من</Text>
+                    <Text style={styles.timeValue}>{quietStartShown}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.timeRow, styles.switchRowLast]}
+                    onPress={() => {
+                      setQuietDraft(null);
+                      setQuietPicker("end");
+                    }}
+                    disabled={savingQuiet}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="إلى"
+                  >
+                    <Text style={styles.switchLabel}>إلى</Text>
+                    <Text style={styles.timeValue}>{quietEndShown}</Text>
+                  </TouchableOpacity>
+                  {quietPicker ? (
+                    <DateTimePicker
+                      value={hmToDate(
+                        quietPicker === "start" ? quietStartShown : quietEndShown
+                      )}
+                      mode="time"
+                      is24Hour
+                      display={Platform.OS === "ios" ? "spinner" : "default"}
+                      onChange={onQuietTimeChange}
+                    />
+                  ) : null}
+                  {Platform.OS === "ios" && quietPicker ? (
+                    <TouchableOpacity
+                      style={styles.timeDoneBtn}
+                      onPress={confirmIosQuietTime}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.timeDoneText}>تم</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -300,16 +458,33 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   loader: { marginVertical: 12 },
-  testBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.md,
-    paddingVertical: 14,
+  timeRow: {
+    flexDirection: row,
     alignItems: "center",
-    marginTop: 8,
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 10,
+    marginTop: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
-  testBtnText: {
-    color: "#fff",
-    fontFamily: fonts.bold,
+  timeValue: {
     fontSize: 15,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    ...rtlText,
+  },
+  timeDoneBtn: {
+    alignSelf: "center",
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: radii.md,
+    backgroundColor: colors.primarySoft,
+  },
+  timeDoneText: {
+    color: colors.primary,
+    fontFamily: fonts.bold,
+    fontSize: 14,
   },
 });

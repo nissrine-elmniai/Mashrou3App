@@ -1,5 +1,5 @@
 -- Vérifications LOT 0 — à coller dans SQL Editor APRÈS 0065–0069.
--- Lecture seule. Aucun INSERT ici (le test d'envoi est enqueue_test_notification).
+-- Lecture seule. Aucun INSERT ici.
 
 -- 1) Colonnes (source_id = text, claimed_at, dispatch_request_id)
 select table_name, column_name, data_type, is_nullable, column_default
@@ -52,7 +52,6 @@ from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
 where p.proname in (
   'upsert_push_token',
-  'enqueue_test_notification',
   'invoke_send_push',
   'dispatch_pending_push',
   'claim_pending_push_notifications'
@@ -78,8 +77,7 @@ where n.dispatch_request_id is not null
 order by n.created_at desc
 limit 20;
 
--- 10) Test d'envoi (après Vault + deploy send-push). Remplacer l'uuid profiles :
--- select public.enqueue_test_notification('<uuid>');
+-- 10) Dernières notifications (lecture seule, après un envoi réel).
 -- select id, user_id, category, event_type, source_id, claimed_at,
 --        dispatch_request_id, push_sent_at, push_error, push_attempts, read_at
 -- from public.notifications

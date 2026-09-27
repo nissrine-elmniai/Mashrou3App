@@ -196,6 +196,24 @@ export async function markAllNotificationsRead() {
   }
 }
 
+function mapQuietTime(value) {
+  if (value == null || value === "") return null;
+  const match = String(value).trim().match(/^(\d{2}):(\d{2})/);
+  if (!match) return null;
+  return `${match[1]}:${match[2]}`;
+}
+
+/** "HH:MM" → "HH:MM:00". null/vide → null. Format invalide → undefined. */
+function toPgTime(value) {
+  if (value == null || value === "") return null;
+  const match = String(value).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return undefined;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return undefined;
+  return `${String(hours).padStart(2, "0")}:${match[2]}:00`;
+}
+
 export function emptyNotificationPreferences() {
   return {
     chat: true,
@@ -205,6 +223,9 @@ export function emptyNotificationPreferences() {
     progression: true,
     alertes: true,
     systeme: true,
+    quietHoursEnabled: false,
+    quietHoursStart: null,
+    quietHoursEnd: null,
   };
 }
 
@@ -218,6 +239,9 @@ function mapPrefsRow(row) {
     progression: row.progression !== false,
     alertes: row.alertes !== false,
     systeme: row.systeme !== false,
+    quietHoursEnabled: row.quiet_hours_enabled === true,
+    quietHoursStart: mapQuietTime(row.quiet_hours_start),
+    quietHoursEnd: mapQuietTime(row.quiet_hours_end),
   };
 }
 
@@ -328,8 +352,13 @@ export async function updateNotificationPreferences(patch = {}) {
   }
 }
 
-/** Notification de test (RPC SECURITY DEFINER). Destinataire = soi, sauf admin. */
-export async function enqueueTestNotification(userId) {
+/**
+ * Heures calmes (push seulement). Séparé des catégories.
+ * start/end au format "HH:MM" ; null laisse la colonne vide.
+ * Désactiver (enabled false) ne doit pas être appelé avec des heures nulles
+ * si l'on veut conserver une plage déjà enregistrée.
+ */
+export async function updateQuietHours(userId, { enabled, start, end } = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -337,18 +366,60 @@ export async function enqueueTestNotification(userId) {
   if (!target) {
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
+  const startPg = toPgTime(start);
+  const endPg = toPgTime(end);
+  if (startPg === undefined || endPg === undefined) {
+    return { ok: false, error: "صيغة الوقت غير صالحة" };
+  }
+  const startHm = startPg ? startPg.slice(0, 5) : null;
+  const endHm = endPg ? endPg.slice(0, 5) : null;
+  if (startHm && endHm && startHm === endHm) {
+    return { ok: false, error: "لا يمكن أن يتساوى وقت البداية ووقت النهاية" };
+  }
+  const row = {
+    quiet_hours_enabled: enabled === true,
+    quiet_hours_start: startPg,
+    quiet_hours_end: endPg,
+    updated_at: new Date().toISOString(),
+  };
   try {
     const { data, error } = await withTimeout(
-      supabase.rpc("enqueue_test_notification", { p_user_id: target }),
+      supabase
+        .from("notification_preferences")
+        .update(row)
+        .eq("user_id", target)
+        .select("*")
+        .maybeSingle(),
       SUPABASE_TIMEOUT_MS,
-      "إرسال إشعار تجريبي"
+      "حفظ الساعات الهادئة"
     );
     if (error) {
-      return { ok: false, error: mapTableError(error, "notifications") };
+      return {
+        ok: false,
+        error: mapTableError(error, "notification_preferences"),
+      };
     }
-    return { ok: true, id: data };
+    if (!data) {
+      const { data: created, error: insertError } = await withTimeout(
+        supabase
+          .from("notification_preferences")
+          .insert({ user_id: target, ...row })
+          .select("*")
+          .maybeSingle(),
+        SUPABASE_TIMEOUT_MS,
+        "حفظ الساعات الهادئة"
+      );
+      if (insertError) {
+        return {
+          ok: false,
+          error: mapTableError(insertError, "notification_preferences"),
+        };
+      }
+      return { ok: true, preferences: mapPrefsRow(created) };
+    }
+    return { ok: true, preferences: mapPrefsRow(data) };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر إرسال الإشعار التجريبي" };
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
