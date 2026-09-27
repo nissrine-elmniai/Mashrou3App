@@ -301,8 +301,9 @@ $$;
 revoke all on function public.check_progression_relances() from public;
 grant execute on function public.check_progression_relances() to postgres, service_role;
 
--- Une fois par jour à 09:00 UTC. Hors plage calme dans les deux configurations
--- marocaines (UTC+1 en temps normal, UTC+0 pendant le Ramadan).
+-- Une fois par jour à 09:00 UTC. Plus de plage calme globale (0088) :
+-- l'inbox reste immédiate, le push n'est reporté que si le destinataire
+-- a activé ses propres heures calmes.
 select cron.unschedule('progression-relance-check')
 where exists (select 1 from cron.job where jobname = 'progression-relance-check');
 
