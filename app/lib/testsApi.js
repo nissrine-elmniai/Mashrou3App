@@ -56,10 +56,9 @@ export async function getMyTestInvitations() {
       supabase
         .from("test_invitations")
         .select(
-          "*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at, type, date_test, quran_quantity, form_url)"
+          "*, test:tests!test_invitations_test_id_fkey(id, titre, saison_id, created_at, type, quran_quantity, statut)"
         )
-        .eq("membre_id", userId)
-        .order("created_at", { ascending: false }),
+        .eq("membre_id", userId),
       SUPABASE_TIMEOUT_MS,
       "قراءة دعوات الاختبار"
     );
@@ -100,7 +99,6 @@ export async function respondToInvitation({ invitationId, statut, dateChoisie = 
   const patch = {
     statut,
     date_choisie: dateChoisie || null,
-    updated_at: new Date().toISOString(),
   };
 
   try {
@@ -125,18 +123,16 @@ export async function respondToInvitation({ invitationId, statut, dateChoisie = 
 }
 
 const MY_TEST_SELECT =
-  "*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at, type, date_test, quran_quantity, form_url), resultat:test_resultats!test_resultats_test_invitation_id_fkey(id, note, commentaire, created_at)";
+  "id, membre_id, test_id, statut, note, date_choisie, test:tests!test_invitations_test_id_fkey(id, titre, saison_id, created_at, type, quran_quantity, statut)";
 
-/** Aplatit invitation + résultat pour mapMemberTestToExam. */
+/** Aplatit une invitation notée pour mapMemberTestToExam. */
 function flattenInvitationResult(row) {
-  const resultatRaw = row?.resultat;
-  const resultat = Array.isArray(resultatRaw) ? resultatRaw[0] : resultatRaw;
-  if (!resultat) return null;
-  const test = row?.test || {};
+  if (!row) return null;
+  const test = row.test || {};
   return {
-    id: resultat.id,
-    note: resultat.note,
-    created_at: resultat.created_at,
+    id: row.id,
+    note: row.note,
+    created_at: test.created_at || null,
     test,
     invitation: {
       id: row.id,
@@ -169,68 +165,20 @@ export async function getMyTestResults() {
         .from("test_invitations")
         .select(MY_TEST_SELECT)
         .eq("membre_id", userId)
-        .order("created_at", { ascending: false }),
+        .eq("statut", "note"),
       SUPABASE_TIMEOUT_MS,
       "قراءة نتائج الاختبار"
     );
-    if (!error) {
-      return {
-        ok: true,
-        results: (data || []).map(flattenInvitationResult).filter(Boolean),
-      };
+    if (error) {
+      return { ok: false, error: mapTableError(error, "test_invitations") };
     }
-
-    const twoStep = await getMyTestResultsByInvitationIds(userId);
-    if (twoStep.ok) return twoStep;
-    return { ok: false, error: mapTableError(error, "test_invitations") };
+    return {
+      ok: true,
+      results: (data || []).map(flattenInvitationResult).filter(Boolean),
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
-}
-
-async function getMyTestResultsByInvitationIds(userId) {
-  const { data: invitations, error: invErr } = await withTimeout(
-    supabase
-      .from("test_invitations")
-      .select(
-        "*, test:tests!test_invitations_test_id_fkey(id, titre, seance_id, created_at, type, date_test, quran_quantity, form_url)"
-      )
-      .eq("membre_id", userId)
-      .order("created_at", { ascending: false }),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة دعوات الاختبار"
-  );
-  if (invErr) {
-    return { ok: false, error: mapTableError(invErr, "test_invitations") };
-  }
-  const rows = invitations || [];
-  const ids = rows.map((row) => row.id).filter(Boolean);
-  if (ids.length === 0) {
-    return { ok: true, results: [] };
-  }
-
-  const { data: notes, error: resErr } = await withTimeout(
-    supabase
-      .from("test_resultats")
-      .select("id, note, commentaire, created_at, test_invitation_id")
-      .in("test_invitation_id", ids)
-      .order("created_at", { ascending: false }),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة نتائج الاختبار"
-  );
-  if (resErr) {
-    return { ok: false, error: mapTableError(resErr, "test_resultats") };
-  }
-
-  const byInvitation = new Map(rows.map((row) => [row.id, row]));
-  const results = (notes || [])
-    .map((resultat) => {
-      const invitation = byInvitation.get(resultat.test_invitation_id);
-      if (!invitation) return null;
-      return flattenInvitationResult({ ...invitation, resultat });
-    })
-    .filter(Boolean);
-  return { ok: true, results };
 }
 
 export const TEST_TYPE_LABELS = {
@@ -239,43 +187,31 @@ export const TEST_TYPE_LABELS = {
 };
 
 /**
- * (Admin) Création d'un test :
- *  - hifz   : date + quantité de Coran
- *  - sunnah : date + lien Google Form
- * @param {object} payload { type, dateTest, quranQuantity?, formUrl?, seanceId? }
- * @returns { ok, test? }
+ * (Admin) Crée un test de saison puis invite tous les membres acceptés
+ * dans une séance de cette saison. saisonId est obligatoire.
+ * @param {object} payload { saisonId, titre, type, quranQuantity? }
+ * @returns { ok, test?, invitations?, invitedCount? }
  */
 export async function createTest({
-  type = "hifz",
-  dateTest,
-  quranQuantity = null,
-  formUrl = null,
-  seanceId = null,
+  saisonId,
   titre = null,
+  type = "hifz",
+  quranQuantity = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  const seasonId = String(saisonId || "").trim();
+  if (!seasonId) {
+    return { ok: false, error: "معرّف الموسم مفقود" };
   }
   const testType = type === "sunnah" ? "sunnah" : "hifz";
   const title = String(titre || "").trim();
   if (!title) {
     return { ok: false, error: "أدخل عنوان الاختبار" };
   }
-  const date = String(dateTest || "").trim();
-  if (!date) {
-    return { ok: false, error: "أعلن تاريخ الاختبار" };
-  }
   if (testType === "hifz" && !String(quranQuantity || "").trim()) {
     return { ok: false, error: "أدخل كمية القرآن المراد تقييمها" };
-  }
-  if (testType === "sunnah") {
-    const url = String(formUrl || "").trim();
-    if (!url) {
-      return { ok: false, error: "أدخل رابط نموذج Google Form" };
-    }
-    if (!/^https?:\/\//i.test(url)) {
-      return { ok: false, error: "رابط Google Form غير صالح — يجب أن يبدأ بـ https://" };
-    }
   }
   const userId = await currentAuthId();
   if (!userId) {
@@ -285,12 +221,10 @@ export async function createTest({
   const row = {
     titre: title,
     type: testType,
-    date_test: date,
+    saison_id: seasonId,
     quran_quantity: testType === "hifz" ? String(quranQuantity).trim() : null,
-    form_url: testType === "sunnah" ? String(formUrl).trim() : null,
     created_by: userId,
   };
-  if (seanceId) row.seance_id = seanceId;
 
   try {
     const { data, error } = await withTimeout(
@@ -301,14 +235,56 @@ export async function createTest({
     if (error) {
       return { ok: false, error: mapTableError(error, "tests") };
     }
-    return { ok: true, test: data };
+
+    const { data: accepted, error: membersError } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select(
+          "membre_id, seance:seances!inscriptions_seance_id_fkey!inner(saison_id)"
+        )
+        .eq("statut", "accepte")
+        .eq("seance.saison_id", seasonId),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة أعضاء الموسم"
+    );
+    if (membersError) {
+      return { ok: false, error: mapTableError(membersError, "inscriptions"), test: data };
+    }
+
+    const membreIds = [
+      ...new Set((accepted || []).map((row) => row.membre_id).filter(Boolean)),
+    ];
+    if (membreIds.length === 0) {
+      return { ok: true, test: data, invitations: [], invitedCount: 0 };
+    }
+
+    const { data: invitations, error: inviteError } = await withTimeout(
+      supabase
+        .from("test_invitations")
+        .upsert(
+          membreIds.map((membre_id) => ({
+            test_id: data.id,
+            membre_id,
+            statut: "invite",
+          })),
+          { onConflict: "test_id,membre_id", ignoreDuplicates: true }
+        )
+        .select("*"),
+      SUPABASE_TIMEOUT_MS,
+      "إرسال الدعوات"
+    );
+    if (inviteError) {
+      return { ok: false, error: mapTableError(inviteError, "test_invitations"), test: data };
+    }
+    const invited = invitations || [];
+    return { ok: true, test: data, invitations: invited, invitedCount: invited.length };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
 /**
- * (Superviseur) Invitation de membres à un test (statut initial 'en_attente').
+ * Invitation de membres à un test (statut initial 'invite').
  * @param {object} payload { testId, membreIds: string[] }
  * @returns { ok, invitations? }
  */
@@ -325,7 +301,7 @@ export async function inviteMembers({ testId, membreIds }) {
   }
 
   try {
-    const rows = ids.map((membre_id) => ({ test_id: testId, membre_id, statut: "en_attente" }));
+    const rows = ids.map((membre_id) => ({ test_id: testId, membre_id, statut: "invite" }));
     const { data, error } = await withTimeout(
       supabase.from("test_invitations").insert(rows).select("*"),
       SUPABASE_TIMEOUT_MS,
@@ -341,19 +317,23 @@ export async function inviteMembers({ testId, membreIds }) {
 }
 
 /**
- * (Superviseur) Saisie du résultat d'un test pour une invitation.
- * @param {object} payload { invitationId, note (number), commentaire (optionnel) }
+ * (Admin) Note une invitation confirmée. La note est sur test_invitations.
+ * @param {object} payload { invitationId, note }
  * @returns { ok, result? }
  */
-export async function recordTestResult({ invitationId, note, commentaire = null }) {
+export async function recordTestResult({ invitationId, note }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   if (!invitationId) {
     return { ok: false, error: "معرّف الدعوة مفقود" };
   }
-  if (note === null || note === undefined || note === "" || isNaN(Number(note))) {
+  const noteValue = Number(note);
+  if (note === null || note === undefined || note === "" || Number.isNaN(noteValue)) {
     return { ok: false, error: "أدخل نقطة صحيحة" };
+  }
+  if (noteValue < 0 || noteValue > 20) {
+    return { ok: false, error: "النقطة يجب أن تكون بين 0 و 20" };
   }
   const userId = await currentAuthId();
   if (!userId) {
@@ -363,22 +343,26 @@ export async function recordTestResult({ invitationId, note, commentaire = null 
   try {
     const { data, error } = await withTimeout(
       supabase
-        .from("test_resultats")
-        .insert({
-          test_invitation_id: invitationId,
-          note: Number(note),
-          commentaire: commentaire || null,
-          noted_by: userId,
-        })
-        .select("*")
-        .single(),
+        .from("test_invitations")
+        .update({ note: noteValue, statut: "note" })
+        .eq("id", invitationId)
+        .in("statut", ["confirme", "note"])
+        .is("date_notification_resultat", null)
+        .select("*"),
       SUPABASE_TIMEOUT_MS,
       "حفظ النتيجة"
     );
     if (error) {
-      return { ok: false, error: mapTableError(error, "test_resultats") };
+      const msg = error?.message || "";
+      if (/seule une invitation confirmée/i.test(msg)) {
+        return { ok: false, error: "لا يمكن تسجيل النقطة إلا لدعوة مؤكدة" };
+      }
+      return { ok: false, error: mapTableError(error, "test_invitations") };
     }
-    return { ok: true, result: data };
+    if (!data || data.length === 0) {
+      return { ok: false, error: "لا يمكن تعديل النقطة بعد إرسال النتائج أو لدعوة غير مؤكدة" };
+    }
+    return { ok: true, result: data[0] };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -396,7 +380,7 @@ export function mapTestToDashboardExam(test) {
           ? "completed"
           : "planned",
     createdAt: test.created_at || null,
-    date: test.date_test || test.created_at || null,
+    date: test.created_at || null,
   };
 }
 
@@ -407,7 +391,7 @@ export function mapMemberTestToExam(row) {
   return {
     id: row?.id || invitation?.id,
     title: test.titre || "اختبار",
-    date: row?.created_at || test.date_test || invitation?.created_at || null,
+    date: test.created_at || row?.created_at || null,
     score: note == null ? "" : String(note),
     level: TEST_TYPE_LABELS[test.type] || test.titre || "",
     memberId: invitation?.membre_id || null,
@@ -448,7 +432,7 @@ export async function listRecentTestsAdmin(limit = 10) {
     const { data, error } = await withTimeout(
       supabase
         .from("tests")
-        .select("id, titre, statut, created_at, date_test")
+        .select("id, titre, statut, created_at, saison_id")
         .order("created_at", { ascending: false })
         .limit(take),
       SUPABASE_TIMEOUT_MS,
@@ -481,7 +465,7 @@ export async function getAllTestsAdmin() {
       supabase
         .from("tests")
         .select(
-          "*, seance:seances!tests_seance_id_fkey(id, nom), invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie)"
+          "*, saison:saisons!tests_saison_id_fkey(id, name), invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie)"
         )
         .order("created_at", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
@@ -497,41 +481,89 @@ export async function getAllTestsAdmin() {
 }
 
 /**
- * (Admin) Tests d'une séance donnée (invitations jointes).
- * @param {string} seanceId
- * @returns { ok, tests }
+ * (Admin) Invitations confirmées d'un test, groupées par date choisie.
+ * @param {string} testId
+ * @returns { ok, groups?: { dateChoisie: string, invitations: object[] }[] }
  */
-export async function getSeanceTests(seanceId) {
+export async function getTestCollecte(testId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!seanceId) {
-    return { ok: false, error: "معرّف الحصة مفقود" };
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود" };
   }
   try {
     const { data, error } = await withTimeout(
       supabase
-        .from("tests")
+        .from("test_invitations")
         .select(
-          "*, invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie)"
+          "id, membre_id, date_choisie, statut, membre:profiles!test_invitations_membre_id_fkey(first_name, last_name)"
         )
-        .eq("seance_id", seanceId)
-        .order("created_at", { ascending: false }),
+        .eq("test_id", testId)
+        .eq("statut", "confirme")
+        .order("date_choisie", { ascending: true }),
       SUPABASE_TIMEOUT_MS,
-      "قراءة اختبارات الحصة"
+      "جمع مواعيد الاختبار"
     );
     if (error) {
-      return { ok: false, error: mapTableError(error, "tests") };
+      return { ok: false, error: mapTableError(error, "test_invitations") };
     }
-    return { ok: true, tests: data || [] };
+    const groups = new Map();
+    for (const row of data || []) {
+      const dateChoisie = row.date_choisie || "";
+      const list = groups.get(dateChoisie) || [];
+      list.push(row);
+      groups.set(dateChoisie, list);
+    }
+    return {
+      ok: true,
+      groups: [...groups.entries()].map(([dateChoisie, invitations]) => ({
+        dateChoisie,
+        invitations,
+      })),
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
 /**
- * (Admin) Invitations d'un test avec le profil de chaque membre et son
- * résultat (notation) éventuel.
+ * (Admin) Pose date_notification_resultat sur les invitations déjà notées
+ * et pas encore envoyées. Le trigger 0091 notifie chaque membre.
+ * @param {string} testId
+ * @returns { ok, count }
+ */
+export async function markResultsNotified(testId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", count: 0 };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود", count: 0 };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_invitations")
+        .update({ date_notification_resultat: new Date().toISOString() })
+        .eq("test_id", testId)
+        .eq("statut", "note")
+        .is("date_notification_resultat", null)
+        .select("id"),
+      SUPABASE_TIMEOUT_MS,
+      "إرسال النتائج"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "test_invitations"), count: 0 };
+    }
+    return { ok: true, count: (data || []).length };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", count: 0 };
+  }
+}
+
+/**
+ * (Admin) Invitations d'un test avec le profil de chaque membre.
+ * La note, si elle existe, est sur la ligne d'invitation.
  * @param {string} testId
  * @returns { ok, invitations }
  */
@@ -547,10 +579,9 @@ export async function getTestInvitationsWithMembers(testId) {
       supabase
         .from("test_invitations")
         .select(
-          "*, membre:profiles!test_invitations_membre_id_fkey(first_name, last_name, email), resultat:test_resultats!test_resultats_test_invitation_id_fkey(note, commentaire, created_at)"
+          "*, membre:profiles!test_invitations_membre_id_fkey(first_name, last_name, email)"
         )
-        .eq("test_id", testId)
-        .order("created_at", { ascending: true }),
+        .eq("test_id", testId),
       SUPABASE_TIMEOUT_MS,
       "قراءة دعوات الاختبار"
     );

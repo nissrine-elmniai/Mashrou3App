@@ -198,6 +198,13 @@ function AdminStack() {
         options={hidden}
       />
       <AdminStackNav.Screen
+        name="AdminTestDetail"
+        getComponent={() =>
+          require("../screens/admin/AdminTestDetailScreen").default
+        }
+        options={hidden}
+      />
+      <AdminStackNav.Screen
         name="AdminProfile"
         getComponent={() => require("../screens/admin/AdminProfileScreen").default}
         options={hidden}
