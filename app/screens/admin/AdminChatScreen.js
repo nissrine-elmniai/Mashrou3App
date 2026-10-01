@@ -15,13 +15,15 @@ import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getSupervisorProfiles } from "../../lib/seancesApi";
+import { getActiveSupervisors } from "../../lib/seancesApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { mergeInboxRows } from "../../lib/messagesApi";
 import { initials } from "../supervisor/supervisorHelpers";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 export default function AdminChatScreen({ navigation }) {
-  const { currentUser, stats } = useApp();
+  const { currentUser, stats, seasons } = useApp();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const { openSidebar, sidebar, messagesFab, threads, threadsLoading } = useAdminSidebar(
     navigation,
     "chat"
@@ -35,7 +37,7 @@ export default function AdminChatScreen({ navigation }) {
     let cancelled = false;
     (async () => {
       setContactsLoading(true);
-      const sRes = await getSupervisorProfiles();
+      const sRes = await getActiveSupervisors({ saisonId: activeSeasonId });
       if (cancelled) return;
       const list = [];
       if (sRes.ok) {
@@ -56,7 +58,7 @@ export default function AdminChatScreen({ navigation }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeSeasonId]);
 
   const rows = useMemo(() => {
     const merged = mergeInboxRows(contacts, threads);

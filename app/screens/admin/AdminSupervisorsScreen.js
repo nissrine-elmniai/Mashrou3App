@@ -19,8 +19,12 @@ import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
-import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
-import { getActiveRegularSeason, supervisorIdsForSeason } from "../../lib/seasonScope";
+import {
+  getSupervisorProfiles,
+  getActiveSupervisors,
+  getAllSeances,
+} from "../../lib/seancesApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { canonicalEmail } from "../../lib/authEmail";
 import {
@@ -102,12 +106,16 @@ export default function AdminSupervisorsScreen({ navigation }) {
     ]);
     if (supRes.ok) {
       await syncSupervisorSeanceLinks(supRes.supervisors);
-      const refreshedSeances = await getAllSeances({ saisonId });
-      setSupervisors(supRes.supervisors);
+      const [refreshedSeances, activeRes] = await Promise.all([
+        getAllSeances({ saisonId }),
+        getActiveSupervisors({ saisonId }),
+      ]);
+      setSupervisors(activeRes.ok ? activeRes.supervisors : []);
       if (refreshedSeances.ok) setSeances(refreshedSeances.seances);
       else if (seaRes.ok) setSeances(seaRes.seances);
     } else if (seaRes.ok) {
       setSeances(seaRes.seances);
+      setSupervisors([]);
     }
     if (invRes.ok) setInvitations(invRes.invitations);
     setLoading(false);
@@ -140,16 +148,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
     [seances]
   );
 
-  const seasonSupervisorIds = useMemo(
-    () => supervisorIdsForSeason(seances, activeSeason?.id),
-    [seances, activeSeason?.id]
-  );
-
-  const seasonSupervisors = useMemo(
-    () => supervisors.filter((s) => seasonSupervisorIds.has(s.id)),
-    [supervisors, seasonSupervisorIds]
-  );
-
   const pendingInvitations = useMemo(
     () =>
       invitations.filter(
@@ -162,13 +160,13 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
   const q = search.trim().toLowerCase();
   const filteredSupervisors = useMemo(() => {
-    return seasonSupervisors.filter((s) => {
+    return supervisors.filter((s) => {
       if (!q) return true;
       const fullName = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
       const mail = (s.email || "").toLowerCase();
       return fullName.includes(q) || mail.includes(q);
     });
-  }, [seasonSupervisors, q]);
+  }, [supervisors, q]);
 
   const filteredInvitations = useMemo(() => {
     if (filter !== "pending") return [];
