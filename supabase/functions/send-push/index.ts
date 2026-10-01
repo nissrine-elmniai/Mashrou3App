@@ -1,8 +1,9 @@
 // Deploy :
 //   npx supabase functions deploy send-push
 // Secrets auto : SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-// Appel attendu : Authorization Bearer JWT service_role (pg_net / cron).
-// Auth : Bearer === SUPABASE_SERVICE_ROLE_KEY (comparaison constant-time).
+// Secret dédié : PUSH_DISPATCH_SECRET (en-tête x-dispatch-secret).
+// Authorization Bearer reste le JWT service_role pour la passerelle verify_jwt.
+// Auth dispatch : x-dispatch-secret === PUSH_DISPATCH_SECRET (constant-time, pas de JWT).
 // Claim atomique : RPC claim_pending_push_notifications (SKIP LOCKED).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
@@ -56,12 +57,15 @@ Deno.serve(async (req) => {
   try {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    if (!serviceKey || !supabaseUrl) {
+    const dispatchSecret = Deno.env.get("PUSH_DISPATCH_SECRET") || "";
+    if (!serviceKey || !supabaseUrl || !dispatchSecret) {
       return json({ ok: false, error: "إعدادات الخادم ناقصة" }, 500);
     }
 
-    const authHeader = req.headers.get("Authorization");
-    const auth = authorizeServiceRole(authHeader, serviceKey);
+    const auth = authorizeServiceRole(
+      req.headers.get("x-dispatch-secret"),
+      dispatchSecret
+    );
     if (!auth.ok) {
       console.error("send-push 401:", auth.reason);
       return json({ ok: false, error: "غير مصرح" }, 401);
@@ -328,26 +332,20 @@ async function sendExpoBatch(
 }
 
 function authorizeServiceRole(
-  authHeader: string | null,
-  serviceKey: string
+  dispatchHeader: string | null,
+  dispatchSecret: string
 ): { ok: true } | { ok: false; reason: string } {
-  if (!authHeader || !authHeader.trim()) {
-    return { ok: false, reason: "header absent" };
+  // Secret dédié au dispatch, indépendant des rotations et du format des clés
+  // Supabase (JWT eyJ… ou sb_secret_). Comparaison stricte uniquement :
+  // aucun décodage de JWT non signé.
+  const provided = (dispatchHeader ?? "").trim();
+  if (!provided || !dispatchSecret) {
+    return { ok: false, reason: "secret absent" };
   }
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  if (!token) {
-    return { ok: false, reason: "header absent" };
-  }
-  if (!serviceKey) {
-    return { ok: false, reason: "clé serveur absente" };
-  }
-  // Uniquement la clé réelle (JWT service_role ou sb_secret_).
-  // Ne jamais faire confiance au payload JWT décodé sans signature :
-  // un jeton forgé { role: "service_role" } passerait si verify_jwt est off.
-  if (timingSafeEqual(token, serviceKey)) {
+  if (timingSafeEqual(provided, dispatchSecret)) {
     return { ok: true };
   }
-  return { ok: false, reason: "clé invalide" };
+  return { ok: false, reason: "secret invalide" };
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
