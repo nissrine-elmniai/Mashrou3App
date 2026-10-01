@@ -261,16 +261,6 @@ export default function SupervisorProfileScreen({ navigation }) {
             label={L.updated_at}
             value={formatDateTime(profileRow?.updated_at)}
           />
-          <TouchableOpacity
-            style={styles.editInfoBtn}
-            onPress={() => setEditInfoModal(true)}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="تعديل المعلومات الشخصية"
-          >
-            <Ionicons name="create-outline" size={18} color="white" />
-            <Text style={styles.editInfoBtnText}>تعديل المعلومات</Text>
-          </TouchableOpacity>
         </SectionCard>
 
         <SectionCard title="الإشعارات" subtitle="استلام الإشعارات والتحديثات">
@@ -445,21 +435,5 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 10,
     marginTop: 4,
-  },
-  editInfoBtn: {
-    flexDirection: rtlRow,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginTop: 12,
-    backgroundColor: colors.primary,
-    borderRadius: radii.md,
-    paddingVertical: 13,
-  },
-  editInfoBtnText: {
-    color: "white",
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    ...rtlTextBold,
   },
 });
