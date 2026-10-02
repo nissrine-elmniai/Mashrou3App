@@ -65,7 +65,6 @@ import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
 import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
-import AlertSenderFace from "../../components/AlertSenderFace";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import MemberProgramsPanel from "./MemberProgramsPanel";
@@ -78,18 +77,85 @@ function displayGenderFromUser(gender) {
   return formatGenderLabel(raw) || null;
 }
 
-/** جمل فعلية: تم + المصدر المضاف إلى كاف الخطاب (نائب الفاعل). */
+/**
+ * Phrases complètes féminin / masculin.
+ * طلب et قبول gardent le suffixe كاف : ces deux types ne changent pas.
+ */
 function memberActivityPhrases(gender) {
-  const k = displayGenderFromUser(gender) === "أنثى" ? "كِ" : "ك";
+  const female = displayGenderFromUser(gender) === "أنثى";
+  const k = female ? "كِ" : "ك";
   return {
-    progress: `تم تحديث تقدم${k}`,
+    progressTitle: "تقدّم جديد في الحفظ",
+    progressBody: (hizb, tumun) =>
+      female
+        ? `وصلتِ إلى الحزب ${hizb} – الثمن ${tumun}`
+        : `وصلتَ إلى الحزب ${hizb} – الثمن ${tumun}`,
+    progressKhatma: female
+      ? "أتممتِ حفظ القرآن الكريم"
+      : "أتممتَ حفظ القرآن الكريم",
     regCreate: `تم إرسال طلب${k}`,
     regAccept: `تم قبول${k}`,
-    seance: `تم تعيين${k}`,
-    present: `تم تسجيل حضور${k}`,
-    absent: `تم تسجيل غياب${k}`,
-    exam: `تم إحراز نتيجة${k}`,
+    seanceTitle: female
+      ? "مرحبًا بكِ في حصتكِ الجديدة"
+      : "مرحبًا بك في حصتك الجديدة",
+    presentTitle: female ? "تم تسجيل حضوركِ" : "تم تسجيل حضورك",
+    absentTitle: female ? "تم تسجيل غيابكِ" : "تم تسجيل غيابك",
+    examTitle: (titre) => {
+      const t = String(titre || "").trim();
+      if (!t || t === "اختبار") return "نتيجة الاختبار";
+      return `نتيجة ${t}`;
+    },
+    examBody: (note) =>
+      female ? `حصلتِ على ${note}/20` : `حصلتَ على ${note}/20`,
   };
+}
+
+/** « صباحًا » avant midi, « مساءً » à partir de 12:00. Vide si l'heure est illisible. */
+function periodFromHeure(heureDebut) {
+  const match = String(heureDebut || "").trim().match(/^(\d{1,2})/);
+  if (!match) return "";
+  const hours = Number(match[1]);
+  if (!Number.isFinite(hours) || hours > 23) return "";
+  return hours < 12 ? "صباحًا" : "مساءً";
+}
+
+/**
+ * Créneau de la séance actuelle.
+ * withHissa : « حصة الخميس مساءً ». Sans : « الخميس مساءً ».
+ * Réduit à ce qui existe ; vide si jour et heure manquent.
+ */
+function sessionActivitySubtitle(jour, heureDebut, withHissa) {
+  const day = String(jour || "").trim();
+  const period = periodFromHeure(heureDebut);
+  const parts = [day, period].filter(Boolean);
+  if (!parts.length) return "";
+  const core = parts.join(" ");
+  return withHissa ? `حصة ${core}` : core;
+}
+
+/**
+ * Position affichée pour une activité de progression.
+ * n = hizb terminés, r = reste stocké 0–7.
+ * Convention : reste 0 = thumn 8 du hizb terminé, pas le début du hizb suivant.
+ * @returns {{ kind: "skip" } | { kind: "khatma" } | { kind: "position", hizb: number, tumun: number }}
+ */
+function progressActivityPosition(nRaw, rRaw) {
+  const n = Number.isFinite(Number(nRaw)) ? Math.max(0, Math.floor(Number(nRaw))) : 0;
+  const r = Number.isFinite(Number(rRaw)) ? Math.max(0, Math.floor(Number(rRaw))) : 0;
+  if (n >= 60) return { kind: "khatma" };
+  if (n === 0 && r === 0) return { kind: "skip" };
+  if (r >= 1 && r <= 7) {
+    return { kind: "position", hizb: Math.min(60, n + 1), tumun: r };
+  }
+  return { kind: "position", hizb: n, tumun: tumunStoredToUi(0) };
+}
+
+/** 16 et non 16.0 ; 15.5 conservé. Vide si la note n'est pas un nombre. */
+function formatActivityNote(score) {
+  if (score == null || String(score).trim() === "") return "";
+  const n = Number(score);
+  if (!Number.isFinite(n)) return "";
+  return String(parseFloat(n.toFixed(10)));
 }
 
 const alignEdge = I18nManager.isRTL ? "flex-start" : "flex-end";
@@ -138,27 +204,75 @@ function parseActivityTimestamp(raw) {
   return Number.isNaN(t) ? 0 : t;
 }
 
+/** Mois marocains (même liste que format_date_ar). Locale à cet écran. */
+const ACTIVITY_MONTHS_AR = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "ماي",
+  "يونيو",
+  "يوليوز",
+  "غشت",
+  "شتنبر",
+  "أكتوبر",
+  "نونبر",
+  "دجنبر",
+];
+
+function formatActivityDate(date, currentYear) {
+  const day = date.getDate();
+  const month = ACTIVITY_MONTHS_AR[date.getMonth()] || "";
+  const year = date.getFullYear();
+  if (year !== currentYear) return `${day} ${month} ${year}`;
+  return `${day} ${month}`;
+}
+
+/** Minutes / heures sous 24 h. Au-delà, le barème calendaire reprend. */
+function formatActivityElapsed(diffMin) {
+  if (diffMin < 1) return "منذ لحظات";
+  if (diffMin < 60) {
+    if (diffMin === 1) return "منذ دقيقة";
+    if (diffMin === 2) return "منذ دقيقتين";
+    if (diffMin <= 10) return `منذ ${diffMin} دقائق`;
+    return `منذ ${diffMin} دقيقة`;
+  }
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH <= 1) return "منذ ساعة";
+  if (diffH === 2) return "منذ ساعتين";
+  if (diffH <= 10) return `منذ ${diffH} ساعات`;
+  return `منذ ${diffH} ساعة`;
+}
+
+/**
+ * Colonne de gauche des activités uniquement.
+ * Sous 24 h : toujours minutes/heures, même si la date calendaire est la veille.
+ * « أمس » seulement si l'écart atteint 24 h et que le jour calendaire est la veille.
+ */
 function formatActivityWhen(ts) {
   if (!ts) return "";
-  const diffMin = Math.floor((Date.now() - ts) / 60000);
-  if (diffMin < 1) return "الآن";
-  if (diffMin < 60) return `منذ ${diffMin} د`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `منذ ${diffH} س`;
-  const diffD = Math.floor(diffH / 24);
-  if (diffD < 7) return `منذ ${diffD} ي`;
-  return new Date(ts).toLocaleDateString("ar-MA", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const then = new Date(ts);
+  if (Number.isNaN(then.getTime())) return "";
+  const now = new Date();
+  const diffMin = Math.floor((now.getTime() - then.getTime()) / 60000);
+  if (diffMin < 24 * 60) return formatActivityElapsed(diffMin);
+
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayDiff = Math.round(
+    (startOfDay(now).getTime() - startOfDay(then).getTime()) / 86400000
+  );
+  if (dayDiff >= 7) return formatActivityDate(then, now.getFullYear());
+  if (dayDiff === 1) return "أمس";
+  if (dayDiff === 2) return "منذ يومين";
+  if (dayDiff >= 3) return `منذ ${dayDiff} أيام`;
+  return formatActivityElapsed(diffMin);
 }
 
 const TABS = [
   { key: "home", label: "الرئيسية", icon: Home },
   { key: "programs", label: "برامجي", icon: BookOpen },
-  { key: "registration", label: "التسجيل", icon: ClipboardList },
   { key: "tests", label: "الاختبارات", icon: GraduationCap },
+  { key: "registration", label: "التسجيل", icon: ClipboardList },
   { key: "profile", label: "ملفي", icon: User },
 ];
 
@@ -701,8 +815,12 @@ export default function MemberDashboardScreen({ navigation, route }) {
         return;
       }
       const metrics = computeProgressMetrics(entry);
-      const hizb = formatHizbCount(metrics?.nbHizbCompletes ?? 0);
-      const tumun = tumunStoredToUi(metrics?.tumunCourant ?? entry.tumun_courant);
+      // r vient de la colonne stockée : metrics.tumunCourant est null quand le reste est 0.
+      const position = progressActivityPosition(
+        metrics?.nbHizbCompletes ?? entry.nb_hizb_completes,
+        entry.tumun_courant
+      );
+      if (position.kind === "skip") return;
       const at = parseActivityTimestamp(
         entry.date || entry.date_saisie || entry.created_at
       );
@@ -710,8 +828,11 @@ export default function MemberDashboardScreen({ navigation, route }) {
       items.push({
         id: `progress-${entry.id || idx}`,
         at,
-        title: phrases.progress,
-        body: `${hizb} · الثمن ${tumun}`,
+        title: phrases.progressTitle,
+        body:
+          position.kind === "khatma"
+            ? phrases.progressKhatma
+            : phrases.progressBody(position.hizb, position.tumun),
         icon: "book-outline",
         color: colors.primary,
         action: "progress",
@@ -755,8 +876,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
         items.push({
           id: "seance-assign",
           at,
-          title: phrases.seance,
-          body: sessionState.groupName,
+          title: phrases.seanceTitle,
+          body: sessionActivitySubtitle(sessionState.jour, sessionState.heureDebut, false),
           icon: "people-outline",
           color: colors.teal || colors.primary,
           action: "profile",
@@ -764,6 +885,13 @@ export default function MemberDashboardScreen({ navigation, route }) {
       }
     }
 
+    // Présence et absence : séance ACTUELLE (sessionState), pas la séance
+    // historique de la date. Limite connue.
+    const presenceBody = sessionActivitySubtitle(
+      sessionState.jour,
+      sessionState.heureDebut,
+      true
+    );
     (presenceState.records || []).slice(0, 12).forEach((r, idx) => {
       const at = parseActivityTimestamp(r.date);
       if (!isAfterRegistration(at)) return;
@@ -771,8 +899,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
       items.push({
         id: `presence-${r.date || idx}`,
         at,
-        title: present ? phrases.present : phrases.absent,
-        body: "",
+        title: present ? phrases.presentTitle : phrases.absentTitle,
+        body: presenceBody,
         icon: present ? "checkmark-outline" : "close-outline",
         color: present ? colors.primary : colors.orange,
         action: "profile",
@@ -780,13 +908,16 @@ export default function MemberDashboardScreen({ navigation, route }) {
     });
 
     myExams.forEach((e) => {
+      if (e.score == null || String(e.score).trim() === "") return;
       const at = parseActivityTimestamp(e.date);
       if (!isAfterRegistration(at)) return;
+      const note = formatActivityNote(e.score);
+      if (!note) return;
       items.push({
         id: `exam-${e.id}`,
         at,
-        title: phrases.exam,
-        body: `${e.level || e.title || "اختبار"} · ${e.score}`,
+        title: phrases.examTitle(e.title),
+        body: phrases.examBody(note),
         icon: "school-outline",
         color: colors.gold,
         action: "tests",
@@ -818,6 +949,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
     activeSeasonId,
     sessionState.registrationDate,
     sessionState.groupName,
+    sessionState.jour,
+    sessionState.heureDebut,
     progressEntries,
     myRegs,
     myExams,
@@ -1046,22 +1179,38 @@ export default function MemberDashboardScreen({ navigation, route }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard title="التنبيهات">
+            <SectionCard title="تنبيهات الإدارة">
               {adminAlerts.length === 0 ? (
                 <EmptyState text="لا توجد تنبيهات جديدة" />
               ) : (
-                adminAlerts.map((n) => (
-                  <View key={n.id} style={styles.notifItem}>
-                    <AlertSenderFace
-                      userId={n.senderId}
-                      avatarUrl={n.senderAvatarUrl}
-                      fallbackLetter={n.senderInitial || "إ"}
-                      senderName={n.senderName}
-                      size={56}
-                    />
-                    <Text style={styles.notifBody}>{n.message}</Text>
-                  </View>
-                ))
+                adminAlerts.map((n, idx) => {
+                  const when = formatActivityWhen(parseActivityTimestamp(n.createdAt));
+                  const isLast = idx === adminAlerts.length - 1;
+                  return (
+                    <View
+                      key={n.id}
+                      style={[styles.activityRow, !isLast && styles.activityRowBorder]}
+                    >
+                      <ProfileAvatar
+                        userId={n.senderId || null}
+                        avatarUrl={n.senderAvatarUrl}
+                        cacheKey={n.senderAvatarUrl || n.senderId}
+                        fallbackLetter={n.senderInitial || "إ"}
+                        size={28}
+                        softBackgroundColor={colors.primarySoft}
+                        letterColor={colors.primary}
+                      />
+                      <View style={styles.activityBody}>
+                        <View style={styles.activityHead}>
+                          <Text style={styles.activityTitle} numberOfLines={1}>
+                            {n.message}
+                          </Text>
+                          {when ? <Text style={styles.activityWhen}>{when}</Text> : null}
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
               )}
             </SectionCard>
 
@@ -1419,16 +1568,6 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
 
-  notifItem: {
-    borderWidth: 1,
-    borderColor: colors.borderGreen,
-    backgroundColor: colors.bg,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    alignItems: "center",
-  },
-  notifBody: { ...rtlText, color: colors.muted, fontSize: 13, textAlign: "center" },
   profileCards: {
     gap: 14,
   },

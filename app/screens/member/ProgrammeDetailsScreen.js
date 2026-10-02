@@ -350,15 +350,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
                 ]}
               />
             </View>
-
-            {programData.progression < 100 && (
-              <View style={styles.noteBox}>
-                <Text style={styles.noteText}>
-                  ملاحظة: التقدم الفعلي ({programData.progression}%) أقل من
-                  المتوقع (100%) بناء على الأيام المنقضية.
-                </Text>
-              </View>
-            )}
           </View>
 
           <TouchableOpacity
@@ -634,20 +625,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 4,
     ...rtlText,
-  },
-  noteBox: {
-    backgroundColor: "#FFF8E7",
-    padding: 16,
-    borderRadius: radii.md,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: "#FFE0B2",
-  },
-  noteText: {
-    color: "#B76E3C",
-    fontSize: 13,
-    ...rtlText,
-    lineHeight: 20,
   },
   deleteButton: {
     backgroundColor: "#FEE2E2",

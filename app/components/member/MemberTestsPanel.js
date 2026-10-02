@@ -477,8 +477,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 14,
-    gap: 6,
+    padding: 12,
+    gap: 4,
   },
   cardHighlight: { borderColor: colors.primary, borderWidth: 1.5 },
   cardTop: {
@@ -488,14 +488,14 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 14,
     color: colors.text,
     fontFamily: fonts.bold,
     ...rtlText,
   },
   score: {
     flexShrink: 0,
-    fontSize: 18,
+    fontSize: 15,
     color: colors.primary,
     fontFamily: fonts.bold,
     writingDirection: "ltr",
@@ -508,13 +508,13 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   meta: {
-    fontSize: 13,
+    fontSize: 12,
     color: colors.muted,
     fontFamily: fonts.regular,
     ...rtlText,
   },
   deadlineHint: {
-    fontSize: 12,
+    fontSize: 11,
     color: colors.muted,
     fontFamily: fonts.regular,
     ...rtlText,
@@ -522,7 +522,7 @@ const styles = StyleSheet.create({
   deadlineToday: { color: colors.gold },
   statusLine: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 11,
     color: colors.muted,
     fontFamily: fonts.medium,
     ...rtlText,
@@ -540,19 +540,19 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   tintBtn: {
-    height: 34,
+    height: 32,
     paddingHorizontal: 14,
     borderRadius: radii.pill,
     alignItems: "center",
     justifyContent: "center",
   },
   tintBtnText: {
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: fonts.semiBold,
     ...rtlText,
   },
   linkText: {
-    fontSize: 13,
+    fontSize: 12,
     color: colors.gold,
     fontFamily: fonts.semiBold,
     textDecorationLine: "underline",
@@ -625,7 +625,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
   },
   sheetTitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: colors.text,
     fontFamily: fonts.bold,
     ...rtlText,
@@ -643,7 +643,7 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: {
-    fontSize: 13,
+    fontSize: 12,
     color: colors.textSecondary,
     fontFamily: fonts.medium,
     ...rtlText,
