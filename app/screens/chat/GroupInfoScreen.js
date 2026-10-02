@@ -9,8 +9,6 @@ import {
   ActivityIndicator,
   StatusBar,
   Alert,
-  Modal,
-  FlatList,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -30,9 +28,6 @@ import { pickAvatarImage } from "../../lib/avatarPicker";
 import {
   getChatGroup,
   getGroupMembers,
-  getEligibleMembers,
-  addGroupMember,
-  removeGroupMember,
   updateGroupName,
   uploadGroupAvatar,
   removeGroupAvatar,
@@ -54,9 +49,6 @@ export default function GroupInfoScreen({ navigation, route }) {
   const [avatarUrl, setAvatarUrl] = useState(routeAvatar || null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [members, setMembers] = useState([]);
-  const [addModalVisible, setAddModalVisible] = useState(false);
-  const [eligible, setEligible] = useState([]);
-  const [eligibleLoading, setEligibleLoading] = useState(false);
 
   const reload = useCallback(async () => {
     if (!groupId) return;
@@ -93,7 +85,7 @@ export default function GroupInfoScreen({ navigation, route }) {
   const saveName = async () => {
     const trimmed = editName.trim();
     if (!trimmed) {
-      Alert.alert("تنبيه", "اكتب اسم المجموعة");
+      Alert.alert("تنبيه", "اسم المجموعة لا يمكن أن يكون فارغًا");
       return;
     }
     setSavingName(true);
@@ -166,62 +158,6 @@ export default function GroupInfoScreen({ navigation, route }) {
     Alert.alert("صورة المجموعة", "اختر إجراءً", actions);
   };
 
-  const confirmRemove = (member) => {
-    if (!isAdmin || member.isAdmin) return;
-    Alert.alert(
-      "إزالة العضو",
-      `هل تريد إزالة ${member.name} من المجموعة؟`,
-      [
-        { text: "إلغاء", style: "cancel" },
-        {
-          text: "إزالة",
-          style: "destructive",
-          onPress: async () => {
-            const res = await removeGroupMember({
-              groupId,
-              membreId: member.id,
-            });
-            if (!res.ok) {
-              Alert.alert("خطأ", res.error || "تعذر إزالة العضو");
-              return;
-            }
-            setMembers((prev) => prev.filter((m) => m.id !== member.id));
-          },
-        },
-      ]
-    );
-  };
-
-  const openAddModal = async () => {
-    setAddModalVisible(true);
-    setEligibleLoading(true);
-    const res = await getEligibleMembers(groupId);
-    setEligibleLoading(false);
-    if (!res.ok) {
-      Alert.alert("خطأ", res.error || "تعذر تحميل الأعضاء");
-      setEligible([]);
-      return;
-    }
-    setEligible(res.members || []);
-  };
-
-  const handleAdd = async (member) => {
-    const res = await addGroupMember({ groupId, membreId: member.id });
-    if (!res.ok) {
-      Alert.alert("خطأ", res.error || "تعذر إضافة العضو");
-      return;
-    }
-    setEligible((prev) => prev.filter((m) => m.id !== member.id));
-    setMembers((prev) => [
-      ...prev,
-      {
-        ...member,
-        groupRole: "member",
-        isAdmin: false,
-      },
-    ]);
-  };
-
   const avatarLetter = (name || "م").trim().charAt(0) || "م";
 
   return (
@@ -290,12 +226,15 @@ export default function GroupInfoScreen({ navigation, route }) {
                   onChangeText={setEditName}
                   textAlign={textAlignStart}
                   autoFocus
-                  maxLength={80}
+                  maxLength={60}
                 />
                 <TouchableOpacity
-                  style={styles.saveNameBtn}
+                  style={[
+                    styles.saveNameBtn,
+                    !editName.trim() && styles.saveNameBtnDisabled,
+                  ]}
                   onPress={saveName}
-                  disabled={savingName}
+                  disabled={savingName || !editName.trim()}
                 >
                   {savingName ? (
                     <ActivityIndicator color="#fff" size="small" />
@@ -335,16 +274,6 @@ export default function GroupInfoScreen({ navigation, route }) {
 
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>الأعضاء</Text>
-            {isAdmin ? (
-              <TouchableOpacity
-                style={styles.addBtn}
-                onPress={openAddModal}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="person-add" size={16} color="#fff" />
-                <Text style={styles.addBtnText}>إضافة</Text>
-              </TouchableOpacity>
-            ) : null}
           </View>
 
           {members.length === 0 ? (
@@ -369,76 +298,11 @@ export default function GroupInfoScreen({ navigation, route }) {
                     <Text style={styles.adminBadge}>المشرف · مسؤول المجموعة</Text>
                   ) : null}
                 </View>
-                {isAdmin && !m.isAdmin ? (
-                  <TouchableOpacity
-                    style={styles.removeBtn}
-                    onPress={() => confirmRemove(m)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="remove-circle" size={22} color={colors.red} />
-                  </TouchableOpacity>
-                ) : null}
               </View>
             ))
           )}
         </ScrollView>
       )}
-
-      <Modal
-        visible={addModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setAddModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>إضافة عضو</Text>
-              <TouchableOpacity onPress={() => setAddModalVisible(false)}>
-                <Ionicons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalHint}>
-              الأعضاء المقبولون في الحصة وغير الموجودين في المجموعة
-            </Text>
-            {eligibleLoading ? (
-              <ActivityIndicator
-                style={{ marginVertical: 24 }}
-                color={colors.primary}
-              />
-            ) : eligible.length === 0 ? (
-              <EmptyState text="لا يوجد أعضاء لإضافتهم" />
-            ) : (
-              <FlatList
-                data={eligible}
-                keyExtractor={(item) => item.id}
-                style={{ maxHeight: 360 }}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.eligibleRow}
-                    onPress={() => handleAdd(item)}
-                    activeOpacity={0.7}
-                  >
-                    <ProfileAvatar
-                      userId={item.id}
-                      avatarUrl={item.avatarUrl}
-                      cacheKey={item.avatarUrl || item.id}
-                      fallbackLetter={(item.firstName || item.name || "؟").charAt(0)}
-                      size={36}
-                      softBackgroundColor={colors.primarySoft}
-                      letterColor={colors.primary}
-                    />
-                    <Text style={styles.eligibleName} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Ionicons name="add-circle" size={22} color={colors.primary} />
-                  </TouchableOpacity>
-                )}
-              />
-            )}
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -541,6 +405,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  saveNameBtnDisabled: {
+    opacity: 0.4,
+  },
   cancelNameBtn: {
     width: 36,
     height: 36,
@@ -559,7 +426,6 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: row,
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 18,
     paddingBottom: 8,
@@ -569,20 +435,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     color: colors.gold,
     ...rtlTextBold,
-  },
-  addBtn: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: colors.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-  },
-  addBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontFamily: fonts.bold,
   },
   memberRow: {
     flexDirection: row,
@@ -606,56 +458,6 @@ const styles = StyleSheet.create({
     color: colors.primary,
     marginTop: 2,
     fontFamily: fonts.medium,
-    ...rtlText,
-  },
-  removeBtn: { padding: 4 },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "flex-end",
-  },
-  modalCard: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: radii.xl,
-    borderTopRightRadius: radii.xl,
-    paddingBottom: 24,
-    maxHeight: "70%",
-  },
-  modalHeader: {
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontFamily: fonts.bold,
-    color: colors.text,
-    ...rtlTextBold,
-  },
-  modalHint: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    color: colors.muted,
-    fontSize: 13,
-    ...rtlText,
-  },
-  eligibleRow: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  eligibleName: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: fonts.medium,
-    color: colors.text,
     ...rtlText,
   },
 });

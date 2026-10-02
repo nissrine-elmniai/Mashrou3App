@@ -255,10 +255,13 @@ export default function SupervisorMessagesScreen({
     });
   };
 
-  const unseenConversations = useMemo(
-    () => countUnseenConversations(threads, chatGroups),
-    [threads, chatGroups]
-  );
+  const unseenConversations = useMemo(() => {
+    const seanceId = activeGroup?.id || null;
+    const groupsForSeance = seanceId
+      ? (chatGroups || []).filter((g) => g.seanceId === seanceId)
+      : [];
+    return countUnseenConversations(threads, groupsForSeance);
+  }, [threads, chatGroups, activeGroup]);
 
   const Wrapper = embedded ? View : SafeAreaView;
   const wrapperProps = embedded
