@@ -21,6 +21,7 @@ export const NOTIFICATION_CATEGORY_LABELS = {
   progression: "التقدم",
   alertes: "تنبيهات الإدارة",
   systeme: "النظام",
+  tests: "الاختبارات",
 };
 
 function withTimeout(promise, ms, label) {

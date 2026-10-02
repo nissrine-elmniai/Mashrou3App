@@ -14,7 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { Home, BookOpen, User, ClipboardList } from "lucide-react-native";
+import { Home, BookOpen, User, ClipboardList, GraduationCap } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import {
   getMyProgress,
@@ -53,7 +53,8 @@ import {
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
+import { getMyTestInvitations, getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
+import MemberTestsPanel from "../../components/member/MemberTestsPanel";
 import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
 import ProfileHero from "../../components/profile/ProfileHero";
@@ -157,10 +158,11 @@ const TABS = [
   { key: "home", label: "الرئيسية", icon: Home },
   { key: "programs", label: "برامجي", icon: BookOpen },
   { key: "registration", label: "التسجيل", icon: ClipboardList },
+  { key: "tests", label: "الاختبارات", icon: GraduationCap },
   { key: "profile", label: "ملفي", icon: User },
 ];
 
-export default function MemberDashboardScreen({ navigation }) {
+export default function MemberDashboardScreen({ navigation, route }) {
   const {
     currentUser,
     seasons,
@@ -224,6 +226,8 @@ export default function MemberDashboardScreen({ navigation }) {
     records: [],
   });
   const [myExams, setMyExams] = useState([]);
+  const [testsInviteCount, setTestsInviteCount] = useState(0);
+  const [highlightInvitationId, setHighlightInvitationId] = useState(null);
 
   const messagesUnread = useMemo(
     () =>
@@ -265,6 +269,29 @@ export default function MemberDashboardScreen({ navigation }) {
       loadMyExams();
     }, [loadMyExams])
   );
+
+  const loadTestsBadge = useCallback(async () => {
+    const res = await getMyTestInvitations();
+    if (!res.ok) return;
+    setTestsInviteCount(
+      (res.invitations || []).filter((row) => row.statut === "invite").length
+    );
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTestsBadge();
+    }, [loadTestsBadge])
+  );
+
+  useEffect(() => {
+    const nextTab = route?.params?.tab;
+    const nextId = route?.params?.invitationId;
+    if (!nextTab && !nextId) return;
+    if (nextTab) setTab(nextTab);
+    if (nextId) setHighlightInvitationId(String(nextId));
+    navigation.setParams({ tab: undefined, invitationId: undefined });
+  }, [navigation, route?.params?.tab, route?.params?.invitationId]);
 
   const loadAlerts = useCallback(async () => {
     const scope = {
@@ -616,9 +643,12 @@ export default function MemberDashboardScreen({ navigation }) {
             badgeCount: memberMenuBadges[NOTIF_CATEGORY.REGISTRATION] || 0,
           };
         }
+        if (t.key === "tests") {
+          return { ...t, badgeCount: testsInviteCount };
+        }
         return t;
       }),
-    [memberMenuBadges]
+    [memberMenuBadges, testsInviteCount]
   );
 
   const handleTabChange = useCallback(
@@ -759,7 +789,7 @@ export default function MemberDashboardScreen({ navigation }) {
         body: `${e.level || e.title || "اختبار"} · ${e.score}`,
         icon: "school-outline",
         color: colors.gold,
-        action: "registration",
+        action: "tests",
       });
     });
 
@@ -854,6 +884,10 @@ export default function MemberDashboardScreen({ navigation }) {
       setTab("registration");
       return;
     }
+    if (activity.action === "tests") {
+      setTab("tests");
+      return;
+    }
     if (activity.action === "profile") {
       setTab("profile");
       return;
@@ -886,7 +920,9 @@ export default function MemberDashboardScreen({ navigation }) {
                     ? "برامجي"
                     : tab === "registration"
                       ? "التسجيل والموسم"
-                      : "ملفي"}
+                      : tab === "tests"
+                        ? "الاختبارات"
+                        : "ملفي"}
                 </Text>
               )}
             </View>
@@ -894,6 +930,8 @@ export default function MemberDashboardScreen({ navigation }) {
               <Ionicons name="book" size={22} color="white" />
             ) : tab === "registration" ? (
               <Ionicons name="clipboard-outline" size={22} color="white" />
+            ) : tab === "tests" ? (
+              <Ionicons name="school-outline" size={22} color="white" />
             ) : null}
             {tab === "home" || tab === "profile" ? (
               <View style={styles.headerEnd}>
@@ -944,6 +982,12 @@ export default function MemberDashboardScreen({ navigation }) {
         </LinearGradient>
       </View>
 
+      {tab === "tests" ? (
+        <MemberTestsPanel
+          invitationId={highlightInvitationId}
+          onInviteCount={setTestsInviteCount}
+        />
+      ) : (
       <ScrollView
         style={styles.flex}
         showsVerticalScrollIndicator={false}
@@ -1115,6 +1159,7 @@ export default function MemberDashboardScreen({ navigation }) {
           </View>
         )}
       </ScrollView>
+      )}
 
       <View style={styles.bottomWrap}>
         <MemberBottomTabBar

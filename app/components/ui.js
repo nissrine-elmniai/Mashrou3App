@@ -181,6 +181,24 @@ export function StatCard({
   );
 }
 
+/** Titre de section : texte vert + filet or, sans cadre. */
+export function SectionTitle({
+  title,
+  primary = colors.primary,
+  style,
+  lineStyle,
+  children,
+}) {
+  if (!title) return null;
+  return (
+    <View style={style}>
+      <Text style={[styles.sectionTitle, { color: primary }]}>{title}</Text>
+      {children}
+      <View style={[styles.cardGoldLine, lineStyle]} />
+    </View>
+  );
+}
+
 export function SectionCard({
   title,
   subtitle,
@@ -191,10 +209,12 @@ export function SectionCard({
   return (
     <View style={[styles.sectionCard, { borderColor }, shadows.card]}>
       {title ? (
-        <Text style={[styles.sectionTitle, { color: primary }]}>{title}</Text>
+        <SectionTitle title={title} primary={primary}>
+          {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+        </SectionTitle>
+      ) : subtitle ? (
+        <Text style={styles.sectionSubtitle}>{subtitle}</Text>
       ) : null}
-      {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
-      {title ? <View style={styles.cardGoldLine} /> : null}
       {children}
     </View>
   );
@@ -384,6 +404,9 @@ export function MemberBottomTabBar({ tabs, activeKey, onChange }) {
               ) : null}
             </View>
             <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
               style={[
                 styles.bottomTabLabel,
                 active && styles.bottomTabLabelActive,
@@ -748,9 +771,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
   },
   bottomTabLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: colors.muted,
     fontFamily: fonts.semiBold,
+    textAlign: "center",
     ...rtlText,
   },
   bottomTabLabelActive: {

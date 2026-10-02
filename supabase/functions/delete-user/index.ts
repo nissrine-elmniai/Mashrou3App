@@ -10,15 +10,15 @@
 // (admin.auth.admin.deleteUser) : la suppression de l'utilisateur Auth
 // cascade sur profiles (profiles.id -> auth.users on delete cascade) puis
 // sur inscriptions / progression (on delete cascade), test_invitations
-// (on delete cascade — migration 0015) et test_resultats (via
-// test_invitations, cascade 0005), seances.superviseur_id (set null) et
-// member_applications.user_id (set null, FK vers auth.users).
+// (on delete cascade — migration 0015 ; la note est sur cette ligne),
+// seances.superviseur_id (set null) et member_applications.user_id
+// (set null, FK vers auth.users).
 //
 // Les FK NO ACTION vers profiles sont purgées AVANT le deleteUser, dans le
 // bon ordre, via le client service_role : messages.sender_id/recipient_id
-// (0006), test_resultats.noted_by (0005), tests.created_by (0005).
-// test_invitations (côté membre) n'a pas besoin de purge manuelle : le
-// cascade 0015 la supprime avec le profil.
+// (0006), tests.created_by (0005, sans ON DELETE). Supprimer ces tests
+// emporte leurs invitations (test_id ON DELETE CASCADE, 0005).
+// test_invitations d'un membre supprimé partent avec le profil (0015).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
@@ -79,21 +79,14 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
 
-    // Purgé des FK NO ACTION (messages / tests / test_resultats) :
-    // ordre dépendant avant la cascade auth -> profiles.
+    // Purgé des FK NO ACTION (messages / tests.created_by) avant
+    // la cascade auth -> profiles.
     const { error: msgError } = await admin
       .from("messages")
       .delete()
       .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`);
     if (msgError) {
       console.error("delete messages:", msgError.message);
-    }
-    const { error: resError } = await admin
-      .from("test_resultats")
-      .delete()
-      .eq("noted_by", userId);
-    if (resError) {
-      console.error("delete test_resultats:", resError.message);
     }
     const { error: testError } = await admin
       .from("tests")

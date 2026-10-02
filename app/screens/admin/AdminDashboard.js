@@ -164,30 +164,15 @@ function buildRecentActivities({
     }
   });
 
-  exams.forEach((e) => {
-    const title = e.title || "اختبار";
-    if (e.status === "cancelled") {
-      items.push({
-        id: `exam-cancel-${e.id}`,
-        color: colors.red,
-        text: `تم إلغاء الاختبار: ${title}`,
-        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
-      });
-    } else if (e.status === "completed") {
-      items.push({
-        id: `exam-done-${e.id}`,
-        color: colors.blue,
-        text: `تم إنجاز الاختبار: ${title}`,
-        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
-      });
-    } else {
-      items.push({
-        id: `exam-${e.id}`,
-        color: colors.blue,
-        text: `اختبار جديد: ${title}`,
-        at: parseActivityDate(e.createdAt) || parseActivityDate(e.date) || new Date(0),
-      });
-    }
+  exams.forEach((exam) => {
+    const display = exam.displayStatus;
+    if (!display) return;
+    items.push({
+      id: `exam-${display.key}-${exam.id}`,
+      color: display.color,
+      text: `${display.label}: ${exam.title || "اختبار"}`,
+      at: parseActivityDate(exam.createdAt) || parseActivityDate(exam.date) || new Date(0),
+    });
   });
 
   users.forEach((u) => {
