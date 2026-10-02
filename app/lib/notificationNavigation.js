@@ -118,10 +118,27 @@ export function navigateFromNotificationPayload(navigation, payload) {
   if (!navigation || !payload || typeof payload !== "object") {
     return false;
   }
+  const eventType = String(payload.event_type || "").trim();
   const dedicated = dedicatedScreenFor(payload);
   const dedicatedParams =
     payload.params && typeof payload.params === "object" ? payload.params : {};
   try {
+    // Onglet الاختبارات. Le test annulé n'est plus dans la liste membre :
+    // on ouvre l'onglet sans surligner l'invitation.
+    if (
+      eventType === "test_invite" ||
+      eventType === "test_result" ||
+      eventType === "test_date_changed" ||
+      eventType === "test_refused_by_admin" ||
+      eventType === "test_cancelled"
+    ) {
+      const opened = tryNavigate(navigation, "MemberDashboardScreen", {
+        tab: "tests",
+        invitationId:
+          eventType === "test_cancelled" ? null : payload.invitation_id || null,
+      });
+      if (opened) return true;
+    }
     if (dedicated && tryNavigate(navigation, dedicated, dedicatedParams)) {
       return true;
     }

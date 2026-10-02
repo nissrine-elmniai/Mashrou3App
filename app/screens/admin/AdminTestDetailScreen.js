@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,51 +8,49 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
+  Modal,
+  Pressable,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { pickDateTime, useIosDateTimePicker, IosDateTimePicker } from "../../lib/pickDateTime";
+import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
+import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { rtlText, row, arrowBack, textAlignStart } from "../../constants/rtl";
+import { Check } from "lucide-react-native";
+import { rtlText, row, arrowBack, fonts } from "../../constants/rtl";
+import { colors, radii, shadows } from "../../constants/theme";
+import { SectionCard } from "../../components/ui";
 import {
   getAllTestsAdmin,
-  getTestCollecte,
   getTestInvitationsWithMembers,
+  getTestDates,
+  addTestDate,
+  updateTestDateHeure,
+  removeTestDate,
   recordTestResult,
   markResultsNotified,
-  TEST_TYPE_LABELS,
+  updateTestStatus,
+  adminUpdateInvitation,
 } from "../../lib/testsApi";
+import {
+  getTestDisplayStatus,
+  INVITATION_STATUS,
+  RESULT_SENT_LABEL,
+  TEST_TYPE_LABELS,
+  formatTestDate,
+  formatShortTestDate,
+  formatTestTime,
+  casablancaTodayIso,
+  addCalendarDays,
+  isoToLocalDate,
+} from "../../constants/tests";
+import StatusBadge, { colorWithAlpha } from "../../components/tests/StatusBadge";
 
-const palette = {
-  primary: "#2E7D32",
-  gold: "#FBC02D",
-  red: "#D32F2F",
-  softGreen: "#E8F5E9",
-  background: "#F5F5F5",
-  textSecondary: "#666666",
-  textPrimary: "#333333",
-  border: "#E0E0E0",
-};
-
-const STATUT_LABELS = {
-  invite: "مدعو",
-  confirme: "مؤكد",
-  refuse: "معتذر",
-  note: "منقط",
-};
-
-const TEST_STATUT_LABELS = {
-  planifie: "قادم",
-  termine: "منجز",
-  annule: "ملغى",
-};
-
-function formatDateLabel(value) {
-  const iso = String(value || "").slice(0, 10);
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
-}
+const NOTE_ERROR = "النقطة يجب أن تكون بين 0 و 20";
+const STATUS_KEYS = ["invite", "confirme", "refuse", "note"];
 
 function memberName(invitation) {
   const membre = invitation?.membre;
@@ -60,7 +58,7 @@ function memberName(invitation) {
   return name || membre?.email || "عضو";
 }
 
-/** 0–20, demi-points compris. Virgule arabe acceptée. */
+/** 0–20, demi-points compris. La virgule arabe est acceptée. */
 function parseNote(raw) {
   const text = String(raw ?? "").trim().replace(",", ".");
   if (!/^\d+(\.\d+)?$/.test(text)) return null;
@@ -70,65 +68,135 @@ function parseNote(raw) {
 }
 
 function formatNote(value) {
-  if (value == null || value === "") return "—";
+  if (value == null || value === "") return "";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
   return String(n);
 }
 
+function savedNoteNumber(note) {
+  if (note == null || note === "") return null;
+  const n = Number(note);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Brouillon comparé à la note enregistrée. La virgule reste un séparateur. */
+function noteDraftState(draft, savedNote) {
+  const trimmed = String(draft ?? "").trim();
+  const parsed = parseNote(trimmed);
+  const saved = savedNoteNumber(savedNote);
+  const same =
+    (trimmed === "" && saved == null) ||
+    (parsed != null && saved != null && parsed === saved);
+  return {
+    parsed,
+    same,
+    dirty: trimmed !== "" && !same,
+    valid: parsed != null,
+    incomplete: /^\d+[.,]$/.test(trimmed),
+  };
+}
+
+function isPlanned(test) {
+  return test?.statut !== "termine" && test?.statut !== "annule";
+}
+
+/** Feuille basse : les insets du provider racine n'arrivent pas toujours dans un Modal Android. */
+function MoveSheetBody({ onClose, children }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={styles.modalRoot}>
+      <Pressable style={styles.backdrop} onPress={onClose} />
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 28 }]}>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function tallyOf(list) {
+  const tally = { invite: 0, confirme: 0, refuse: 0, note: 0 };
+  list.forEach((invitation) => {
+    if (Object.prototype.hasOwnProperty.call(tally, invitation.statut)) {
+      tally[invitation.statut] += 1;
+    }
+  });
+  return tally;
+}
+
 export default function AdminTestDetailScreen({ navigation, route }) {
   const testId = route?.params?.testId || null;
   const insets = useSafeAreaInsets();
-  const bottomGap = Math.max(insets.bottom, 16);
 
   const [test, setTest] = useState(null);
   const [invitations, setInvitations] = useState([]);
-  const [groups, setGroups] = useState([]);
+  const [proposedDates, setProposedDates] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(null);
+  const iosPicker = useIosDateTimePicker();
+  const [dateError, setDateError] = useState("");
   const [drafts, setDrafts] = useState({});
+  const [noteErrors, setNoteErrors] = useState({});
+  const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState(null);
+  const [noteFlash, setNoteFlash] = useState({});
+  const [noteFocusId, setNoteFocusId] = useState(null);
   const [sending, setSending] = useState(false);
+  const [moveSheet, setMoveSheet] = useState(null);
+  const [moveDate, setMoveDate] = useState("");
+  const [moveSaving, setMoveSaving] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(null);
+  const closedByUser = useRef(false);
 
-  const load = useCallback(async () => {
-    if (!testId) {
-      setError("معرّف الاختبار مفقود");
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError("");
-    const [testsRes, invitesRes, collecteRes] = await Promise.all([
-      getAllTestsAdmin(),
-      getTestInvitationsWithMembers(testId),
-      getTestCollecte(testId),
-    ]);
-    if (!testsRes.ok) {
-      setError(testsRes.error || "تعذر تحميل الاختبار");
-      setLoading(false);
-      return;
-    }
-    const found = (testsRes.tests || []).find((row) => row.id === testId) || null;
-    if (!found) {
-      setError("الاختبار غير موجود");
-      setTest(null);
-      setLoading(false);
-      return;
-    }
-    if (!invitesRes.ok) {
-      setError(invitesRes.error || "تعذر تحميل الدعوات");
+  const load = useCallback(
+    async (mode = "load") => {
+      if (!testId) {
+        setError("معرّف الاختبار مفقود");
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      if (mode === "refresh") setRefreshing(true);
+      else setLoading(true);
+      const [testsRes, invitesRes, datesRes] = await Promise.all([
+        getAllTestsAdmin(),
+        getTestInvitationsWithMembers(testId),
+        getTestDates(testId),
+      ]);
+      if (!testsRes.ok) {
+        setError(testsRes.error || "تعذر تحميل الاختبار");
+        if (mode !== "refresh") setTest(null);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      const found = (testsRes.tests || []).find((row) => row.id === testId) || null;
+      if (!found) {
+        setError("الاختبار غير موجود");
+        setTest(null);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      if (!invitesRes.ok) {
+        setError(invitesRes.error || "تعذر تحميل الدعوات");
+        setTest(found);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
       setTest(found);
+      setInvitations(invitesRes.invitations || []);
+      setProposedDates(datesRes.ok ? datesRes.dates || [] : []);
+      setDateError(datesRes.ok ? "" : datesRes.error || "تعذر تحميل التواريخ");
+      setError("");
       setLoading(false);
-      return;
-    }
-    setTest(found);
-    setInvitations(invitesRes.invitations || []);
-    setGroups(collecteRes.ok ? collecteRes.groups || [] : []);
-    if (!collecteRes.ok) {
-      setError(collecteRes.error || "تعذر تحميل مواعيد الجمع");
-    }
-    setLoading(false);
-  }, [testId]);
+      setRefreshing(false);
+    },
+    [testId]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -136,15 +204,37 @@ export default function AdminTestDetailScreen({ navigation, route }) {
     }, [load])
   );
 
-  const counts = useMemo(() => {
-    const tally = { invite: 0, confirme: 0, refuse: 0, note: 0 };
-    invitations.forEach((invitation) => {
-      if (Object.prototype.hasOwnProperty.call(tally, invitation.statut)) {
-        tally[invitation.statut] += 1;
-      }
+  // Première date au chargement. Un rafraîchissement conserve le choix
+  // s'il existe encore, sinon retombe sur la première. Une fermeture
+  // manuelle (✕ ou second tap) reste fermée tant que la liste n'est pas vide.
+  useEffect(() => {
+    const sorted = [...proposedDates].sort((a, b) =>
+      String(a.date_proposee || "").localeCompare(String(b.date_proposee || ""))
+    );
+    if (sorted.length === 0) {
+      closedByUser.current = false;
+      setSelectedDate(null);
+      return;
+    }
+    setSelectedDate((current) => {
+      if (current && sorted.some((row) => row.date_proposee === current)) return current;
+      if (current == null && closedByUser.current) return null;
+      return sorted[0].date_proposee;
     });
-    return tally;
-  }, [invitations]);
+  }, [proposedDates]);
+
+  const counts = useMemo(() => tallyOf(invitations), [invitations]);
+
+  // La date sélectionnée n'alimente que le bloc sous les chips, pas la liste.
+  const dateMembers = useMemo(() => {
+    if (!selectedDate) return [];
+    return invitations.filter((invitation) => invitation.date_choisie === selectedDate);
+  }, [invitations, selectedDate]);
+
+  const visibleInvitations = useMemo(() => {
+    if (statusFilter === "all") return invitations;
+    return invitations.filter((invitation) => invitation.statut === statusFilter);
+  }, [invitations, statusFilter]);
 
   const pendingSend = useMemo(
     () =>
@@ -155,18 +245,92 @@ export default function AdminTestDetailScreen({ navigation, route }) {
     [invitations]
   );
 
-  const saveNote = async (invitation) => {
-    const raw = drafts[invitation.id] ?? formatNote(invitation.note);
-    const note = parseNote(raw === "—" ? "" : raw);
-    if (note == null) {
-      Alert.alert("تنبيه", "النقطة يجب أن تكون بين 0 و 20");
+  const notedCount = counts.note;
+  const totalCount = invitations.length;
+  const notedRatio = totalCount === 0 ? 0 : Math.round((notedCount / totalCount) * 100);
+
+  const sortedDates = useMemo(
+    () =>
+      [...proposedDates].sort((a, b) =>
+        String(a.date_proposee || "").localeCompare(String(b.date_proposee || ""))
+      ),
+    [proposedDates]
+  );
+
+  const applyMemberUpdate = async (invitation, payload) => {
+    const result = await adminUpdateInvitation(invitation.id, payload);
+    if (!result.ok) {
+      Alert.alert("تنبيه", result.error || "تعذر تحديث الدعوة");
+      return false;
+    }
+    load();
+    return true;
+  };
+
+  const closeMoveSheet = () => {
+    if (moveSaving) return;
+    setMoveSheet(null);
+    setMoveDate("");
+  };
+
+  const openMoveSheet = (invitation, others) => {
+    if (others.length === 0) {
+      Alert.alert("تغيير الموعد", "لا توجد تواريخ أخرى");
       return;
     }
+    setMoveDate("");
+    setMoveSheet({ invitation, dates: others });
+  };
+
+  const confirmMove = async () => {
+    if (!moveSheet?.invitation || !moveDate || moveSaving) return;
+    setMoveSaving(true);
+    const ok = await applyMemberUpdate(moveSheet.invitation, {
+      statut: "confirme",
+      dateChoisie: moveDate,
+    });
+    setMoveSaving(false);
+    if (!ok) return;
+    setMoveSheet(null);
+    setMoveDate("");
+  };
+
+  const onMemberLongPress = (invitation) => {
+    if (!isPlanned(test)) return;
+    if (invitation.statut === "note") {
+      Alert.alert("تنبيه", "لا يمكن تعديل عضو تم تنقيطه");
+      return;
+    }
+    const others = sortedDates.filter((row) => row.date_proposee !== invitation.date_choisie);
+    Alert.alert(memberName(invitation), undefined, [
+      { text: "تغيير الموعد", onPress: () => openMoveSheet(invitation, others) },
+      {
+        text: "تسجيل كمعتذر",
+        onPress: () => applyMemberUpdate(invitation, { statut: "refuse", dateChoisie: null }),
+      },
+      { text: "إلغاء", style: "cancel" },
+    ]);
+  };
+
+  const saveNote = async (invitation) => {
+    if (savingId) return;
+    const raw = drafts[invitation.id] ?? formatNote(invitation.note);
+    const { parsed, same } = noteDraftState(raw, invitation.note);
+    if (same || String(raw ?? "").trim() === "") return;
+    if (parsed == null) {
+      setNoteErrors((prev) => ({ ...prev, [invitation.id]: NOTE_ERROR }));
+      return;
+    }
+    setNoteErrors((prev) => {
+      const next = { ...prev };
+      delete next[invitation.id];
+      return next;
+    });
     setSavingId(invitation.id);
-    const result = await recordTestResult({ invitationId: invitation.id, note });
+    const result = await recordTestResult({ invitationId: invitation.id, note: parsed });
     setSavingId(null);
     if (!result.ok) {
-      Alert.alert("تنبيه", result.error);
+      setNoteErrors((prev) => ({ ...prev, [invitation.id]: result.error }));
       return;
     }
     setDrafts((prev) => {
@@ -174,6 +338,14 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       delete next[invitation.id];
       return next;
     });
+    setInvitations((prev) =>
+      prev.map((row) =>
+        row.id === invitation.id
+          ? { ...row, note: parsed, statut: row.statut === "confirme" ? "note" : row.statut }
+          : row
+      )
+    );
+    setNoteFlash((prev) => ({ ...prev, [invitation.id]: true }));
     load();
   };
 
@@ -202,11 +374,126 @@ export default function AdminTestDetailScreen({ navigation, route }) {
     );
   };
 
-  const typeLabel = TEST_TYPE_LABELS[test?.type] || "";
-  const seasonName = test?.saison?.name || "—";
+  const tomorrowIso = addCalendarDays(casablancaTodayIso(), 1);
+
+  const applyNewSlot = async () => {
+    setDateError("");
+    const slot = await pickDateTime({
+      minimumDate: isoToLocalDate(tomorrowIso),
+      initialDate: isoToLocalDate(tomorrowIso),
+    });
+    if (!slot) return;
+    const result = await addTestDate(testId, slot.date, slot.heure);
+    if (!result.ok) {
+      setDateError(result.error);
+      return;
+    }
+    setDateError("");
+    load();
+  };
+
+  const applyEditedTime = async (row) => {
+    const hm = formatTestTime(row.heure_proposee);
+    const base = new Date();
+    if (hm) {
+      const [hours, minutes] = hm.split(":").map(Number);
+      base.setHours(hours, minutes, 0, 0);
+    }
+    setDateError("");
+    const slot = await pickDateTime({ initialDate: base, timeOnly: true });
+    if (!slot) return;
+    const result = await updateTestDateHeure(row.id, slot.heure);
+    if (!result.ok) {
+      setDateError(result.error);
+      return;
+    }
+    setDateError("");
+    load();
+  };
+
+  const deleteDate = async (row) => {
+    const result = await removeTestDate(row.id);
+    if (!result.ok) {
+      setDateError(result.error);
+      return;
+    }
+    setDateError("");
+    load();
+  };
+
+  const onDateLongPress = (row) => {
+    const label = formatShortTestDate(row.date_proposee) || row.date_proposee;
+    Alert.alert(label, undefined, [
+      { text: "تعديل الوقت", onPress: () => applyEditedTime(row) },
+      { text: "حذف", style: "destructive", onPress: () => deleteDate(row) },
+      { text: "إلغاء", style: "cancel" },
+    ]);
+  };
+
+  const toggleDate = (iso) => {
+    setSelectedDate((current) => {
+      if (current === iso) {
+        closedByUser.current = true;
+        return null;
+      }
+      closedByUser.current = false;
+      return iso;
+    });
+  };
+
+  const closeDatePanel = () => {
+    closedByUser.current = true;
+    setSelectedDate(null);
+  };
+
+  const runStatusChange = async (statut) => {
+    if (statusBusy) return;
+    setStatusBusy(statut);
+    const result = await updateTestStatus({ testId, statut });
+    setStatusBusy(null);
+    if (!result.ok) Alert.alert("خطأ", result.error);
+    load();
+  };
+
+  const confirmCancel = () => {
+    if (statusBusy) return;
+    Alert.alert("إلغاء الاختبار", `هل تريد إلغاء «${test?.titre || "اختبار"}»؟`, [
+      { text: "تراجع", style: "cancel" },
+      {
+        text: "إلغاء",
+        style: "destructive",
+        onPress: () => runStatusChange("annule"),
+      },
+    ]);
+  };
+
+  const confirmComplete = () => {
+    if (statusBusy) return;
+    Alert.alert("تعليم كمنجز", `هل تم إنجاز «${test?.titre || "اختبار"}»؟`, [
+      { text: "تراجع", style: "cancel" },
+      {
+        text: "تأكيد",
+        onPress: () => runStatusChange("termine"),
+      },
+    ]);
+  };
+
+  const displayStatus = getTestDisplayStatus(test, {
+    dates: proposedDates,
+    invitations,
+  });
+  const announced = formatTestDate(test?.created_at);
+  const summaryLine = [
+    TEST_TYPE_LABELS[test?.type] || "",
+    String(test?.quran_quantity || "").trim(),
+    test?.saison?.name || "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+      <StatusBar style="dark" />
       <View style={styles.topBar}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -214,273 +501,855 @@ export default function AdminTestDetailScreen({ navigation, route }) {
           accessibilityRole="button"
           accessibilityLabel="رجوع"
         >
-          <Ionicons name={arrowBack} size={22} color={palette.textPrimary} />
+          <Ionicons name={arrowBack} size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle} numberOfLines={1}>
+        <Text style={styles.topBarTitle} numberOfLines={1} ellipsizeMode="tail">
           {test?.titre || "تفاصيل الاختبار"}
         </Text>
+        {isPlanned(test) ? (
+          <View style={styles.topBarActions}>
+            <TouchableOpacity
+              style={[
+                styles.topPill,
+                { backgroundColor: colorWithAlpha(colors.primary, 0.2) },
+                statusBusy && styles.topPillDisabled,
+              ]}
+              onPress={confirmComplete}
+              disabled={!!statusBusy}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="تم"
+            >
+              {statusBusy === "termine" ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text style={[styles.topPillText, { color: colors.primary }]}>تم</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.topPill,
+                { backgroundColor: colorWithAlpha(colors.red, 0.2) },
+                statusBusy && styles.topPillDisabled,
+              ]}
+              onPress={confirmCancel}
+              disabled={!!statusBusy}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="إلغاء"
+            >
+              {statusBusy === "annule" ? (
+                <ActivityIndicator size="small" color={colors.red} />
+              ) : (
+                <Text style={[styles.topPillText, { color: colors.red }]}>إلغاء</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
 
-      {loading ? (
+      {loading && !test ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={palette.primary} />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : error && !test ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={load}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => load()}>
             <Text style={styles.retryText}>إعادة المحاولة</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <ScrollView
-          contentContainerStyle={[styles.scroll, { paddingBottom: 24 + bottomGap }]}
-          keyboardShouldPersistTaps="handled"
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>{test?.titre || "اختبار"}</Text>
-            <Text style={styles.metaLine}>{typeLabel || "—"}</Text>
-            {test?.type === "hifz" && test?.quran_quantity ? (
-              <Text style={styles.metaLine}>{test.quran_quantity}</Text>
-            ) : null}
-            <Text style={styles.metaLine}>{seasonName}</Text>
-            <Text style={styles.metaLine}>
-              {TEST_STATUT_LABELS[test?.statut] || test?.statut || "—"}
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>ملخص الدعوات</Text>
-            <View style={styles.pills}>
-              {Object.entries(STATUT_LABELS).map(([key, label]) => (
-                <View key={key} style={styles.pill}>
-                  <Text style={styles.pillText}>
-                    {label} {counts[key]}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>الجمع حسب التاريخ</Text>
-            {error && test ? <Text style={styles.errorText}>{error}</Text> : null}
-            {groups.length === 0 ? (
-              <Text style={styles.emptyText}>لا يوجد أعضاء مؤكدون بعد</Text>
-            ) : (
-              groups.map((group) => (
-                <View key={group.dateChoisie || "sans-date"} style={styles.groupRow}>
-                  <Text style={styles.groupDate}>
-                    {group.dateChoisie
-                      ? formatDateLabel(group.dateChoisie)
-                      : "بدون تاريخ"}
-                  </Text>
-                  <Text style={styles.groupCount}>
-                    {group.invitations.length} أعضاء
-                  </Text>
-                </View>
-              ))
-            )}
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>الأعضاء</Text>
-            {invitations.length === 0 ? (
-              <Text style={styles.emptyText}>لا توجد دعوات لهذا الاختبار</Text>
-            ) : (
-              invitations.map((invitation) => {
-                const sent = !!invitation.date_notification_resultat;
-                const canEdit =
-                  (invitation.statut === "confirme" || invitation.statut === "note") &&
-                  !sent;
-                const draft =
-                  drafts[invitation.id] != null
-                    ? drafts[invitation.id]
-                    : invitation.note == null
-                      ? ""
-                      : formatNote(invitation.note);
-                return (
-                  <View key={invitation.id} style={styles.memberRow}>
-                    <Text style={styles.memberName}>{memberName(invitation)}</Text>
-                    <Text style={styles.memberMeta}>
-                      {STATUT_LABELS[invitation.statut] || invitation.statut}
-                      {" · "}
-                      {invitation.date_choisie
-                        ? formatDateLabel(invitation.date_choisie)
-                        : "بدون تاريخ"}
-                    </Text>
-                    {sent ? (
-                      <Text style={styles.sentText}>
-                        {formatNote(invitation.note)}/20 · تم الإرسال
-                      </Text>
-                    ) : canEdit ? (
-                      <View style={styles.noteRow}>
-                        <TextInput
-                          style={styles.noteInput}
-                          value={draft}
-                          onChangeText={(value) =>
-                            setDrafts((prev) => ({ ...prev, [invitation.id]: value }))
-                          }
-                          keyboardType="decimal-pad"
-                          placeholder="0–20"
-                          placeholderTextColor={palette.textSecondary}
-                          textAlign={textAlignStart}
-                        />
-                        <TouchableOpacity
-                          style={[
-                            styles.saveBtn,
-                            savingId === invitation.id && { opacity: 0.6 },
-                          ]}
-                          onPress={
-                            savingId === invitation.id
-                              ? undefined
-                              : () => saveNote(invitation)
-                          }
-                        >
-                          <Text style={styles.saveBtnText}>
-                            {savingId === invitation.id ? "..." : "حفظ"}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <Text style={styles.memberMeta}>
-                        {invitation.note == null ? "—" : `${formatNote(invitation.note)}/20`}
-                      </Text>
-                    )}
-                  </View>
-                );
-              })
-            )}
-          </View>
-
-          <TouchableOpacity
-            style={[
-              styles.sendBtn,
-              (pendingSend.length === 0 || sending) && { opacity: 0.5 },
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.scroll,
+              { paddingBottom: 16 + Math.max(insets.bottom, 8) },
             ]}
-            onPress={pendingSend.length === 0 || sending ? undefined : confirmSend}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => load("refresh")}
+                colors={[colors.primary]}
+                tintColor={colors.primary}
+              />
+            }
           >
-            <Text style={styles.sendBtnText}>
-              {sending ? "جاري الإرسال..." : "إرسال النتائج"}
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
+            <View style={styles.headerCard}>
+              {isPlanned(test) && displayStatus.allDatesPassed ? (
+                <Text style={styles.datesPassedHint}>
+                  انتهت جميع المواعيد، يمكنك إنهاء الاختبار
+                </Text>
+              ) : null}
+              <View style={styles.titleRow}>
+                <Text style={styles.headerTitle} numberOfLines={2}>
+                  {test?.titre || "اختبار"}
+                </Text>
+                <StatusBadge label={displayStatus.label} color={displayStatus.color} />
+              </View>
+              {summaryLine ? (
+                <Text style={styles.summaryLine} numberOfLines={2}>
+                  {summaryLine}
+                </Text>
+              ) : null}
+              <Text style={styles.announcedLine}>أُعلن في {announced || "—"}</Text>
+
+              <View style={styles.separator} />
+
+              <View style={styles.counterRow}>
+                {STATUS_KEYS.map((key) => {
+                  const meta = INVITATION_STATUS[key];
+                  const active = statusFilter === key;
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={styles.counter}
+                      onPress={() => setStatusFilter(key)}
+                      accessibilityRole="button"
+                      accessibilityLabel={meta.label}
+                    >
+                      <Text style={[styles.counterValue, { color: meta.color }]}>
+                        {counts[key]}
+                      </Text>
+                      <Text
+                        style={[styles.counterLabel, active && { color: meta.color }]}
+                        numberOfLines={1}
+                      >
+                        {meta.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.track}>
+                <View style={[styles.fill, { width: `${notedRatio}%` }]} />
+              </View>
+              <Text style={styles.progressLabel}>
+                {notedCount} / {totalCount} منقط
+              </Text>
+            </View>
+
+            <SectionCard title="توزيع الأعضاء حسب التواريخ المقترحة">
+            {dateError ? <Text style={styles.fieldError}>{dateError}</Text> : null}
+            {sortedDates.length === 0 && !isPlanned(test) ? (
+              <Text style={styles.emptyText}>لا توجد تواريخ مقترحة</Text>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.dateStrip}
+              >
+                {sortedDates.map((row) => {
+                  const chosenCount = invitations.filter(
+                    (invitation) => invitation.date_choisie === row.date_proposee
+                  ).length;
+                  const active = selectedDate === row.date_proposee;
+                  const short = formatShortTestDate(row.date_proposee) || row.date_proposee;
+                  const time = formatTestTime(row.heure_proposee);
+                  const labelStyle = [styles.dateChipText, active && styles.chipTextActive];
+                  return (
+                    <TouchableOpacity
+                      key={row.id}
+                      style={[styles.dateChip, active && styles.chipActive]}
+                      onPress={() => toggleDate(row.date_proposee)}
+                      onLongPress={() => onDateLongPress(row)}
+                      accessibilityRole="button"
+                      accessibilityLabel={time ? `${short} ${time}` : short}
+                    >
+                      <Text style={labelStyle}>{short}</Text>
+                      {time ? (
+                        <Text style={[...labelStyle, styles.timeLtr]}>{` · ${time}`}</Text>
+                      ) : null}
+                      <Text style={labelStyle}>{` · ${chosenCount}`}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {isPlanned(test) ? (
+                  <TouchableOpacity
+                    style={styles.dateChip}
+                    onPress={applyNewSlot}
+                    accessibilityRole="button"
+                    accessibilityLabel="إضافة تاريخ"
+                  >
+                    <Text style={styles.plusText}>+</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </ScrollView>
+            )}
+            {selectedDate ? (
+              <View style={styles.datePanel}>
+                {/* Pas de titre « أعضاء يوم … » : la chip sélectionnée suffit. */}
+                <View style={styles.datePanelHead}>
+                  <TouchableOpacity
+                    onPress={closeDatePanel}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="إغلاق"
+                  >
+                    <Ionicons name="close" size={16} color={colors.muted} />
+                  </TouchableOpacity>
+                </View>
+                {isPlanned(test) &&
+                dateMembers.some((invitation) => invitation.statut !== "note") ? (
+                  <Text style={styles.longPressHint}>
+                    اضغط مطولاً على اسم العضو إذا أردت تغيير موعد اختباره
+                  </Text>
+                ) : null}
+                {dateMembers.length === 0 ? (
+                  <Text style={styles.emptyText}>لم يختر أي عضو هذا التاريخ بعد</Text>
+                ) : (
+                  dateMembers.map((invitation, index) => {
+                    const sent = !!invitation.date_notification_resultat;
+                    const canEdit =
+                      (invitation.statut === "confirme" || invitation.statut === "note") &&
+                      !sent;
+                    const draft =
+                      drafts[invitation.id] != null
+                        ? drafts[invitation.id]
+                        : formatNote(invitation.note);
+                    const fieldError = noteErrors[invitation.id];
+                    const draftState = noteDraftState(draft, invitation.note);
+                    const saving = savingId === invitation.id;
+                    const canSave = draftState.dirty && draftState.valid && !saving;
+                    const inlineError =
+                      fieldError ||
+                      (draftState.dirty && !draftState.valid && !draftState.incomplete
+                        ? NOTE_ERROR
+                        : "");
+                    const flashed = !!noteFlash[invitation.id];
+                    const last = index === dateMembers.length - 1;
+                    return (
+                      <View
+                        key={invitation.id}
+                        style={[styles.dateMemberLine, !last && styles.memberDivider]}
+                      >
+                        <View style={styles.dateMemberRow}>
+                          <TouchableOpacity
+                            style={styles.memberPress}
+                            onLongPress={
+                              isPlanned(test) ? () => onMemberLongPress(invitation) : undefined
+                            }
+                            activeOpacity={0.7}
+                            accessibilityRole="button"
+                          >
+                            <Text style={styles.memberName} numberOfLines={1}>
+                              {memberName(invitation)}
+                            </Text>
+                          </TouchableOpacity>
+                          {sent ? (
+                            <View style={styles.noteControl}>
+                              <Text style={styles.sentScore}>
+                                {formatNote(invitation.note) || "—"} / 20
+                              </Text>
+                              <Text style={styles.sentLabel}>{RESULT_SENT_LABEL.label}</Text>
+                            </View>
+                          ) : canEdit ? (
+                            <View style={styles.noteControl}>
+                              {saving ? (
+                                <View style={styles.noteLeading}>
+                                  <ActivityIndicator color={colors.primary} size="small" />
+                                </View>
+                              ) : canSave ? (
+                                <TouchableOpacity
+                                  style={styles.noteSaveBtn}
+                                  onPress={() => saveNote(invitation)}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="حفظ"
+                                >
+                                  <Check size={16} color="#fff" strokeWidth={2.5} />
+                                </TouchableOpacity>
+                              ) : flashed && !inlineError ? (
+                                <View style={styles.noteLeading}>
+                                  <Check size={16} color={colors.primary} strokeWidth={2.5} />
+                                </View>
+                              ) : null}
+                              <TextInput
+                                style={[
+                                  styles.noteField,
+                                  noteFocusId === invitation.id &&
+                                    !inlineError &&
+                                    styles.noteFieldFocus,
+                                  inlineError && styles.noteFieldError,
+                                ]}
+                                value={draft}
+                                onChangeText={(value) => {
+                                  setDrafts((prev) => ({ ...prev, [invitation.id]: value }));
+                                  if (noteDraftState(value, invitation.note).dirty) {
+                                    setNoteFlash((prev) => {
+                                      if (!prev[invitation.id]) return prev;
+                                      const next = { ...prev };
+                                      delete next[invitation.id];
+                                      return next;
+                                    });
+                                  }
+                                  if (fieldError) {
+                                    setNoteErrors((prev) => {
+                                      const next = { ...prev };
+                                      delete next[invitation.id];
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                onFocus={() => setNoteFocusId(invitation.id)}
+                                onBlur={() =>
+                                  setNoteFocusId((current) =>
+                                    current === invitation.id ? null : current
+                                  )
+                                }
+                                editable={!saving}
+                                keyboardType="decimal-pad"
+                                returnKeyType="done"
+                                onSubmitEditing={() => saveNote(invitation)}
+                                placeholder="—"
+                                placeholderTextColor={colors.placeholder}
+                                textAlign="center"
+                              />
+                              <Text style={styles.noteSuffix}>/ 20</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        {inlineError ? <Text style={styles.fieldError}>{inlineError}</Text> : null}
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            ) : null}
+            {iosPicker ? <IosDateTimePicker picker={iosPicker} /> : null}
+            {iosPicker ? (
+              <TouchableOpacity style={styles.dateDoneBtn} onPress={iosPicker.confirm}>
+                <Text style={styles.dateDoneText}>تم</Text>
+              </TouchableOpacity>
+            ) : null}
+            </SectionCard>
+
+            <SectionCard title="الأعضاء">
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterStrip}
+            >
+              <TouchableOpacity
+                style={[styles.filterChip, statusFilter === "all" && styles.chipActive]}
+                onPress={() => setStatusFilter("all")}
+              >
+                <Text
+                  style={[styles.filterChipText, statusFilter === "all" && styles.chipTextActive]}
+                >
+                  الكل {invitations.length}
+                </Text>
+              </TouchableOpacity>
+              {STATUS_KEYS.map((key) => {
+                const meta = INVITATION_STATUS[key];
+                const active = statusFilter === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={[styles.filterChip, active && styles.chipActive]}
+                    onPress={() => setStatusFilter(key)}
+                  >
+                    <Text style={[styles.filterChipText, active && styles.chipTextActive]}>
+                      {meta.label} {counts[key]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.membersList}>
+              {visibleInvitations.length === 0 ? (
+                <Text style={styles.emptyText}>لا توجد دعوات لهذا الاختبار</Text>
+              ) : (
+                visibleInvitations.map((invitation, index) => {
+                  const sent = !!invitation.date_notification_resultat;
+                  const inviteStatus =
+                    INVITATION_STATUS[invitation.statut] || INVITATION_STATUS.invite;
+                  const last = index === visibleInvitations.length - 1;
+                  const chosenLabel = invitation.date_choisie
+                    ? formatTestDate(invitation.date_choisie)
+                    : "";
+                  const noteLabel =
+                    invitation.note == null ? "" : `${formatNote(invitation.note)}/20`;
+                  return (
+                    <View
+                      key={invitation.id}
+                      style={[styles.memberLine, !last && styles.memberDivider]}
+                    >
+                      <View style={styles.memberTop}>
+                        <Text style={styles.memberName} numberOfLines={1}>
+                          {memberName(invitation)}
+                        </Text>
+                        <Text
+                          style={[styles.memberStatus, { color: inviteStatus.color }]}
+                          numberOfLines={1}
+                        >
+                          {inviteStatus.label}
+                          {sent ? (
+                            <Text style={{ color: RESULT_SENT_LABEL.color }}>
+                              {` · ${RESULT_SENT_LABEL.label}`}
+                            </Text>
+                          ) : null}
+                        </Text>
+                      </View>
+                      {chosenLabel || noteLabel ? (
+                        <View style={styles.memberSub}>
+                          {chosenLabel ? (
+                            <Text style={styles.memberDate} numberOfLines={1}>
+                              {chosenLabel}
+                            </Text>
+                          ) : (
+                            <View style={styles.flex} />
+                          )}
+                          {noteLabel ? <Text style={styles.sentNote}>{noteLabel}</Text> : null}
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+            </SectionCard>
+          </ScrollView>
+
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={[
+                styles.sendBtn,
+                (pendingSend.length === 0 || sending) && styles.submitBtnDisabled,
+              ]}
+              onPress={pendingSend.length === 0 || sending ? undefined : confirmSend}
+            >
+              {sending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.sendBtnText}>
+                  إرسال النتائج ({pendingSend.length})
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       )}
+      <Modal
+        visible={Boolean(moveSheet)}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={closeMoveSheet}
+      >
+        <SafeAreaProvider style={styles.modalRoot}>
+          <MoveSheetBody onClose={closeMoveSheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>تغيير الموعد</Text>
+            <View style={styles.moveChips}>
+              {(moveSheet?.dates || []).map((row) => {
+                const iso = row.date_proposee;
+                const time = formatTestTime(row.heure_proposee);
+                const active = moveDate === iso;
+                const labelStyle = [styles.dateChipText, active && styles.chipTextActive];
+                const short = formatShortTestDate(iso) || iso;
+                return (
+                  <TouchableOpacity
+                    key={iso}
+                    style={[styles.dateChip, active && styles.chipActive]}
+                    onPress={() => setMoveDate(iso)}
+                  >
+                    <Text style={labelStyle}>{short}</Text>
+                    {time ? (
+                      <Text style={[...labelStyle, styles.timeLtr]}>{` · ${time}`}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <TouchableOpacity
+              style={[styles.sendBtn, (!moveDate || moveSaving) && styles.submitBtnDisabled]}
+              disabled={!moveDate || moveSaving}
+              onPress={confirmMove}
+            >
+              {moveSaving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.sendBtnText}>تأكيد</Text>
+              )}
+            </TouchableOpacity>
+          </MoveSheetBody>
+        </SafeAreaProvider>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: palette.background },
+  container: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   topBar: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.card,
     paddingHorizontal: 16,
     paddingVertical: 14,
     flexDirection: row,
     alignItems: "center",
     gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: palette.border,
+    borderBottomColor: colors.border,
   },
   topBarTitle: {
     flex: 1,
-    fontWeight: "700",
+    flexShrink: 1,
+    minWidth: 0,
     fontSize: 16,
-    color: palette.textPrimary,
+    color: colors.text,
+    fontFamily: fonts.bold,
     ...rtlText,
   },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  scroll: { padding: 16 },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: palette.textPrimary,
-    marginBottom: 6,
-    ...rtlText,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: palette.textPrimary,
-    marginBottom: 10,
-    ...rtlText,
-  },
-  metaLine: {
-    fontSize: 13,
-    color: palette.textSecondary,
-    marginTop: 2,
-    ...rtlText,
-  },
-  pills: { flexDirection: row, flexWrap: "wrap", gap: 8 },
-  pill: {
-    backgroundColor: palette.softGreen,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  pillText: { fontSize: 12, fontWeight: "600", color: palette.primary, ...rtlText },
-  groupRow: {
+  topBarActions: {
     flexDirection: row,
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.border,
+    flexShrink: 0,
+    gap: 6,
   },
-  groupDate: { fontSize: 14, color: palette.textPrimary, ...rtlText },
-  groupCount: { fontSize: 13, color: palette.textSecondary, ...rtlText },
-  memberRow: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.border,
-  },
-  memberName: { fontSize: 15, fontWeight: "600", color: palette.textPrimary, ...rtlText },
-  memberMeta: { fontSize: 12, color: palette.textSecondary, marginTop: 2, ...rtlText },
-  sentText: { marginTop: 6, fontSize: 13, fontWeight: "700", color: palette.primary, ...rtlText },
-  noteRow: { flexDirection: row, alignItems: "center", gap: 8, marginTop: 8 },
-  noteInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 10,
-    backgroundColor: palette.background,
+  topPill: {
+    height: 30,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 15,
-    color: palette.textPrimary,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  topPillText: {
+    fontSize: 12,
+    fontFamily: fonts.semiBold,
     ...rtlText,
   },
-  saveBtn: {
-    backgroundColor: palette.primary,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  saveBtnText: { color: "#fff", fontWeight: "700", ...rtlText },
-  sendBtn: {
-    backgroundColor: palette.primary,
-    borderRadius: 16,
-    paddingVertical: 14,
+  topPillDisabled: { opacity: 0.5 },
+  center: {
+    flex: 1,
     alignItems: "center",
-    marginTop: 4,
+    justifyContent: "center",
+    padding: 24,
   },
-  sendBtnText: { color: "#fff", fontWeight: "700", fontSize: 16, ...rtlText },
-  emptyText: { color: palette.textSecondary, fontSize: 13, ...rtlText },
-  errorText: { color: palette.red, fontSize: 14, textAlign: "center", ...rtlText },
+  scroll: { padding: 16, gap: 10 },
+  headerCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: 14,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.card,
+  },
+  datesPassedHint: {
+    backgroundColor: colorWithAlpha(colors.gold, 0.12),
+    borderRadius: radii.md,
+    padding: 10,
+    fontSize: 13,
+    fontFamily: fonts.medium,
+    color: colors.text,
+    ...rtlText,
+  },
+  titleRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 18,
+    color: colors.text,
+    fontFamily: fonts.bold,
+    ...rtlText,
+  },
+  summaryLine: {
+    fontSize: 13,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  announcedLine: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  separator: { height: 1, backgroundColor: colors.border },
+  counterRow: { flexDirection: row, alignItems: "flex-start" },
+  counter: { flex: 1, alignItems: "center", gap: 2 },
+  counterValue: { fontSize: 18, fontFamily: fonts.bold },
+  counterLabel: {
+    fontSize: 11,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  track: {
+    height: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.border,
+    overflow: "hidden",
+  },
+  fill: {
+    height: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  dateStrip: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  dateChip: {
+    height: 30,
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
+    backgroundColor: colors.inputBg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateChipText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  timeLtr: { writingDirection: "ltr" },
+  plusText: {
+    fontSize: 16,
+    color: colors.primary,
+    fontFamily: fonts.bold,
+  },
+  dateDoneBtn: { alignSelf: "flex-start", marginTop: 8 },
+  dateDoneText: { color: colors.primary, fontFamily: fonts.bold, ...rtlText },
+  datePanel: { marginTop: 12, gap: 4 },
+  datePanelHead: {
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  longPressHint: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  modalRoot: { flex: 1 },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  sheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radii.xl,
+    borderTopRightRadius: radii.xl,
+    padding: 16,
+    gap: 12,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    width: 40,
+    height: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.border,
+  },
+  sheetTitle: {
+    fontSize: 16,
+    color: colors.text,
+    fontFamily: fonts.bold,
+    ...rtlText,
+  },
+  moveChips: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  dateMemberLine: { minHeight: 52, justifyContent: "center", gap: 2 },
+  dateMemberRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    minHeight: 52,
+  },
+  noteControl: {
+    flexDirection: "row",
+    direction: "ltr",
+    alignItems: "center",
+  },
+  noteLeading: {
+    width: 28,
+    height: 28,
+    marginRight: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noteSaveBtn: {
+    width: 28,
+    height: 28,
+    marginRight: 8,
+    borderRadius: 14,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noteField: {
+    width: 44,
+    height: 32,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1.5,
+    borderBottomColor: colors.border,
+    fontSize: 16,
+    color: colors.text,
+    fontFamily: fonts.bold,
+    includeFontPadding: false,
+    textAlignVertical: "center",
+  },
+  noteFieldFocus: { borderBottomColor: colors.primary },
+  noteFieldError: { borderBottomColor: colors.red },
+  noteSuffix: {
+    marginLeft: 4,
+    fontSize: 14,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+  },
+  sentScore: {
+    fontSize: 16,
+    color: colors.text,
+    fontFamily: fonts.bold,
+    writingDirection: "ltr",
+  },
+  sentLabel: {
+    marginLeft: 8,
+    fontSize: 12,
+    color: RESULT_SENT_LABEL.color,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  sentNote: {
+    fontSize: 14,
+    color: colors.text,
+    fontFamily: fonts.bold,
+    ...rtlText,
+  },
+  filterStrip: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  filterChip: {
+    height: 30,
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
+    backgroundColor: colors.inputBg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  filterChipText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  chipTextActive: { color: "#fff", fontFamily: fonts.semiBold },
+  membersList: { marginTop: 12 },
+  memberLine: { paddingVertical: 10, gap: 4 },
+  memberDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  memberTop: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  memberPress: { flex: 1, minWidth: 0 },
+  memberName: {
+    fontSize: 14,
+    color: colors.text,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
+  },
+  memberStatus: {
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  memberSub: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  memberDate: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  fieldError: {
+    fontSize: 12,
+    color: colors.red,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  footer: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
+    backgroundColor: colors.card,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  sendBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: radii.lg,
+    paddingVertical: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  sendBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
+  },
+  submitBtnDisabled: { opacity: 0.5 },
+  emptyText: {
+    color: colors.muted,
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    paddingVertical: 8,
+    ...rtlText,
+  },
+  errorText: {
+    color: colors.red,
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    textAlign: "center",
+    marginBottom: 8,
+    ...rtlText,
+  },
   retryBtn: {
     marginTop: 12,
-    backgroundColor: palette.primary,
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radii.md,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  retryText: { color: "#fff", fontWeight: "700", ...rtlText },
+  retryText: { color: "#fff", fontFamily: fonts.bold, ...rtlText },
 });

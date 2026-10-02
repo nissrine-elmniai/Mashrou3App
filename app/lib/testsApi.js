@@ -1,4 +1,7 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { TEST_TYPE_LABELS, casablancaTodayIso, formatTestTime, getTestDisplayStatus } from "../constants/tests";
+
+export { TEST_TYPE_LABELS };
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -32,6 +35,55 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Dates proposées : { date: YYYY-MM-DD, heure: HH:mm }.
+ * L'heure est obligatoire. Une seule heure par date : un doublon est refusé.
+ * Chaque date est strictement après aujourd'hui à Casablanca. Au moins une.
+ */
+function normalizeProposedDates(dates) {
+  const today = casablancaTodayIso();
+  const seen = new Set();
+  const unique = [];
+  for (const raw of Array.isArray(dates) ? dates : []) {
+    const iso = String(raw?.date || "").slice(0, 10);
+    const heure = formatTestTime(raw?.heure);
+    if (!ISO_DATE.test(iso)) {
+      return { ok: false, error: "تاريخ غير صالح" };
+    }
+    if (!heure) {
+      return { ok: false, error: "اختر ساعة للاختبار" };
+    }
+    if (!today || iso <= today) {
+      return { ok: false, error: "يجب اختيار تاريخ لاحق" };
+    }
+    if (seen.has(iso)) {
+      return { ok: false, error: "هذا التاريخ مضاف مسبقاً" };
+    }
+    seen.add(iso);
+    unique.push({ date: iso, heure });
+  }
+  unique.sort((a, b) => a.date.localeCompare(b.date));
+  if (unique.length === 0) {
+    return { ok: false, error: "أضف تاريخاً واحداً على الأقل" };
+  }
+  return { ok: true, dates: unique };
+}
+
+/** Remonte le texte arabe du garde-fou, ou une traduction des exceptions 0090. */
+function invitationUpdateError(error) {
+  const msg = error?.message || "";
+  if (msg.includes("لا يمكن تعديل الرد بعد حلول تاريخ الاختبار")) return "لا يمكن تعديل الجواب بعد حلول تاريخ الاختبار";
+  if (msg.includes("يجب اختيار تاريخ لاحق")) return "يجب اختيار تاريخ لاحق";
+  if (msg.includes("هذا الاختبار لم يعد مفتوحاً للرد")) return "هذا الاختبار لم يعد مفتوحاً للرد";
+  if (/déjà notée|deja notee/i.test(msg)) return "لا يمكن تعديل الجواب بعد التنقيط";
+  if (error?.code === "23503" || /23503|foreign key/i.test(msg)) {
+    return "هذا التاريخ غير مقترح";
+  }
+  return null;
+}
+
 /** Id du membre connecté via la session Supabase, ou null. */
 async function currentAuthId() {
   const { data } = await supabase.auth.getUser();
@@ -39,7 +91,8 @@ async function currentAuthId() {
 }
 
 /**
- * Invitations de test du membre connecté, avec le titre du test joint.
+ * Invitations du membre, tests non annulés de toutes les saisons actives,
+ * avec les dates proposées triées.
  * @returns { ok, invitations }
  */
 export async function getMyTestInvitations() {
@@ -52,20 +105,41 @@ export async function getMyTestInvitations() {
   }
 
   try {
+    const { data: activeSeasons, error: seasonError } = await withTimeout(
+      supabase.from("saisons").select("id").eq("active", true),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة المواسم النشطة"
+    );
+    if (seasonError) {
+      return { ok: false, error: mapTableError(seasonError, "saisons") };
+    }
+    const seasonIds = (activeSeasons || []).map((season) => season.id).filter(Boolean);
+    if (seasonIds.length === 0) {
+      return { ok: true, invitations: [] };
+    }
+
     const { data, error } = await withTimeout(
       supabase
         .from("test_invitations")
         .select(
-          "*, test:tests!test_invitations_test_id_fkey(id, titre, saison_id, created_at, type, quran_quantity, statut)"
+          "*, test:tests!test_invitations_test_id_fkey!inner(id, titre, saison_id, created_at, type, quran_quantity, statut, test_dates(id, test_id, date_proposee, heure_proposee))"
         )
-        .eq("membre_id", userId),
+        .eq("membre_id", userId)
+        .neq("test.statut", "annule")
+        .in("test.saison_id", seasonIds),
       SUPABASE_TIMEOUT_MS,
       "قراءة دعوات الاختبار"
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "test_invitations") };
     }
-    return { ok: true, invitations: data || [] };
+    const invitations = (data || []).map((row) => {
+      const dates = [...(row.test?.test_dates || [])].sort((a, b) =>
+        String(a.date_proposee || "").localeCompare(String(b.date_proposee || ""))
+      );
+      return { ...row, test: { ...row.test, test_dates: dates } };
+    });
+    return { ok: true, invitations };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -96,9 +170,18 @@ export async function respondToInvitation({ invitationId, statut, dateChoisie = 
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
+  // Le refus efface toujours la date. Le trigger le force aussi.
+  const chosen =
+    statut === "refuse" ? null : String(dateChoisie || "").slice(0, 10);
+  if (statut === "confirme") {
+    const today = casablancaTodayIso();
+    if (!ISO_DATE.test(chosen) || !today || chosen <= today) {
+      return { ok: false, error: "يجب اختيار تاريخ لاحق" };
+    }
+  }
   const patch = {
     statut,
-    date_choisie: dateChoisie || null,
+    date_choisie: chosen,
   };
 
   try {
@@ -114,7 +197,54 @@ export async function respondToInvitation({ invitationId, statut, dateChoisie = 
       "تحديث الدعوة"
     );
     if (error) {
-      return { ok: false, error: mapTableError(error, "test_invitations") };
+      return {
+        ok: false,
+        error: invitationUpdateError(error) || mapTableError(error, "test_invitations"),
+      };
+    }
+    return { ok: true, invitation: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Admin : déplace un membre sur une autre date proposée, ou l'enregistre
+ * comme excusé. Le garde-fou laisse passer private.user_has_role('admin'),
+ * y compris pour une date déjà passée. RLS : test_invitations admin_all.
+ * @param {string} invitationId
+ * @param {{ statut: 'confirme'|'refuse', dateChoisie?: string|null }} payload
+ */
+export async function adminUpdateInvitation(invitationId, { statut, dateChoisie = null } = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!invitationId) {
+    return { ok: false, error: "معرّف الدعوة مفقود" };
+  }
+  if (!["confirme", "refuse"].includes(statut)) {
+    return { ok: false, error: "حالة غير صالحة — اختر تأكيد أو رفض" };
+  }
+  const chosen = statut === "refuse" ? null : String(dateChoisie || "").slice(0, 10);
+  if (statut === "confirme" && !ISO_DATE.test(chosen)) {
+    return { ok: false, error: "اختر تاريخاً للاختبار" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_invitations")
+        .update({ statut, date_choisie: chosen })
+        .eq("id", invitationId)
+        .select("*")
+        .single(),
+      SUPABASE_TIMEOUT_MS,
+      "تحديث الدعوة"
+    );
+    if (error) {
+      return {
+        ok: false,
+        error: invitationUpdateError(error) || mapTableError(error, "test_invitations"),
+      };
     }
     return { ok: true, invitation: data };
   } catch (e) {
@@ -165,7 +295,8 @@ export async function getMyTestResults() {
         .from("test_invitations")
         .select(MY_TEST_SELECT)
         .eq("membre_id", userId)
-        .eq("statut", "note"),
+        .eq("statut", "note")
+        .not("date_notification_resultat", "is", null),
       SUPABASE_TIMEOUT_MS,
       "قراءة نتائج الاختبار"
     );
@@ -181,15 +312,10 @@ export async function getMyTestResults() {
   }
 }
 
-export const TEST_TYPE_LABELS = {
-  hifz: "اختبار الحفظ",
-  sunnah: "حفاظ السنة",
-};
-
 /**
  * (Admin) Crée un test de saison puis invite tous les membres acceptés
  * dans une séance de cette saison. saisonId est obligatoire.
- * @param {object} payload { saisonId, titre, type, quranQuantity? }
+ * @param {object} payload { saisonId, titre, type, quranQuantity?, dates: { date, heure }[] }
  * @returns { ok, test?, invitations?, invitedCount? }
  */
 export async function createTest({
@@ -197,6 +323,7 @@ export async function createTest({
   titre = null,
   type = "hifz",
   quranQuantity = null,
+  dates = [],
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -211,8 +338,10 @@ export async function createTest({
     return { ok: false, error: "أدخل عنوان الاختبار" };
   }
   if (testType === "hifz" && !String(quranQuantity || "").trim()) {
-    return { ok: false, error: "أدخل كمية القرآن المراد تقييمها" };
+    return { ok: false, error: "مقدار الحفظ إلزامي لاختبار الحفظ" };
   }
+  const proposed = normalizeProposedDates(dates);
+  if (!proposed.ok) return proposed;
   const userId = await currentAuthId();
   if (!userId) {
     return { ok: false, error: "يجب تسجيل الدخول" };
@@ -234,6 +363,25 @@ export async function createTest({
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "tests") };
+    }
+
+    const { error: datesError } = await withTimeout(
+      supabase.from("test_dates").insert(
+        proposed.dates.map((slot) => ({
+          test_id: data.id,
+          date_proposee: slot.date,
+          heure_proposee: slot.heure,
+        }))
+      ),
+      SUPABASE_TIMEOUT_MS,
+      "حفظ تواريخ الاختبار"
+    );
+    if (datesError) {
+      await supabase.from("tests").delete().eq("id", data.id);
+      if (datesError.code === "23505" || /duplicate key|23505/i.test(datesError.message || "")) {
+        return { ok: false, error: "هذا التاريخ مضاف مسبقاً" };
+      }
+      return { ok: false, error: mapTableError(datesError, "test_dates") };
     }
 
     const { data: accepted, error: membersError } = await withTimeout(
@@ -274,7 +422,8 @@ export async function createTest({
       "إرسال الدعوات"
     );
     if (inviteError) {
-      return { ok: false, error: mapTableError(inviteError, "test_invitations"), test: data };
+      await supabase.from("tests").delete().eq("id", data.id);
+      return { ok: false, error: mapTableError(inviteError, "test_invitations") };
     }
     const invited = invitations || [];
     return { ok: true, test: data, invitations: invited, invitedCount: invited.length };
@@ -371,16 +520,20 @@ export async function recordTestResult({ invitationId, note }) {
 export function mapTestToDashboardExam(test) {
   const statut = test?.statut;
   return {
-    id: test.id,
-    title: test.titre || "اختبار",
+    id: test?.id,
+    title: test?.titre || "اختبار",
     status:
       statut === "annule"
         ? "cancelled"
         : statut === "termine"
           ? "completed"
           : "planned",
-    createdAt: test.created_at || null,
-    date: test.created_at || null,
+    createdAt: test?.created_at || null,
+    date: test?.created_at || null,
+    statut,
+    test_dates: Array.isArray(test?.test_dates) ? test.test_dates : [],
+    invitations: Array.isArray(test?.invitations) ? test.invitations : [],
+    displayStatus: getTestDisplayStatus(test),
   };
 }
 
@@ -398,14 +551,19 @@ export function mapMemberTestToExam(row) {
   };
 }
 
-/** Compteur admin (head request). */
-export async function countTestsAdmin() {
+/**
+ * Compteur admin (head request).
+ * statut optionnel : sans argument, tous les tests (tableau de bord).
+ */
+export async function countTestsAdmin(statut = null) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل", count: 0 };
   }
   try {
+    let query = supabase.from("tests").select("id", { count: "exact", head: true });
+    if (statut) query = query.eq("statut", statut);
     const { count, error } = await withTimeout(
-      supabase.from("tests").select("id", { count: "exact", head: true }),
+      query,
       SUPABASE_TIMEOUT_MS,
       "عدّ الاختبارات"
     );
@@ -422,6 +580,11 @@ export async function countTestsAdmin() {
   }
 }
 
+/** Tests encore au statut planifie : badge du menu admin. */
+export function countPlannedTestsAdmin() {
+  return countTestsAdmin("planifie");
+}
+
 /** Derniers tests pour le fil d'activité admin. */
 export async function listRecentTestsAdmin(limit = 10) {
   if (!isSupabaseConfigured()) {
@@ -432,7 +595,9 @@ export async function listRecentTestsAdmin(limit = 10) {
     const { data, error } = await withTimeout(
       supabase
         .from("tests")
-        .select("id, titre, statut, created_at, saison_id")
+        .select(
+          "id, titre, statut, created_at, saison_id, test_dates(date_proposee), invitations:test_invitations!test_invitations_test_id_fkey(statut)"
+        )
         .order("created_at", { ascending: false })
         .limit(take),
       SUPABASE_TIMEOUT_MS,
@@ -452,6 +617,140 @@ export async function listRecentTestsAdmin(limit = 10) {
 }
 
 /**
+ * (Admin) Ajoute une date proposée, strictement future à Casablanca, avec son heure.
+ * @returns { ok, date? }
+ */
+export async function addTestDate(testId, date, heure) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود" };
+  }
+  const proposed = normalizeProposedDates([{ date, heure }]);
+  if (!proposed.ok) return proposed;
+  const slot = proposed.dates[0];
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_dates")
+        .insert({
+          test_id: testId,
+          date_proposee: slot.date,
+          heure_proposee: slot.heure,
+        })
+        .select("*")
+        .single(),
+      SUPABASE_TIMEOUT_MS,
+      "إضافة تاريخ"
+    );
+    if (error) {
+      if (error.code === "23505" || /duplicate key|23505/i.test(error.message || "")) {
+        return { ok: false, error: "هذا التاريخ مضاف مسبقاً" };
+      }
+      return { ok: false, error: mapTableError(error, "test_dates") };
+    }
+    return { ok: true, date: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Change l'heure d'une date déjà proposée. La date elle-même ne bouge pas.
+ * @returns { ok, date? }
+ */
+export async function updateTestDateHeure(testDateId, heure) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!testDateId) {
+    return { ok: false, error: "معرّف التاريخ مفقود" };
+  }
+  const formatted = formatTestTime(heure);
+  if (!formatted) {
+    return { ok: false, error: "اختر ساعة للاختبار" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_dates")
+        .update({ heure_proposee: formatted })
+        .eq("id", testDateId)
+        .select("*")
+        .single(),
+      SUPABASE_TIMEOUT_MS,
+      "تعديل وقت الاختبار"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "test_dates") };
+    }
+    return { ok: true, date: data };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Retire une date proposée. Refusé si un membre l'a déjà choisie (23503).
+ * @returns { ok }
+ */
+export async function removeTestDate(testDateId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!testDateId) {
+    return { ok: false, error: "معرّف التاريخ مفقود" };
+  }
+  try {
+    const { error } = await withTimeout(
+      supabase.from("test_dates").delete().eq("id", testDateId),
+      SUPABASE_TIMEOUT_MS,
+      "حذف تاريخ"
+    );
+    if (error) {
+      if (error.code === "23503" || /23503|foreign key/i.test(error.message || "")) {
+        return { ok: false, error: "لا يمكن حذف تاريخ اختاره أحد الأعضاء" };
+      }
+      return { ok: false, error: mapTableError(error, "test_dates") };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Dates proposées d'un test, triées.
+ * @returns { ok, dates }
+ */
+export async function getTestDates(testId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_dates")
+        .select("id, test_id, date_proposee, heure_proposee, created_at")
+        .eq("test_id", testId)
+        .order("date_proposee", { ascending: true }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تواريخ الاختبار"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "test_dates") };
+    }
+    return { ok: true, dates: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
  * (Admin) Tous les tests, avec la séance et les invitations jointes.
  * RLS : tests_admin_all / inscriptions via private.is_admin() (0009).
  * @returns { ok, tests }
@@ -465,7 +764,7 @@ export async function getAllTestsAdmin() {
       supabase
         .from("tests")
         .select(
-          "*, saison:saisons!tests_saison_id_fkey(id, name), invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie)"
+          "*, saison:saisons!tests_saison_id_fkey(id, name), invitations:test_invitations!test_invitations_test_id_fkey(id, statut, date_choisie), test_dates(date_proposee)"
         )
         .order("created_at", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
