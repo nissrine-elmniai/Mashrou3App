@@ -27,7 +27,7 @@ import { NOTIF_CATEGORY } from "../../constants/notifications";
 import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
 import { getMyObjectif } from "../../lib/objectifsApi";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextCenter, row, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextBold, rtlTextCenter, row, fonts } from "../../constants/rtl";
 import {
   StatCard,
   SectionCard,
@@ -1179,7 +1179,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
               valueColor={colors.gold}
             />
 
-            <SectionCard title="تنبيهات الإدارة">
+            <SectionCard>
+              <AdminAlertsSectionTitle alert={adminAlerts[0] || null} />
               {adminAlerts.length === 0 ? (
                 <EmptyState text="لا توجد تنبيهات جديدة" />
               ) : (
@@ -1191,15 +1192,6 @@ export default function MemberDashboardScreen({ navigation, route }) {
                       key={n.id}
                       style={[styles.activityRow, !isLast && styles.activityRowBorder]}
                     >
-                      <ProfileAvatar
-                        userId={n.senderId || null}
-                        avatarUrl={n.senderAvatarUrl}
-                        cacheKey={n.senderAvatarUrl || n.senderId}
-                        fallbackLetter={n.senderInitial || "إ"}
-                        size={28}
-                        softBackgroundColor={colors.primarySoft}
-                        letterColor={colors.primary}
-                      />
                       <View style={styles.activityBody}>
                         <View style={styles.activityHead}>
                           <Text style={styles.activityTitle} numberOfLines={1}>
@@ -1369,6 +1361,50 @@ export default function MemberDashboardScreen({ navigation, route }) {
   );
 }
 
+const ALERTS_AVATAR_SIZE = 28;
+const ALERTS_TITLE_GAP = 8;
+const ALERTS_LINE_LEAD = 10;
+
+/** Filet or : du centre de l'avatar jusqu'à 30 % du titre. */
+function AdminAlertsSectionTitle({ alert }) {
+  const [titleWidth, setTitleWidth] = useState(0);
+  const lineInset = ALERTS_LINE_LEAD + ALERTS_AVATAR_SIZE / 2;
+  const lineWidth = ALERTS_AVATAR_SIZE / 2 + ALERTS_TITLE_GAP + titleWidth * 0.3;
+
+  return (
+    <View style={styles.alertsTitleWrap}>
+      <View style={styles.alertsTitleRow}>
+        <View style={styles.alertsLineLead} />
+        <ProfileAvatar
+          userId={alert?.senderId || null}
+          avatarUrl={alert?.senderAvatarUrl}
+          cacheKey={alert?.senderAvatarUrl || alert?.senderId}
+          fallbackLetter={alert?.senderInitial || "إ"}
+          size={ALERTS_AVATAR_SIZE}
+          softBackgroundColor={colors.primarySoft}
+          letterColor={colors.primary}
+        />
+        <View style={styles.alertsTitleGap} />
+        <Text
+          style={styles.alertsTitle}
+          onLayout={(e) => {
+            const next = e.nativeEvent.layout.width;
+            setTitleWidth((prev) => (prev === next ? prev : next));
+          }}
+        >
+          تنبيهات الإدارة
+        </Text>
+      </View>
+      <View
+        style={[
+          styles.alertsTitleLine,
+          { width: lineWidth, marginRight: lineInset },
+        ]}
+      />
+    </View>
+  );
+}
+
 function ActivityCard({ activity, onPress, isLast }) {
   const when = formatActivityWhen(activity.at);
   const body = String(activity.body || "").trim();
@@ -1517,6 +1553,33 @@ const styles = StyleSheet.create({
     ...rtlTextCenter,
   },
 
+  alertsTitleWrap: {
+    alignItems: alignEdge,
+    marginBottom: 4,
+  },
+  alertsTitleRow: {
+    flexDirection: row,
+    alignItems: "center",
+  },
+  alertsLineLead: {
+    width: ALERTS_LINE_LEAD,
+  },
+  alertsTitleGap: {
+    width: ALERTS_TITLE_GAP,
+  },
+  alertsTitle: {
+    fontSize: 18,
+    fontFamily: fonts.bold,
+    color: colors.primary,
+    ...rtlTextBold,
+  },
+  alertsTitleLine: {
+    height: 3,
+    backgroundColor: colors.gold,
+    borderRadius: 2,
+    marginTop: 6,
+    marginBottom: 10,
+  },
   activityLoading: {
     paddingVertical: 20,
     alignItems: "center",

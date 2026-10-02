@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
@@ -57,7 +57,11 @@ const NAV_TABS = [
  * Conteneur léger : header + bottomBar communs, état `tab` pour basculer entre
  * les écrans supervisor. Un seul appel useSupervisorMembers() pour toute la zone.
  */
+const MIN_BOTTOM_GAP = 16;
+
 export default function SupervisorDashboard({ navigation }) {
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, MIN_BOTTOM_GAP);
   const { currentUser, logout, seasons } = useApp();
 
   const [tab, setTab] = useState("home");
@@ -94,10 +98,13 @@ export default function SupervisorDashboard({ navigation }) {
 
   const { threads } = useInboxThreads();
   const { groups: chatGroups } = useChatGroups();
-  const unseenConversations = useMemo(
-    () => countUnseenConversations(threads, chatGroups),
-    [threads, chatGroups]
-  );
+  const unseenConversations = useMemo(() => {
+    const seanceId = activeGroup?.id || null;
+    const groupsForSeance = seanceId
+      ? (chatGroups || []).filter((g) => g.seanceId === seanceId)
+      : [];
+    return countUnseenConversations(threads, groupsForSeance);
+  }, [threads, chatGroups, activeGroup]);
 
   const fullName = currentUser?.firstName?.trim() || "";
 
@@ -192,10 +199,7 @@ export default function SupervisorDashboard({ navigation }) {
   );
 
   return (
-    <SafeAreaView
-      style={[styles.container, { paddingBottom: 16 }]}
-      edges={["top", "bottom"]}
-    >
+    <SafeAreaView style={styles.container} edges={["top"]}>
       <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
 
       {tab === "home" && (
@@ -313,7 +317,7 @@ export default function SupervisorDashboard({ navigation }) {
         )}
       </View>
 
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { paddingBottom: bottomPad }]}>
         {NAV_TABS.map((t) => {
           const isActive = tab === t.key;
           const showUnread = t.key === "messages" && unseenConversations > 0;
@@ -464,8 +468,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+    paddingTop: 10,
   },
-  bottomBarItem: { flex: 1, paddingVertical: 10, alignItems: "center", gap: 2 },
+  bottomBarItem: { flex: 1, alignItems: "center", gap: 2 },
   bottomBarIconWrap: { position: "relative" },
   bottomBarLabel: { fontSize: 11, color: colors.placeholder, fontFamily: fonts.medium },
   bottomBarLabelActive: { color: colors.primary },

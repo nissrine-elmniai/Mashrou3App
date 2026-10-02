@@ -330,7 +330,7 @@ export async function getGroupMessages(groupId) {
           "id, group_id, sender_id, contenu, image_url, created_at, sender:profiles!chat_group_messages_sender_id_fkey(id, first_name, last_name, avatar_url)"
         )
         .eq("group_id", groupId)
-        .order("created_at", { ascending: true })
+        .order("created_at", { ascending: false })
         .limit(200),
       SUPABASE_TIMEOUT_MS,
       "قراءة محادثة المجموعة"
@@ -342,7 +342,9 @@ export async function getGroupMessages(groupId) {
         messages: [],
       };
     }
-    return { ok: true, messages: data || [] };
+    // Desc + limite = les 200 plus récents. L'écran les affiche du plus ancien au plus récent.
+    const newestFirst = data || [];
+    return { ok: true, messages: [...newestFirst].reverse() };
   } catch (e) {
     return {
       ok: false,
@@ -570,158 +572,6 @@ export async function getGroupMembers(groupId) {
   }
 }
 
-/**
- * Inscrits acceptés de la séance absents du groupe (pour ajout manuel).
- */
-export async function getEligibleMembers(groupId) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل", members: [] };
-  }
-  if (!groupId || !UUID_RE.test(groupId)) {
-    return { ok: false, error: "المجموعة غير محددة", members: [] };
-  }
-
-  try {
-    const { data: group, error: gError } = await withTimeout(
-      supabase
-        .from("chat_groups")
-        .select("id, seance_id")
-        .eq("id", groupId)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة المجموعة"
-    );
-    if (gError) {
-      return {
-        ok: false,
-        error: mapTableError(gError, "chat_groups"),
-        members: [],
-      };
-    }
-    if (!group?.seance_id) {
-      return { ok: false, error: "المجموعة غير موجودة", members: [] };
-    }
-
-    const { data: current, error: cError } = await withTimeout(
-      supabase
-        .from("chat_group_members")
-        .select("membre_id")
-        .eq("group_id", groupId),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة أعضاء المجموعة"
-    );
-    if (cError) {
-      return {
-        ok: false,
-        error: mapTableError(cError, "chat_group_members"),
-        members: [],
-      };
-    }
-    const inGroup = new Set((current || []).map((r) => r.membre_id));
-
-    const { data: inscriptions, error: iError } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select(
-          `membre_id, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email, avatar_url)`
-        )
-        .eq("seance_id", group.seance_id)
-        .eq("statut", "accepte"),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة أعضاء الحصة"
-    );
-    if (iError) {
-      return {
-        ok: false,
-        error: mapTableError(iError, "inscriptions"),
-        members: [],
-      };
-    }
-
-    const members = (inscriptions || [])
-      .map((row) => {
-        const p = row.membre;
-        if (!p?.id || inGroup.has(p.id)) return null;
-        const name =
-          `${p.first_name || ""} ${p.last_name || ""}`.trim() ||
-          p.email ||
-          "—";
-        return {
-          id: p.id,
-          name,
-          firstName: p.first_name || "",
-          lastName: p.last_name || "",
-          avatarUrl: resolvePublicAvatarUrl(p.id, p.avatar_url),
-        };
-      })
-      .filter(Boolean);
-
-    members.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar"));
-    return { ok: true, members };
-  } catch (e) {
-    return {
-      ok: false,
-      error: e?.message || "تعذر الاتصال بـ Supabase",
-      members: [],
-    };
-  }
-}
-
-export async function addGroupMember({ groupId, membreId }) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  if (!groupId || !UUID_RE.test(groupId) || !membreId || !UUID_RE.test(membreId)) {
-    return { ok: false, error: "بيانات غير مكتملة" };
-  }
-
-  try {
-    const { error } = await withTimeout(
-      supabase.from("chat_group_members").insert({
-        group_id: groupId,
-        membre_id: membreId,
-        role: "member",
-      }),
-      SUPABASE_TIMEOUT_MS,
-      "إضافة عضو للمجموعة"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "chat_group_members") };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
-export async function removeGroupMember({ groupId, membreId }) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  if (!groupId || !UUID_RE.test(groupId) || !membreId || !UUID_RE.test(membreId)) {
-    return { ok: false, error: "بيانات غير مكتملة" };
-  }
-
-  try {
-    const { error } = await withTimeout(
-      supabase
-        .from("chat_group_members")
-        .delete()
-        .eq("group_id", groupId)
-        .eq("membre_id", membreId)
-        .neq("role", "admin"),
-      SUPABASE_TIMEOUT_MS,
-      "إزالة عضو من المجموعة"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "chat_group_members") };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
 export async function updateGroupName({ groupId, nom }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -731,7 +581,10 @@ export async function updateGroupName({ groupId, nom }) {
     return { ok: false, error: "المجموعة غير محددة" };
   }
   if (!name) {
-    return { ok: false, error: "اكتب اسم المجموعة" };
+    return { ok: false, error: "اسم المجموعة لا يمكن أن يكون فارغًا" };
+  }
+  if (name.length > 60) {
+    return { ok: false, error: "اسم المجموعة أطول من 60 حرفًا" };
   }
 
   try {
@@ -802,7 +655,7 @@ export async function getChatGroup(groupId) {
       group: {
         id: group.id,
         seanceId: group.seance_id,
-        name: group.nom,
+        name: group.nom || "مجموعة الحصة",
         avatarUrl: resolvePublicGroupAvatarUrl(group.id, group.avatar_url),
         myRole: membership?.role || null,
         isAdmin: membership?.role === "admin",
