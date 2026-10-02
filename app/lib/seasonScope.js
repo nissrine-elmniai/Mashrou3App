@@ -48,10 +48,22 @@ export function filterSeancesForSeason(seances = [], seasonId) {
   );
 }
 
+/**
+ * Superviseurs d'une séance active de CETTE saison.
+ * Une séance archivée, inactive, ou sans saison_id ne compte pas :
+ * son profil peut encore avoir role = 'supervisor' (compte +supervisor
+ * ou séance d'un musim précédent) sans figurer dans « المشرفون ».
+ */
 export function supervisorIdsForSeason(seances = [], seasonId) {
+  if (!seasonId) return new Set();
   return new Set(
-    filterSeancesForSeason(seances, seasonId)
+    (seances || [])
+      .filter(
+        (s) =>
+          s.statut === "active" &&
+          s.saison_id === seasonId &&
+          s.superviseur_id
+      )
       .map((s) => s.superviseur_id)
-      .filter(Boolean)
   );
 }

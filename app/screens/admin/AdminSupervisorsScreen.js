@@ -21,17 +21,17 @@ import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
 import {
   getSupervisorProfiles,
-  getActiveSupervisors,
   getAllSeances,
+  excludeDuplicateSupervisorAccounts,
 } from "../../lib/seancesApi";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getActiveRegularSeason, supervisorIdsForSeason } from "../../lib/seasonScope";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { canonicalEmail } from "../../lib/authEmail";
 import {
   createSupervisorInvitation,
   listSupervisorInvitations,
   revokeSupervisorInvitation,
-  deleteSupervisorAccount,
+  reassignAndRemoveSupervisor,
   syncSupervisorSeanceLinks,
 } from "../../lib/supervisorInvitationsApi";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
@@ -87,6 +87,10 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
+  const [roster, setRoster] = useState([]);
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [replacementId, setReplacementId] = useState(null);
+  const [removing, setRemoving] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -106,16 +110,24 @@ export default function AdminSupervisorsScreen({ navigation }) {
     ]);
     if (supRes.ok) {
       await syncSupervisorSeanceLinks(supRes.supervisors);
-      const [refreshedSeances, activeRes] = await Promise.all([
-        getAllSeances({ saisonId }),
-        getActiveSupervisors({ saisonId }),
-      ]);
-      setSupervisors(activeRes.ok ? activeRes.supervisors : []);
-      if (refreshedSeances.ok) setSeances(refreshedSeances.seances);
-      else if (seaRes.ok) setSeances(seaRes.seances);
+      const refreshedSeances = await getAllSeances({ saisonId });
+      const seanceRows = refreshedSeances.ok
+        ? refreshedSeances.seances
+        : seaRes.ok
+          ? seaRes.seances
+          : [];
+      const ids = supervisorIdsForSeason(seanceRows, saisonId);
+      const visible = excludeDuplicateSupervisorAccounts(
+        supRes.supervisors,
+        ids
+      ).filter((s) => s.account_status === "active" || ids.has(s.id));
+      setSupervisors(visible);
+      setRoster(visible);
+      setSeances(seanceRows);
     } else if (seaRes.ok) {
       setSeances(seaRes.seances);
       setSupervisors([]);
+      setRoster([]);
     }
     if (invRes.ok) setInvitations(invRes.invitations);
     setLoading(false);
@@ -232,30 +244,84 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const confirmDelete = (supervisor) => {
+    const linked = seances.filter(
+      (s) => s.superviseur_id === supervisor.id && s.statut !== "archivee"
+    );
+    if (linked.length > 1) {
+      Alert.alert(
+        "تعذر الحذف",
+        "هذا المشرف مرتبط بعدة حصص في هذا الموسم. أعد إسناد كل حصة من صفحة الحصص، ثم أعد الحذف."
+      );
+      return;
+    }
+    if (linked.length === 1) {
+      setReplacementId(null);
+      setRemoveTarget(supervisor);
+      return;
+    }
+
     const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
     Alert.alert(
       "حذف المشرف",
-      `هل تريد حذف «${name || supervisor.email}» نهائياً؟ سيُحذف حسابه وكل بياناته المرتبطة.`,
+      `«${name || supervisor.email}» غير مرتبط بأي حصة في الموسم الحالي. إذا بقيت له حصص مؤرشفة، يُعطّل حسابه ويبقى اسمه في السجل. وإلا يُحذف الحساب نهائياً.`,
       [
         { text: "إلغاء", style: "cancel" },
         {
-          text: "حذف",
+          text: "متابعة",
           style: "destructive",
-          onPress: async () => {
-            const result = await deleteSupervisorAccount({
-              userId: supervisor.id,
-            });
-            if (!result.ok) {
-              Alert.alert("خطأ", result.error);
-              return;
-            }
-            Alert.alert("تم الحذف", "تم حذف المشرف بنجاح");
-            loadAll();
-          },
+          onPress: () => finishRemoval(supervisor, null, null),
         },
       ]
     );
   };
+
+  const finishRemoval = async (supervisor, seanceId, nextSupervisorId) => {
+    setRemoving(true);
+    const result = await reassignAndRemoveSupervisor({
+      userId: supervisor.id,
+      seanceId,
+      replacementId: nextSupervisorId,
+    });
+    setRemoving(false);
+    if (!result.ok) {
+      Alert.alert("خطأ", result.error);
+      return;
+    }
+    setRemoveTarget(null);
+    setReplacementId(null);
+    Alert.alert(
+      "تم",
+      result.mode === "deleted"
+        ? "تم حذف الحساب لأنه لم يكن مرتبطاً بأي حصة."
+        : "تم سحب المشرف من الموسم الحالي وتعطيل حسابه. الحصص المؤرشفة بقيت في السجل."
+    );
+    loadAll();
+  };
+
+  const removalSeance = useMemo(() => {
+    if (!removeTarget) return null;
+    return (
+      seances.find(
+        (s) =>
+          s.superviseur_id === removeTarget.id && s.statut !== "archivee"
+      ) || null
+    );
+  }, [removeTarget, seances, activeSeason?.id]);
+
+  const replacementOptions = useMemo(() => {
+    if (!removeTarget) return [];
+    const busy = new Set(
+      seances
+        .filter((s) => s.statut !== "archivee" && s.superviseur_id)
+        .map((s) => s.superviseur_id)
+    );
+    return roster.filter(
+      (s) =>
+        s.id !== removeTarget.id &&
+        s.account_status !== "inactive" &&
+        !busy.has(s.id)
+    );
+  }, [removeTarget, roster, seances]);
 
   const openSupervisorDetail = (supervisor) => {
     navigation.navigate("AdminSupervisorDetail", {
@@ -604,6 +670,92 @@ export default function AdminSupervisorsScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={!!removeTarget}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!removing) setRemoveTarget(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (!removing) setRemoveTarget(null);
+            }}
+          />
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>حذف المشرف</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!removing) setRemoveTarget(null);
+                }}
+                hitSlop={12}
+              >
+                <X size={22} color={palette.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalHint}>
+              {`هذا المشرف مسؤول عن حصة «${removalSeance?.nom || "الحصة"}». الحصة لا تبقى بدون مسؤول. اختر مشرفاً غير مكلّف بحصة أخرى، ثم يُسحب الحساب الحالي. الحصص المؤرشفة تبقى في السجل.`}
+            </Text>
+            <Text style={styles.modalFieldLabel}>المشرف الجديد</Text>
+            {replacementOptions.length === 0 ? (
+              <Text style={styles.modalHint}>
+                لا يوجد مشرف آخر متاح. أضف مشرفاً غير مكلّف بحصة، أو ألغِ الحذف.
+              </Text>
+            ) : (
+              <View style={styles.seancePicker}>
+                {replacementOptions.map((s) => {
+                  const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
+                  const selected = replacementId === s.id;
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.seanceChip, selected && styles.seanceChipActive]}
+                      onPress={() => setReplacementId(s.id)}
+                    >
+                      <Text
+                        style={[
+                          styles.seanceChipText,
+                          selected && styles.seanceChipTextActive,
+                        ]}
+                      >
+                        {name || s.email}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+            <TouchableOpacity
+              style={[
+                styles.modalSubmit,
+                styles.modalSubmitDanger,
+                (removing || !replacementId) && { opacity: 0.6 },
+              ]}
+              onPress={
+                removing || !replacementId || !removeTarget || !removalSeance?.id
+                  ? undefined
+                  : () =>
+                      finishRemoval(removeTarget, removalSeance.id, replacementId)
+              }
+            >
+              <Text style={styles.modalSubmitText}>
+                {removing ? "جاري الحذف..." : "إعادة الإسناد ثم الحذف"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCancel}
+              onPress={removing ? undefined : () => setRemoveTarget(null)}
+            >
+              <Text style={styles.modalCancelText}>إلغاء</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       {messagesFab}
       {sidebar}
     </SafeAreaView>
@@ -899,6 +1051,19 @@ const styles = StyleSheet.create({
   modalSubmitText: {
     color: "#fff",
     fontWeight: "700",
+    fontSize: 15,
+  },
+  modalSubmitDanger: {
+    backgroundColor: palette.red,
+  },
+  modalCancel: {
+    marginTop: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  modalCancelText: {
+    color: palette.textSecondary,
+    fontWeight: "600",
     fontSize: 15,
   },
 });

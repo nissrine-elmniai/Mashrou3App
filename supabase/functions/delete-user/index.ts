@@ -79,6 +79,35 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
 
+    // seances.superviseur_id est NOT NULL (schéma live) alors que la FK est
+    // ON DELETE SET NULL. deleteUser échoue alors avec une violation
+    // not-null. On refuse avant, avec le nom des séances concernées.
+    const { data: ownedSeances, error: seanceLookupError } = await admin
+      .from("seances")
+      .select("nom")
+      .eq("superviseur_id", userId);
+    if (seanceLookupError) {
+      console.error("lookup seances:", seanceLookupError.message);
+    } else if (ownedSeances && ownedSeances.length > 0) {
+      const labels = ownedSeances
+        .map((row) => String(row.nom || "").trim())
+        .filter(Boolean)
+        .map((nom) => `«${nom}»`);
+      const detail =
+        labels.length === 1
+          ? `بحصة ${labels[0]}`
+          : labels.length > 1
+            ? `بالحصص ${labels.join("، ")}`
+            : "بحصة";
+      return json(
+        {
+          ok: false,
+          error: `لا يمكن حذف هذا المشرف لأنه مرتبط ${detail}. عيّن مشرفاً آخر من صفحة المواسم، ثم أعد الحذف.`,
+        },
+        409
+      );
+    }
+
     // Purgé des FK NO ACTION (messages / tests / test_resultats) :
     // ordre dépendant avant la cascade auth -> profiles.
     const { error: msgError } = await admin
@@ -105,8 +134,22 @@ Deno.serve(async (req) => {
 
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError) {
+      const detail = deleteError.message || "";
+      if (
+        /superviseur_id/i.test(detail) &&
+        /not-null|null value|foreign key|23502|23503/i.test(detail)
+      ) {
+        return json(
+          {
+            ok: false,
+            error:
+              "لا يمكن حذف هذا المشرف لأنه مرتبط بحصة. عيّن مشرفاً آخر من صفحة المواسم، ثم أعد الحذف.",
+          },
+          409
+        );
+      }
       return json(
-        { ok: false, error: `فشل حذف الحساب: ${deleteError.message}` },
+        { ok: false, error: `فشل حذف الحساب: ${detail}` },
         502
       );
     }

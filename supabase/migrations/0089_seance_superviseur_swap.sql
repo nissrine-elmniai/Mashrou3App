@@ -140,17 +140,6 @@ begin
     from public.seances s
     where s.superviseur_id = p_superviseur_id
       and s.id <> p_seance_id
-      and s.saison_id is distinct from v_a_saison
-      and s.statut <> 'archivee'::public.seance_statut_enum
-  ) then
-    raise exception 'SUPERVISEUR_AUTRE_SAISON' using errcode = 'P0001';
-  end if;
-
-  if exists (
-    select 1
-    from public.seances s
-    where s.superviseur_id = p_superviseur_id
-      and s.id <> p_seance_id
       and s.saison_id = v_a_saison
       and s.statut = 'archivee'::public.seance_statut_enum
   ) then
@@ -200,6 +189,193 @@ $$;
 
 revoke all on function public.assign_or_swap_seance_superviseur(uuid, uuid) from public;
 grant execute on function public.assign_or_swap_seance_superviseur(uuid, uuid) to authenticated;
+
+-- L'application met à jour une seule ligne. Sans ce déclencheur, le COMMIT
+-- refuse le doublon (23505) et l'écran affiche « سجل مكرر ».
+-- Le déclencheur déplace d'abord l'autre séance de la même saison,
+-- dans la même transaction. Les saisons précédentes ne sont pas touchées.
+create or replace function public.swap_seance_superviseur_before()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_other uuid;
+begin
+  if new.superviseur_id is not distinct from old.superviseur_id then
+    return new;
+  end if;
+
+  if current_setting('mashrou3.seance_supervisor_swap', true) = 'on' then
+    return new;
+  end if;
+
+  if not private.is_admin() then
+    return new;
+  end if;
+
+  if new.statut = 'archivee'::public.seance_statut_enum then
+    return new;
+  end if;
+
+  select s.id
+    into v_other
+  from public.seances s
+  where s.superviseur_id = new.superviseur_id
+    and s.id <> new.id
+    and s.saison_id is not distinct from new.saison_id
+    and s.statut <> 'archivee'::public.seance_statut_enum
+  order by s.id
+  limit 1
+  for update;
+
+  if v_other is null then
+    return new;
+  end if;
+
+  perform set_config('mashrou3.seance_supervisor_swap', 'on', true);
+  set constraints seances_saison_id_superviseur_id_key deferred;
+
+  update public.seances
+  set superviseur_id = old.superviseur_id,
+      updated_at = now()
+  where id = v_other;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.swap_seance_superviseur_before() from public;
+
+drop trigger if exists seances_swap_superviseur on public.seances;
+create trigger seances_swap_superviseur
+  before update of superviseur_id on public.seances
+  for each row
+  execute function public.swap_seance_superviseur_before();
+
+-- Après l'enregistrement : chaque séance dont le superviseur change
+-- notifie le nouveau responsable et les membres acceptés de cette séance.
+-- Une permutation met à jour deux lignes, donc les deux superviseurs et
+-- les membres des deux séances sont prévenus.
+create or replace function private.notify_seance_superviseur()
+returns trigger
+language plpgsql
+security definer
+set search_path to public
+as $$
+declare
+  v_membre_id uuid;
+  v_actor     uuid := auth.uid();
+  v_stamp     text := extract(epoch from clock_timestamp())::bigint::text;
+  v_nom       text;
+  v_creneau   text;
+  v_sup_nom   text;
+begin
+  v_nom     := coalesce(nullif(trim(new.nom), ''), 'الحصة');
+  v_creneau := private.seance_creneau_label(new.jour, new.heure_debut, new.heure_fin);
+
+  select coalesce(
+    nullif(trim(both from concat_ws(' ', p.first_name, p.last_name)), ''),
+    nullif(trim(p.email), ''),
+    'المشرف'
+  )
+    into v_sup_nom
+  from public.profiles p
+  where p.id = new.superviseur_id;
+
+  if new.superviseur_id is distinct from v_actor then
+    begin
+      insert into public.notifications (
+        user_id, category, event_type, title, body,
+        payload, source_table, source_id
+      )
+      values (
+        new.superviseur_id, 'seances', 'seance_superviseur_affecte',
+        'حصة جديدة تحت إشرافك',
+        format('تم إسناد حصة «%s» إليك (%s). هذه الحصة تحت إشرافك الآن.', v_nom, v_creneau),
+        jsonb_build_object(
+          'event_type', 'seance_superviseur_affecte',
+          'seance_id', new.id,
+          'seance_nom', v_nom
+        ),
+        'seances', new.id::text || ':sup_new:' || v_stamp
+      );
+    exception
+      when unique_violation then null;
+      when others then
+        raise notice 'notify_seance_superviseur (nouveau): %', SQLERRM;
+    end;
+  end if;
+
+  if old.superviseur_id is distinct from v_actor
+     and old.superviseur_id is distinct from new.superviseur_id then
+    begin
+      insert into public.notifications (
+        user_id, category, event_type, title, body,
+        payload, source_table, source_id
+      )
+      values (
+        old.superviseur_id, 'seances', 'seance_superviseur_retire',
+        'إنهاء الإشراف',
+        format('لم تعد حصة «%s» تحت إشرافك.', v_nom),
+        jsonb_build_object('event_type', 'seance_superviseur_retire'),
+        'seances', new.id::text || ':sup_old:' || v_stamp
+      );
+    exception
+      when unique_violation then null;
+      when others then
+        raise notice 'notify_seance_superviseur (ancien): %', SQLERRM;
+    end;
+  end if;
+
+  for v_membre_id in
+    select i.membre_id
+    from public.inscriptions i
+    where i.seance_id = new.id
+      and i.statut = 'accepte'::inscription_statut_enum
+      and i.membre_id is not null
+  loop
+    if v_membre_id is distinct from v_actor
+       and v_membre_id is distinct from new.superviseur_id then
+      begin
+        insert into public.notifications (
+          user_id, category, event_type, title, body,
+          payload, source_table, source_id
+        )
+        values (
+          v_membre_id, 'seances', 'seance_superviseur_change',
+          'تغيير المشرف',
+          format('حصة «%s» أصبحت تحت إشراف %s.', v_nom, v_sup_nom),
+          jsonb_build_object(
+            'event_type', 'seance_superviseur_change',
+            'seance_id', new.id,
+            'seance_nom', v_nom,
+            'superviseur_id', new.superviseur_id
+          ),
+          'seances', new.id::text || ':sup_chg:' || v_membre_id::text || ':' || v_stamp
+        );
+      exception
+        when unique_violation then null;
+        when others then
+          raise notice 'notify_seance_superviseur (membre): %', SQLERRM;
+      end;
+    end if;
+  end loop;
+
+  return new;
+end;
+$$;
+
+revoke all on function private.notify_seance_superviseur() from public;
+grant execute on function private.notify_seance_superviseur() to postgres, service_role;
+
+drop trigger if exists notify_seances_superviseur on public.seances;
+create trigger notify_seances_superviseur
+  after update of superviseur_id on public.seances
+  for each row
+  when (new.superviseur_id is distinct from old.superviseur_id)
+  execute function private.notify_seance_superviseur();
 
 notify pgrst, 'reload schema';
 

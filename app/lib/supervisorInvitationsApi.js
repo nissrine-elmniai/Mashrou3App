@@ -1,7 +1,8 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { ROLES } from "../constants/roles";
 import { authEmailForRole, canonicalEmail } from "./authEmail";
-import { findActiveSeanceByName } from "./seancesApi";
+import { findActiveSeanceByName, assignOrSwapSeanceSuperviseur, listSupervisorSeances } from "./seancesApi";
+import { parseEdgeFunctionError } from "./edgeFunctionError";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -385,11 +386,107 @@ export async function getPendingSupervisorInvitation(email) {
   }
 }
 
+const SEANCE_REASSIGN_HINT =
+  "عيّن مشرفاً آخر من صفحة المواسم، ثم أعد الحذف.";
+
+function mapDeleteAccountError(raw) {
+  const msg = String(raw || "");
+  if (
+    /superviseur_id/i.test(msg) &&
+    /not-null|null value|foreign key|23502|23503/i.test(msg)
+  ) {
+    return `لا يمكن حذف هذا المشرف لأنه مرتبط بحصة. ${SEANCE_REASSIGN_HINT}`;
+  }
+  return msg || "فشل حذف الحساب";
+}
+
+/**
+ * (Admin) Réaffecte la séance courante à un superviseur libre, puis retire
+ * l'ancien du roster. Aucune séance active ne reste sans responsable.
+ * Un profil encore cité par une séance archivée est désactivé (historique
+ * conservé). Un profil sans aucune séance est supprimé physiquement.
+ * @returns {{ ok: boolean, error?: string, mode?: 'deleted'|'retired' }}
+ */
+export async function reassignAndRemoveSupervisor({
+  userId,
+  seanceId = null,
+  replacementId = null,
+}) {
+  if (!userId) {
+    return { ok: false, error: "معرّف المشرف مفقود" };
+  }
+  if (seanceId && !replacementId) {
+    return { ok: false, error: "اختر مشرفاً آخر قبل الحذف" };
+  }
+  if (replacementId && replacementId === userId) {
+    return { ok: false, error: "اختر مشرفاً مختلفاً" };
+  }
+
+  if (seanceId && replacementId) {
+    const assigned = await assignOrSwapSeanceSuperviseur(seanceId, replacementId);
+    if (!assigned.ok) return assigned;
+    if (assigned.result?.action === "swap") {
+      await assignOrSwapSeanceSuperviseur(seanceId, userId);
+      return {
+        ok: false,
+        error: "المشرف المختار مرتبط بحصة أخرى. اختر مشرفاً غير مكلّف.",
+      };
+    }
+  }
+
+  const linksRes = await listSupervisorSeances(userId);
+  if (!linksRes.ok) return { ok: false, error: linksRes.error };
+  const open = (linksRes.seances || []).filter((row) => row.statut !== "archivee");
+  if (open.length) {
+    return {
+      ok: false,
+      error: "ما زال هذا المشرف مرتبطاً بحصة. أعد الإسناد قبل الحذف.",
+    };
+  }
+  if ((linksRes.seances || []).length === 0) {
+    const removed = await deleteSupervisorAccount({ userId });
+    if (!removed.ok) return removed;
+    return { ok: true, mode: "deleted" };
+  }
+
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { error } = await withTimeout(
+      supabase.rpc("retire_supervisor_profile", { p_profile_id: userId }),
+      SUPABASE_TIMEOUT_MS,
+      "تعطيل المشرف"
+    );
+    if (error) {
+      const msg = error.message || "";
+      if (/AFFECTATION_ACTIVE/.test(msg)) {
+        return {
+          ok: false,
+          error: "ما زال هذا المشرف مرتبطاً بحصة نشطة. أعد الإسناد قبل الحذف.",
+        };
+      }
+      if (/Could not find the function|retire_supervisor_profile/i.test(msg)) {
+        return {
+          ok: false,
+          error: "دالة سحب المشرف غير موجودة. نفّذ الهجرة 0090 في SQL Editor.",
+        };
+      }
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+    return { ok: true, mode: "retired" };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر سحب المشرف" };
+  }
+}
+
 /**
  * (Admin) Suppression réelle d'un compte superviseur/membre activé via
  * l'Edge Function delete-user (déployée SANS --no-verify-jwt : le rôle
  * admin est vérifié côté serveur). La suppression de l'utilisateur Auth
  * cascade sur profiles et les tables liées.
+ * Une séance a superviseur_id NOT NULL : le compte ne peut pas être
+ * supprimé tant qu'une séance le référence (ON DELETE SET NULL échoue).
  * @param {string} userId UUID du compte auth.users / profiles
  * @returns { ok }
  */
@@ -412,19 +509,14 @@ export async function deleteSupervisorAccount({ userId }) {
     );
 
     if (error) {
-      const msg = error.message || "";
-      if (/not found|404|FunctionsRelayError/i.test(msg)) {
-        return {
-          ok: false,
-          error:
-            "دالة الحذف غير منشورة بعد. انشرها عبر: supabase functions deploy delete-user",
-        };
-      }
-      return { ok: false, error: msg || "فشل استدعاء خدمة الحذف" };
+      const parsed = await parseEdgeFunctionError(error, "فشل استدعاء خدمة الحذف", {
+        functionName: "delete-user",
+      });
+      return { ok: false, error: mapDeleteAccountError(parsed) };
     }
 
     if (data && data.ok === false) {
-      return { ok: false, error: data.error || "فشل حذف الحساب" };
+      return { ok: false, error: mapDeleteAccountError(data.error) };
     }
 
     return { ok: true };

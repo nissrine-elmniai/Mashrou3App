@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { supervisorIdsForSeason } from "./seasonScope";
+import { canonicalEmail, isSupervisorAuthEmail } from "./authEmail";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -359,7 +360,7 @@ export async function createSeance({
       const msg = error?.message || "";
       if (
         /23505|duplicate key/i.test(msg) &&
-        /seances_saison_id_superviseur_id_key|superviseur_id/i.test(msg)
+        /seances_saison_id_superviseur_id_key|seances_saison_superviseur_actif_key|superviseur_id/i.test(msg)
       ) {
         return { ok: false, error: "هذا المشرف مكلف بحصة أخرى" };
       }
@@ -425,10 +426,13 @@ export async function updateSeance({ seanceId, patch }) {
       return { ok: false, error: "اسم الحصة مطلوب" };
     }
   }
-  if (clean.superviseur_id !== undefined && clean.superviseur_id !== null) {
-    if (!UUID_RE.test(clean.superviseur_id)) {
+  let requestedSuperviseurId;
+  if (clean.superviseur_id !== undefined) {
+    if (clean.superviseur_id !== null && !UUID_RE.test(clean.superviseur_id)) {
       return { ok: false, error: "المشرف المحدد غير صالح" };
     }
+    requestedSuperviseurId = clean.superviseur_id;
+    delete clean.superviseur_id;
   }
   if (clean.jour !== undefined && clean.jour !== null && !isValidJourSemaine(clean.jour)) {
     return { ok: false, error: "يوم الحصة غير صالح" };
@@ -556,7 +560,17 @@ export async function updateSeance({ seanceId, patch }) {
         error: "لا صلاحية كافية لهذه العملية — تحقق أن حسابك أدمن",
       };
     }
-    return { ok: true, seance: data };
+    if (requestedSuperviseurId) {
+      const assigned = await assignOrSwapSeanceSuperviseur(
+        seanceId,
+        requestedSuperviseurId
+      );
+      if (!assigned.ok) {
+        return { ok: false, error: assigned.error };
+      }
+      return { ok: true, seance: data, assignment: assigned.result };
+    }
+    return { ok: true, seance: data, assignment: null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -566,11 +580,8 @@ function mapAssignSuperviseurError(error) {
   const msg = [error?.message, error?.details, error?.hint, error?.code]
     .filter(Boolean)
     .join(" ");
-  if (/SUPERVISEUR_AUTRE_SAISON/.test(msg)) {
-    return "هذا المشرف مكلف بحصة في موسم آخر. لا يمكن تعديل المواسم السابقة.";
-  }
   if (/SEANCE_ARCHIVEE/.test(msg)) {
-    return "هذا المشرف مرتبط بحصة مؤرشفة في نفس الموسم. لا يمكن تبديلها.";
+    return "لا يمكن تغيير مشرف حصة مؤرشفة. نفّذ الهجرة 0090 إذا كان المشرف حراً بعد أرشفة حصته.";
   }
   if (/SEANCE_INTROUVABLE/.test(msg)) {
     return "الحصة غير موجودة";
@@ -584,8 +595,8 @@ function mapAssignSuperviseurError(error) {
   if (/ADMIN_REQUIS|42501|permission|row-level security/i.test(msg)) {
     return "لا صلاحية كافية لهذه العملية";
   }
-  if (/not deferrable/i.test(msg)) {
-    return "تعذر تبديل المشرفين. نفّذ الهجرة 0089 في SQL Editor.";
+  if (/not deferrable|seances_saison_superviseur_actif_key/i.test(msg)) {
+    return "تعذر تبديل المشرفين. نفّذ الهجرة 0090 في SQL Editor.";
   }
   if (/duplicate key|23505/i.test(msg)) {
     return "تعذر حفظ المشرف: هذا المشرف مكلف بحصة أخرى في نفس الموسم.";
@@ -594,11 +605,9 @@ function mapAssignSuperviseurError(error) {
 }
 
 /**
- * (Admin) Séance déjà tenue par ce superviseur, hors excludeSeanceId.
- * Les séances archivées d'une autre saison sont ignorées.
- * Priorité : autre saison encore ouverte, séance archivée du même saison,
- * puis séance ouverte du même saison (permutation).
- * @returns {{ ok: boolean, error?: string, conflict: null|'other_season'|'archived'|'swap', seance: {id, nom, saison_id, statut}|null }}
+ * (Admin) Séance de la même saison déjà tenue par ce superviseur.
+ * Les autres saisons sont ignorées : elles ne sont ni bloquantes ni modifiées.
+ * @returns {{ ok: boolean, error?: string, conflict: null|'swap', seance: {id, nom, saison_id, statut}|null }}
  */
 export async function findOccupiedSeanceForSuperviseur(
   superviseurId,
@@ -631,25 +640,11 @@ export async function findOccupiedSeanceForSuperviseur(
         seance: null,
       };
     }
-    const rows = data || [];
-    const open = rows.filter((row) => row.statut !== "archivee");
-    const otherSeason = saisonId
-      ? open.find((row) => row.saison_id !== saisonId)
-      : null;
-    if (otherSeason) {
-      return { ok: true, conflict: "other_season", seance: otherSeason };
-    }
-    const archivedSame = saisonId
-      ? rows.find(
-          (row) => row.statut === "archivee" && row.saison_id === saisonId
-        )
-      : null;
-    if (archivedSame) {
-      return { ok: true, conflict: "archived", seance: archivedSame };
-    }
-    const sameSeason = saisonId
-      ? open.find((row) => row.saison_id === saisonId) || null
-      : open[0] || null;
+    const rows = (data || []).filter((row) =>
+      saisonId ? row.saison_id === saisonId : true
+    );
+    const sameSeason =
+      rows.find((row) => row.statut !== "archivee") || null;
     if (sameSeason) {
       return { ok: true, conflict: "swap", seance: sameSeason };
     }
@@ -660,6 +655,41 @@ export async function findOccupiedSeanceForSuperviseur(
       error: e?.message || "تعذر الاتصال بـ Supabase",
       conflict: null,
       seance: null,
+    };
+  }
+}
+
+/**
+ * Séances dont ce profil est (ou a été) le responsable.
+ * Sert à distinguer un compte sans historique (suppression physique)
+ * d'un compte encore cité par une séance archivée (désactivation).
+ * @returns {{ ok: boolean, error?: string, seances: Array }}
+ */
+export async function listSupervisorSeances(superviseurId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", seances: [] };
+  }
+  if (!superviseurId) {
+    return { ok: false, error: "معرّف المشرف مفقود", seances: [] };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("seances")
+        .select("id, nom, statut, saison_id, superviseur_id")
+        .eq("superviseur_id", superviseurId),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة حصص المشرف"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "seances"), seances: [] };
+    }
+    return { ok: true, seances: data || [] };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      seances: [],
     };
   }
 }
@@ -766,6 +796,55 @@ export async function getSeanceMembers(seanceId) {
   }
 }
 
+function supervisorCanonicalKey(profile) {
+  return canonicalEmail(profile?.canonical_email || profile?.email);
+}
+
+function isShadowSupervisorAccount(profile) {
+  if (isSupervisorAuthEmail(profile?.email)) return true;
+  const stored = canonicalEmail(profile?.email);
+  const declared = canonicalEmail(profile?.canonical_email);
+  return Boolean(stored && declared && stored !== declared);
+}
+
+/**
+ * Un seul profil par e-mail canonique.
+ * Le compte `+supervisor` (أميمة العماري) partage l'e-mail d'Oumeyma :
+ * on garde le profil qui tient une séance active, sinon celui sans suffixe.
+ * @param {Array} supervisors
+ * @param {Set<string>|null} activeIds ids affectés à une séance active de la saison
+ */
+export function excludeDuplicateSupervisorAccounts(supervisors = [], activeIds = null) {
+  const groups = new Map();
+  for (const profile of supervisors || []) {
+    const key = supervisorCanonicalKey(profile) || profile?.id;
+    if (!key) continue;
+    const bucket = groups.get(key) || [];
+    bucket.push(profile);
+    groups.set(key, bucket);
+  }
+  const kept = [];
+  for (const bucket of groups.values()) {
+    if (bucket.length === 1) {
+      kept.push(bucket[0]);
+      continue;
+    }
+    const ranked = [...bucket].sort((a, b) => {
+      const aShadow = isShadowSupervisorAccount(a) ? 1 : 0;
+      const bShadow = isShadowSupervisorAccount(b) ? 1 : 0;
+      if (aShadow !== bShadow) return aShadow - bShadow;
+      if (activeIds) {
+        const aOn = activeIds.has(a.id) ? 0 : 1;
+        const bOn = activeIds.has(b.id) ? 0 : 1;
+        if (aOn !== bOn) return aOn - bOn;
+      }
+      return 0;
+    });
+    kept.push(ranked[0]);
+  }
+  return kept;
+}
+
 /**
  * Profils dont la colonne role vaut 'supervisor'.
  * Ne pas utiliser pour un écran : un compte d'une séance archivée
@@ -777,15 +856,33 @@ export async function getSupervisorProfiles() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
-    const { data, error } = await withTimeout(
+    const selectWithCanonical =
+      "id, first_name, last_name, email, canonical_email, account_status, avatar_url, created_at";
+    const selectWithoutCanonical =
+      "id, first_name, last_name, email, account_status, avatar_url, created_at";
+    let { data, error } = await withTimeout(
       supabase
         .from("profiles")
-        .select("id, first_name, last_name, email, account_status, avatar_url")
+        .select(selectWithCanonical)
         .eq("role", "supervisor")
         .order("created_at", { ascending: true }),
       SUPABASE_TIMEOUT_MS,
       "قراءة المشرفين"
     );
+    if (
+      error &&
+      /column .*canonical_email|canonical_email .*does not exist/i.test(error.message || "")
+    ) {
+      ({ data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .select(selectWithoutCanonical)
+          .eq("role", "supervisor")
+          .order("created_at", { ascending: true }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة المشرفين"
+      ));
+    }
     if (error) {
       return { ok: false, error: mapTableError(error, "profiles") };
     }
@@ -797,8 +894,9 @@ export async function getSupervisorProfiles() {
 
 /**
  * Superviseurs affichés par l'admin : role = 'supervisor' ET affectés à une
- * séance non archivée de la saison active (ou séance sans saison_id).
- * Même règle que l'écran « المشرفون ». Une séance archivée ne compte pas.
+ * séance active (statut = active) de la saison demandée.
+ * Même règle que l'écran « المشرفون » et le picker « المشرف ».
+ * Une séance archivée, inactive, ou d'une autre saison ne compte pas.
  * @param {{ saisonId?: string|null }} options
  * @returns { ok, supervisors }
  */
@@ -817,9 +915,10 @@ export async function getActiveSupervisors({ saisonId = null } = {}) {
     if (!profilesRes.ok) return profilesRes;
     if (!seancesRes.ok) return { ok: false, error: seancesRes.error };
     const ids = supervisorIdsForSeason(seancesRes.seances, saisonId);
+    const eligible = excludeDuplicateSupervisorAccounts(profilesRes.supervisors, ids);
     return {
       ok: true,
-      supervisors: (profilesRes.supervisors || []).filter((s) => ids.has(s.id)),
+      supervisors: eligible.filter((s) => ids.has(s.id)),
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

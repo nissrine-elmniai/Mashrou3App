@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -17,18 +17,23 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
-import { Menu, Bell, Plus, X, SquarePen } from "lucide-react-native";
+import { Menu, Bell, Plus, X, SquarePen, Trash2 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getActiveRegularSeason, filterSeancesForSeason } from "../../lib/seasonScope";
+import {
+  getActiveRegularSeason,
+  filterSeancesForSeason,
+  supervisorIdsForSeason,
+} from "../../lib/seasonScope";
 import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
 import {
   getAllSeances,
   createSeance,
   updateSeance,
+  archiveSeance,
   findOccupiedSeanceForSuperviseur,
-  assignOrSwapSeanceSuperviseur,
-  getActiveSupervisors,
+  getSupervisorProfiles,
+  excludeDuplicateSupervisorAccounts,
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
   normalizePgTime,
@@ -86,22 +91,13 @@ function seasonDateToStorage(value) {
   return String(value).trim().replace(/\//g, "-").slice(0, 10);
 }
 
-function confirmSuperviseurSwap({ nomB, seanceAHasSuperviseur }) {
-  let message = `هذا المشرف مكلف حالياً بحصة «${nomB}». هل تريد تبديل المشرفين بين الحصتين؟`;
-  if (!seanceAHasSuperviseur) {
-    message += ` ستبقى حصة «${nomB}» بدون مشرف.`;
-  }
-  return new Promise((resolve) => {
-    Alert.alert(
-      "تبديل المشرفين",
-      message,
-      [
-        { text: "إلغاء", style: "cancel", onPress: () => resolve(false) },
-        { text: "تبديل", onPress: () => resolve(true) },
-      ],
-      { cancelable: true, onDismiss: () => resolve(false) }
-    );
-  });
+function cardSupervisor(profile) {
+  if (!profile) return null;
+  const first = profile.first_name || "";
+  const last = profile.last_name || "";
+  const email = profile.email || "";
+  if (!first && !last && !email) return null;
+  return { first_name: first, last_name: last, email };
 }
 
 export default function AdminSeasonsScreen({ navigation }) {
@@ -123,23 +119,42 @@ export default function AdminSeasonsScreen({ navigation }) {
 
   const pendingCount = stats?.pendingRegs ?? 0;
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const pickerSupervisors = useMemo(() => {
+    const ids = supervisorIdsForSeason(seances, activeSeason?.id || null);
+    return excludeDuplicateSupervisorAccounts(supervisors, ids).filter(
+      (s) => s.account_status !== "inactive" || s.id === form.superviseurId
+    );
+  }, [seances, supervisors, activeSeason?.id, form.superviseurId]);
+
+  const loadAll = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     const [seancesRes, supervisorsRes] = await Promise.all([
       getAllSeances(),
-      getActiveSupervisors({ saisonId: activeSeason?.id || null }),
+      getSupervisorProfiles(),
     ]);
     if (seancesRes.ok) {
       const scoped = activeSeason?.id
         ? filterSeancesForSeason(seancesRes.seances, activeSeason.id)
         : [];
       setSeances(sortSeancesByJour(scoped));
-    } else {
+    } else if (!silent) {
       Alert.alert("تنبيه", seancesRes.error || "تعذر تحميل الحصص");
       setSeances([]);
     }
-    if (supervisorsRes.ok) setSupervisors(supervisorsRes.supervisors);
-    setLoading(false);
+    if (supervisorsRes.ok) {
+      const ids = supervisorIdsForSeason(
+        seancesRes.ok ? seancesRes.seances : [],
+        activeSeason?.id || null
+      );
+      setSupervisors(
+        excludeDuplicateSupervisorAccounts(supervisorsRes.supervisors, ids).filter(
+          (s) => s.account_status !== "inactive" || ids.has(s.id)
+        )
+      );
+    } else {
+      setSupervisors([]);
+    }
+    if (!silent) setLoading(false);
   }, [activeSeason?.id]);
 
   useFocusEffect(
@@ -235,6 +250,7 @@ export default function AdminSeasonsScreen({ navigation }) {
       editingId && current && form.superviseurId !== current.superviseur_id
     );
     const saisonId = current?.saison_id || activeSeason.id;
+    let swapPartner = null;
 
     if (supervisorChanged) {
       const occupiedRes = await findOccupiedSeanceForSuperviseur(form.superviseurId, {
@@ -245,28 +261,8 @@ export default function AdminSeasonsScreen({ navigation }) {
         Alert.alert("تنبيه", occupiedRes.error);
         return;
       }
-      if (occupiedRes.conflict === "other_season") {
-        const nomB = String(occupiedRes.seance?.nom || "").trim() || "الحصة";
-        Alert.alert(
-          "تنبيه",
-          `هذا المشرف مكلف حالياً بحصة «${nomB}» في موسم آخر. لا يمكن تعديل المواسم السابقة.`
-        );
-        return;
-      }
-      if (occupiedRes.conflict === "archived") {
-        Alert.alert(
-          "تنبيه",
-          "هذا المشرف مرتبط بحصة مؤرشفة في نفس الموسم. لا يمكن تبديلها."
-        );
-        return;
-      }
       if (occupiedRes.conflict === "swap") {
-        const nomB = String(occupiedRes.seance?.nom || "").trim() || "الحصة";
-        const accepted = await confirmSuperviseurSwap({
-          nomB,
-          seanceAHasSuperviseur: Boolean(current?.superviseur_id),
-        });
-        if (!accepted) return;
+        swapPartner = occupiedRes.seance;
       }
     }
 
@@ -275,19 +271,16 @@ export default function AdminSeasonsScreen({ navigation }) {
     const seasonEnd = seasonDateToStorage(activeSeason?.endDate) || null;
     let result;
     if (editingId) {
-      const patch = {
-        nom,
-        jour: form.jour,
-        genre: form.genre,
-        heure_debut: form.heureDebut,
-        heure_fin: form.heureFin,
-      };
-      if (!supervisorChanged) {
-        patch.superviseur_id = form.superviseurId;
-      }
       result = await updateSeance({
         seanceId: editingId,
-        patch,
+        patch: {
+          nom,
+          jour: form.jour,
+          genre: form.genre,
+          heure_debut: form.heureDebut,
+          heure_fin: form.heureFin,
+          superviseur_id: form.superviseurId,
+        },
       });
     } else {
       result = await createSeance({
@@ -308,27 +301,49 @@ export default function AdminSeasonsScreen({ navigation }) {
       return;
     }
 
-    let swapped = false;
-    if (supervisorChanged) {
-      const rpc = await assignOrSwapSeanceSuperviseur(editingId, form.superviseurId);
-      if (!rpc.ok) {
-        setSaving(false);
-        loadAll();
-        Alert.alert("تنبيه", rpc.error);
-        return;
-      }
-      swapped = rpc.result?.action === "swap";
-    }
+    const swapped = result.assignment?.action === "swap";
+    const swappedSeanceId =
+      result.assignment?.other_seance_id || swapPartner?.id || null;
 
     setSaving(false);
-    if (result.seance && !supervisorChanged) {
-      setSeances((prev) =>
-        sortSeancesByJour([
-          result.seance,
-          ...prev.filter((s) => s.id !== result.seance.id),
-        ])
-      );
-    }
+    const nextSupervisor = supervisors.find((s) => s.id === form.superviseurId);
+    const previousSupervisor =
+      supervisors.find((s) => s.id === current?.superviseur_id) ||
+      current?.superviseur ||
+      null;
+    setSeances((prev) => {
+      let next = prev.map((s) => {
+        if (editingId && s.id === editingId) {
+          const base = result.seance
+            ? { ...s, ...result.seance, inscriptions: s.inscriptions }
+            : s;
+          if (!result.assignment || result.assignment.action === "none") return base;
+          return {
+            ...base,
+            superviseur_id: form.superviseurId,
+            superviseur: cardSupervisor(nextSupervisor) || base.superviseur,
+          };
+        }
+        if (swapped && swappedSeanceId && s.id === swappedSeanceId) {
+          return {
+            ...s,
+            superviseur_id: current?.superviseur_id || null,
+            superviseur: cardSupervisor(previousSupervisor) || s.superviseur,
+          };
+        }
+        return s;
+      });
+      if (!editingId && result.seance) {
+        next = [
+          {
+            ...result.seance,
+            superviseur: cardSupervisor(nextSupervisor),
+          },
+          ...next.filter((s) => s.id !== result.seance.id),
+        ];
+      }
+      return sortSeancesByJour(next);
+    });
     setModalVisible(false);
     Alert.alert(
       editingId ? "تم التحديث" : "تم الإنشاء",
@@ -338,10 +353,41 @@ export default function AdminSeasonsScreen({ navigation }) {
           : "تم تحديث الحصة بنجاح"
         : "تم إنشاء الحصة بنجاح"
     );
-    loadAll();
+    loadAll({ silent: true });
   };
 
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  const confirmArchive = (seance) => {
+    const sup = seance.superviseur || null;
+    const supName = sup
+      ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() || sup.email
+      : "";
+    const message = supName
+      ? `هذه الحصة مسندة حالياً إلى المشرف ${supName}. حذف الحصة سيُحرّر هذا المشرف ويمكن تعيينه لحصة أخرى. حسابه يبقى. الأعضاء والمجموعة والحضور والتقدم يبقون في أرشيف هذا الموسم. هل تريد المتابعة؟`
+      : `هل تريد حذف حصة «${seance.nom || "الحصة"}»؟ ستُؤرشف في هذا الموسم دون مسح الأعضاء أو السجل.`;
+    Alert.alert("حذف الحصة", message, [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "حذف الحصة",
+        style: "destructive",
+        onPress: async () => {
+          const result = await archiveSeance(seance.id);
+          if (!result.ok) {
+            Alert.alert("خطأ", result.error || "تعذر أرشفة الحصة");
+            return;
+          }
+          Alert.alert(
+            "تمت الأرشفة",
+            supName
+              ? `أُرشفت الحصة وأصبح المشرف ${supName} متاحاً لحصة أخرى.`
+              : "أُرشفت الحصة. سجلّها بقي في هذا الموسم."
+          );
+          loadAll({ silent: true });
+        },
+      },
+    ]);
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -434,6 +480,13 @@ export default function AdminSeasonsScreen({ navigation }) {
                       accessibilityLabel="تعديل الحصة"
                     >
                       <SquarePen size={18} color={palette.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.deleteBtn]}
+                      onPress={() => confirmArchive(seance)}
+                      accessibilityLabel="حذف الحصة"
+                    >
+                      <Trash2 size={18} color={palette.red} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -641,7 +694,7 @@ export default function AdminSeasonsScreen({ navigation }) {
 
             <Text style={styles.modalLabel}>المشرف</Text>
             <View style={styles.supervisorChips}>
-              {supervisors.map((s) => {
+              {pickerSupervisors.map((s) => {
                 const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
                 const active = form.superviseurId === s.id;
                 return (
@@ -665,7 +718,7 @@ export default function AdminSeasonsScreen({ navigation }) {
                 );
               })}
             </View>
-            {supervisors.length === 0 ? (
+            {pickerSupervisors.length === 0 ? (
               <Text style={styles.supervisorHint}>
                 لا يوجد مشرفون بعد — عيّن مشرفاً أولاً من شاشة «المشرفون»
               </Text>
@@ -828,6 +881,9 @@ const styles = StyleSheet.create({
   },
   editBtn: {
     backgroundColor: "#F5F5F5",
+  },
+  deleteBtn: {
+    backgroundColor: "#FFEBEE",
   },
   cardSup: {
     color: palette.textSecondary,

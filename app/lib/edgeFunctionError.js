@@ -12,23 +12,21 @@ export async function parseEdgeFunctionError(
   let serverError = "";
 
   try {
-    if (typeof error.context?.json === "function") {
-      const body = await error.context.json();
-      if (body?.error) serverError = String(body.error);
-    } else if (typeof error.context?.text === "function") {
-      const text = await error.context.text();
-      try {
-        const body = JSON.parse(text);
-        if (body?.error) serverError = String(body.error);
-      } catch {
-        if (text?.trim()) serverError = text.trim();
-      }
-    }
+    const body = await readInvokeErrorBody(error);
+    const raw = body?.error || body?.message || body?.msg || "";
+    if (raw) serverError = String(raw);
   } catch {
     serverError = "";
   }
 
   const msg = String(error.message || "");
+
+  if (
+    /invalid jwt|unauthorized/i.test(serverError) ||
+    (!serverError && /401|403|invalid jwt|unauthorized/i.test(msg))
+  ) {
+    return "جلسة غير صالحة أو ليس لديك صلاحية. سجّل الخروج ثم الدخول بحساب الأدمن.";
+  }
 
   if (serverError) return serverError;
 
@@ -37,10 +35,6 @@ export async function parseEdgeFunctionError(
       return "دالة حذف الحساب غير منشورة. انشرها: supabase functions deploy delete-user";
     }
     return "الدالة غير منشورة بعد على Supabase.";
-  }
-
-  if (/401|403|غير مصرح|جلسة|أدمن فقط/i.test(msg)) {
-    return "جلسة غير صالحة أو ليس لديك صلاحية. سجّل الخروج ثم الدخول بحساب الأدمن.";
   }
 
   if (/non-2xx|FunctionsRelayError|FunctionsHttpError/i.test(msg)) {
@@ -62,4 +56,31 @@ export async function parseEdgeFunctionError(
   }
 
   return msg || fallback;
+}
+
+async function readInvokeErrorBody(error) {
+  const ctx = error?.context;
+  if (!ctx) return null;
+  if (typeof ctx === "object" && (ctx.error || ctx.message || ctx.msg) && typeof ctx.json !== "function") {
+    return ctx;
+  }
+  if (typeof ctx.clone === "function" && typeof ctx.json === "function") {
+    try {
+      return await ctx.clone().json();
+    } catch {
+      /* le corps peut déjà être consommé */
+    }
+  }
+  if (typeof ctx.json === "function") {
+    return await ctx.json();
+  }
+  if (typeof ctx.text === "function") {
+    const text = await ctx.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text?.trim() ? { message: text.trim() } : null;
+    }
+  }
+  return null;
 }
