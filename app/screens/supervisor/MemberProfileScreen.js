@@ -575,12 +575,12 @@ export default function MemberProfileScreen({ navigation, route }) {
               <TouchableOpacity
                 style={styles.editSeanceBtn}
                 onPress={openSeancePicker}
-                activeOpacity={0.8}
+                activeOpacity={0.7}
+                hitSlop={8}
                 accessibilityRole="button"
                 accessibilityLabel="تعديل الحصة"
               >
-                <Ionicons name="create-outline" size={16} color={colors.primary} />
-                <Text style={styles.editSeanceBtnText}>تعديل</Text>
+                <Ionicons name="create-outline" size={20} color={colors.primary} />
               </TouchableOpacity>
             ) : null}
           </View>
@@ -790,19 +790,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   editSeanceBtn: {
-    flexDirection: rtlRow,
+    padding: 4,
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    backgroundColor: colors.primarySoft,
-  },
-  editSeanceBtnText: {
-    color: colors.primary,
-    fontSize: 13,
-    fontFamily: fonts.semiBold,
-    ...rtlText,
+    justifyContent: "center",
   },
   modalOverlay: {
     flex: 1,

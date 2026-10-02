@@ -9,7 +9,7 @@ export const NOTIF_CATEGORY = {
   REGISTRATIONS: "registrations",
   /** Admin — الحصص */
   SESSIONS: "sessions",
-  /** Admin — الاختبارات / التقييمات */
+  /** Catégorie SQL notifications.category = 'tests' (0091) et menu admin. */
   TESTS: "tests",
   /** Admin — المشرفون */
   SUPERVISORS: "supervisors",

@@ -9,117 +9,130 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
-  Linking,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import { Menu, Bell, Plus, Calendar, Check, X, ClipboardList, Link } from "lucide-react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import { Menu, Bell, Plus } from "lucide-react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { pickDateTime, useIosDateTimePicker, IosDateTimePicker } from "../../lib/pickDateTime";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { rtlText, row, textAlignStart } from "../../constants/rtl";
+import { rtlText, row, textAlignStart, fonts } from "../../constants/rtl";
+import { colors, radii } from "../../constants/theme";
+import { SectionCard } from "../../components/ui";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getAllTestsAdmin, createTest } from "../../lib/testsApi";
 import {
-  getAllTestsAdmin,
-  createTest,
-  updateTestStatus,
+  getTestDisplayStatus,
   TEST_TYPE_LABELS,
-} from "../../lib/testsApi";
+  formatTestDate,
+  formatShortTestDate,
+  formatTestTime,
+  casablancaTodayIso,
+  addCalendarDays,
+  isoToLocalDate,
+} from "../../constants/tests";
+import { colorWithAlpha } from "../../components/tests/StatusBadge";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
-
-const palette = {
-  primary: "#2E7D32",
-  gold: "#FBC02D",
-  softGold: "#FFF8E1",
-  red: "#D32F2F",
-  softGreen: "#E8F5E9",
-  softBlue: "#E3F2FD",
-  blue: "#1976D2",
-  background: "#F5F5F5",
-  textSecondary: "#666666",
-  textPrimary: "#333333",
-  placeholder: "#999999",
-  border: "#E0E0E0",
-};
 
 const TABS = [
   { key: "all", label: "الكل" },
-  { key: "upcoming", label: "قادمة" },
-  { key: "past", label: "سابقة" },
-  { key: "create", label: "إنشاء" },
+  { key: "upcoming", label: "الحالية" },
+  { key: "past", label: "السابقة" },
 ];
 
 const TEST_TYPES = [
-  { key: "hifz", label: "اختبار الحفظ" },
-  { key: "sunnah", label: "حفاظ السنة" },
+  { key: "hifz", label: TEST_TYPE_LABELS.hifz },
+  { key: "sunnah", label: TEST_TYPE_LABELS.sunnah },
 ];
 
-function toIsoDate(value) {
-  if (!value) return "";
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+const EMPTY_BY_TAB = {
+  all: "ابدأ بإنشاء أول اختبار للأعضاء",
+  upcoming: "لا توجد اختبارات حالية",
+  past: "لا توجد اختبارات سابقة بعد",
+};
+
+function testStatusOf(test) {
+  return getTestDisplayStatus(test);
 }
 
-function formatDateLabel(value) {
-  const iso = String(value || "").slice(0, 10);
-  if (!iso) return "اختر تاريخ الاختبار";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
+function isPlanned(test) {
+  return test?.statut !== "termine" && test?.statut !== "annule";
 }
 
-function getExamKind(test) {
-  if (test.statut === "annule") return "cancelled";
-  if (test.statut === "termine") return "past";
-  return "upcoming";
-}
-
-function statusMeta(kind) {
-  if (kind === "upcoming") {
-    return { label: "قادم", color: palette.primary, bg: palette.softGreen };
-  }
-  if (kind === "past") {
-    return { label: "منجز / سابق", color: palette.blue, bg: "#E3F2FD" };
-  }
-  return { label: "ملغى", color: palette.red, bg: "#FFEBEE" };
+function proposedIsos(test) {
+  const rows = Array.isArray(test?.test_dates) ? test.test_dates : [];
+  return rows
+    .map((row) => String(row?.date_proposee || "").slice(0, 10))
+    .filter((iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso))
+    .sort();
 }
 
 export default function AdminTestsScreen({ navigation, route }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "tests");
-  const { currentUser, stats } = useApp();
+  const { currentUser, seasons } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
+  const defaultSeasonId = getActiveRegularSeason(seasons)?.id || null;
+  const activeSeasons = useMemo(
+    () => (seasons || []).filter((season) => season.active),
+    [seasons]
+  );
 
   const [tab, setTab] = useState(route?.params?.initialTab || "all");
   const [testType, setTestType] = useState("hifz");
   const [title, setTitle] = useState("");
-  const [testDate, setTestDate] = useState(null);
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [saisonId, setSaisonId] = useState(null);
   const [quranQuantity, setQuranQuantity] = useState("");
-  const [formUrl, setFormUrl] = useState("");
+  const [quantityTouched, setQuantityTouched] = useState(false);
+  const [quantityAttempted, setQuantityAttempted] = useState(false);
+  const [proposedDates, setProposedDates] = useState([]);
+  const [datesAttempted, setDatesAttempted] = useState(false);
+  const [slotError, setSlotError] = useState("");
+  const iosPicker = useIosDateTimePicker();
   const [tests, setTests] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const loadAll = useCallback(async (mode = "load") => {
+    if (mode === "refresh") setRefreshing(true);
+    else setLoading(true);
     const testsRes = await getAllTestsAdmin();
-    if (testsRes.ok) setTests(testsRes.tests);
+    if (!testsRes.ok) {
+      setError(testsRes.error || "تعذر تحميل الاختبارات");
+      if (mode !== "refresh") setTests([]);
+    } else {
+      setError("");
+      setTests(testsRes.tests || []);
+    }
     setLoading(false);
+    setRefreshing(false);
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadAll();
+    }, [loadAll])
+  );
+
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    setSaisonId((current) => {
+      if (current && activeSeasons.some((season) => season.id === current)) {
+        return current;
+      }
+      const preferred = activeSeasons.find((season) => season.id === defaultSeasonId);
+      return preferred?.id || null;
+    });
+  }, [defaultSeasonId, activeSeasons]);
 
   useEffect(() => {
     const next = route?.params?.initialTab;
     if (next) setTab(next);
   }, [route?.params?.initialTab]);
-
-  const pendingCount = stats?.pendingRegs ?? 0;
 
   const sortedTests = useMemo(() => {
     return [...tests].sort((a, b) => {
@@ -131,156 +144,191 @@ export default function AdminTestsScreen({ navigation, route }) {
 
   const filteredTests = useMemo(() => {
     if (tab === "all" || tab === "create") return sortedTests;
-    return sortedTests.filter((t) => {
-      const kind = getExamKind(t);
-      if (tab === "upcoming") return kind === "upcoming";
-      if (tab === "past") return kind === "past" || kind === "cancelled";
-      return true;
-    });
+    if (tab === "past") return sortedTests.filter((test) => !isPlanned(test));
+    return sortedTests
+      .filter((test) => isPlanned(test))
+      .sort((a, b) => {
+        const aRank = getTestDisplayStatus(a).key === "en_cours" ? 0 : 1;
+        const bRank = getTestDisplayStatus(b).key === "en_cours" ? 0 : 1;
+        return aRank - bRank;
+      });
   }, [sortedTests, tab]);
 
   const counts = useMemo(() => {
     let upcoming = 0;
     let past = 0;
-    sortedTests.forEach((t) => {
-      const kind = getExamKind(t);
-      if (kind === "upcoming") upcoming += 1;
+    sortedTests.forEach((test) => {
+      if (isPlanned(test)) upcoming += 1;
       else past += 1;
     });
     return { all: sortedTests.length, upcoming, past };
   }, [sortedTests]);
 
+  const todayIso = casablancaTodayIso();
+  const tomorrowIso = addCalendarDays(todayIso, 1);
+  const quantityMissing =
+    testType === "hifz" && !String(quranQuantity || "").trim();
+  const datesMissing = proposedDates.length === 0;
+  const canSubmit = Boolean(
+    String(title || "").trim() &&
+      saisonId &&
+      !saving &&
+      !quantityMissing &&
+      !datesMissing
+  );
+  const showQuantityError =
+    quantityMissing && (quantityTouched || quantityAttempted);
+  const showDatesError = datesMissing && datesAttempted;
+
   const resetForm = () => {
     setTestType("hifz");
     setTitle("");
-    setTestDate(null);
     setQuranQuantity("");
-    setFormUrl("");
-    setShowDatePicker(false);
+    setQuantityTouched(false);
+    setQuantityAttempted(false);
+    setProposedDates([]);
+    setDatesAttempted(false);
+    setSlotError("");
+  };
+
+  const openDatePicker = async () => {
+    setSlotError("");
+    const slot = await pickDateTime({
+      minimumDate: isoToLocalDate(tomorrowIso),
+      initialDate: isoToLocalDate(tomorrowIso),
+    });
+    if (!slot) return;
+    let duplicate = false;
+    setProposedDates((prev) => {
+      if (prev.some((item) => item.date === slot.date)) {
+        duplicate = true;
+        return prev;
+      }
+      return [...prev, slot].sort((a, b) => a.date.localeCompare(b.date));
+    });
+    if (duplicate) {
+      setSlotError("هذا التاريخ مضاف مسبقاً");
+      return;
+    }
+    setDatesAttempted(true);
+    setSlotError("");
   };
 
   const handleCreate = async () => {
+    if (quantityMissing) setQuantityAttempted(true);
+    if (datesMissing) setDatesAttempted(true);
+    if (!canSubmit) return;
     setSaving(true);
     const created = await createTest({
+      saisonId,
       titre: title,
       type: testType,
-      dateTest: toIsoDate(testDate),
       quranQuantity,
-      formUrl,
+      dates: proposedDates,
     });
     setSaving(false);
     if (!created.ok) {
       Alert.alert("تنبيه", created.error);
       return;
     }
-    Alert.alert("تم الإعلان", "تم إعلان الاختبار بنجاح");
+    const invitedCount = created.invitedCount ?? 0;
+    if (invitedCount === 0) {
+      Alert.alert("تنبيه", "لا يوجد أعضاء مقبولون في هذا الموسم");
+    } else {
+      Alert.alert("تم الإعلان", `تمت دعوة ${invitedCount} أعضاء`);
+    }
     resetForm();
     setTab("upcoming");
     loadAll();
   };
 
-  const confirmCancel = (test) => {
-    Alert.alert("إلغاء الاختبار", `هل تريد إلغاء «${test.titre || "اختبار"}»؟`, [
-      { text: "تراجع", style: "cancel" },
-      {
-        text: "إلغاء",
-        style: "destructive",
-        onPress: async () => {
-          const result = await updateTestStatus({ testId: test.id, statut: "annule" });
-          if (!result.ok) Alert.alert("خطأ", result.error);
-          loadAll();
-        },
-      },
-    ]);
-  };
-
-  const confirmComplete = (test) => {
-    Alert.alert("تعليم كمنجز", `هل تم إنجاز «${test.titre || "اختبار"}»؟`, [
-      { text: "تراجع", style: "cancel" },
-      {
-        text: "تأكيد",
-        onPress: async () => {
-          const result = await updateTestStatus({ testId: test.id, statut: "termine" });
-          if (!result.ok) Alert.alert("خطأ", result.error);
-          loadAll();
-        },
-      },
-    ]);
-  };
-
   const renderTestCard = (test) => {
-    const kind = getExamKind(test);
-    const meta = statusMeta(kind);
-    const typeLabel = TEST_TYPE_LABELS[test.type] || test.titre || "اختبار";
+    const status = testStatusOf(test);
+    const typeLabel = TEST_TYPE_LABELS[test.type] || "اختبار";
+    const quantity = String(test.quran_quantity || "").trim();
+    const typeLine = quantity ? `${typeLabel} · ${quantity}` : typeLabel;
+    const invitations = test.invitations || [];
+    const total = invitations.length;
+    const noted = invitations.filter((item) => item.statut === "note").length;
+    const confirmed = invitations.filter(
+      (item) => item.statut === "confirme" || item.statut === "note"
+    ).length;
+    const isos = proposedIsos(test);
+    const nextDate = isPlanned(test) ? isos.find((iso) => todayIso && iso >= todayIso) : "";
+    const closedDate = !isPlanned(test)
+      ? formatTestDate(isos[isos.length - 1] || test.created_at)
+      : "";
+    const ratio = total > 0 ? Math.round((noted / total) * 100) : 0;
 
     return (
-      <View key={test.id} style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardIconWrap}>
-            <ClipboardList size={20} color={palette.primary} pointerEvents="none" />
-          </View>
-          <View style={styles.cardHeaderInfo}>
-            <Text style={styles.cardTitle}>{test.titre || typeLabel}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
-              <Text style={[styles.statusBadgeText, { color: meta.color }]}>
-                {meta.label}
-              </Text>
-            </View>
+      <TouchableOpacity
+        key={test.id}
+        style={[
+          styles.listCard,
+          { borderStartColor: status.color },
+          test.statut === "annule" && styles.listCardMuted,
+        ]}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate("AdminTestDetail", { testId: test.id })}
+        accessibilityRole="button"
+        accessibilityLabel={test.titre || typeLabel}
+      >
+        <View style={styles.cardTitleRow}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {test.titre || typeLabel}
+          </Text>
+          <View style={styles.statusWrap}>
+            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+            <Text style={[styles.statusLabel, { color: status.color }]}>{status.label}</Text>
           </View>
         </View>
 
-        <View style={styles.metaPills}>
-          {typeLabel ? (
-            <View style={styles.metaPill}>
-              <Text style={styles.metaPillText}>{typeLabel}</Text>
-            </View>
-          ) : null}
-          <View style={styles.metaPill}>
-            <Calendar size={13} color={palette.textSecondary} />
-            <Text style={styles.metaPillText}>
-              {formatDateLabel(test.date_test || test.created_at)}
+        <View style={styles.cardMetaRow}>
+          <Text style={styles.cardMetaText} numberOfLines={1}>
+            {typeLine}
+          </Text>
+          {isPlanned(test) ? (
+            nextDate ? (
+              <Text style={styles.cardDate} numberOfLines={1}>
+                {"الموعد القادم: "}
+                <Text style={styles.timeLtr}>{formatTestDate(nextDate)}</Text>
+              </Text>
+            ) : (
+              <Text style={styles.cardDate} numberOfLines={1}>
+                انتهت المواعيد
+              </Text>
+            )
+          ) : closedDate ? (
+            <Text style={[styles.cardDate, styles.timeLtr]} numberOfLines={1}>
+              {closedDate}
             </Text>
-          </View>
-          {test.type === "hifz" && test.quran_quantity ? (
-            <View style={styles.metaPill}>
-              <ClipboardList size={13} color={palette.textSecondary} />
-              <Text style={styles.metaPillText}>{test.quran_quantity}</Text>
-            </View>
-          ) : null}
-          {test.type === "sunnah" && test.form_url ? (
-            <TouchableOpacity
-              style={styles.metaPill}
-              onPress={() => Linking.openURL(test.form_url)}
-            >
-              <Link size={13} color={palette.primary} />
-              <Text style={[styles.metaPillText, { color: palette.primary }]}>
-                Google Form
-              </Text>
-            </TouchableOpacity>
           ) : null}
         </View>
 
-        {kind === "upcoming" ? (
-          <View style={styles.cardActions}>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.completeBtn]}
-              onPress={() => confirmComplete(test)}
-            >
-              <Check size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>تم الإنجاز</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.cancelBtn]}
-              onPress={() => confirmCancel(test)}
-            >
-              <X size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>إلغاء</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
+        <View style={styles.cardFootRow}>
+          {total > 0 ? (
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${ratio}%` }]} />
+            </View>
+          ) : null}
+          <Text style={styles.cardFootText} numberOfLines={1}>
+            {total === 0 ? (
+              "لا يوجد مدعوون"
+            ) : (
+              <>
+                <Text style={styles.timeLtr}>{`${noted}/${total}`}</Text>
+                {" منقط · "}
+                <Text style={styles.timeLtr}>{String(confirmed)}</Text>
+                {" مؤكد"}
+              </>
+            )}
+          </Text>
+        </View>
+      </TouchableOpacity>
     );
   };
+
+  const showInitialLoader = loading && tests.length === 0 && tab !== "create";
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -291,7 +339,7 @@ export default function AdminTestsScreen({ navigation, route }) {
           accessibilityRole="button"
           accessibilityLabel="فتح القائمة"
         >
-          <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
+          <Menu size={24} color={colors.text} pointerEvents="none" />
         </TouchableOpacity>
         <Text style={styles.topBarTitle}>الاختبارات</Text>
         <AdminTopBarAvatar
@@ -302,217 +350,233 @@ export default function AdminTestsScreen({ navigation, route }) {
           onPress={() => navigation.navigate("AdminNotifications")}
           hitSlop={12}
         >
-          <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
+          <Bell size={24} color={colors.muted} pointerEvents="none" />
         </TouchableOpacity>
       </View>
 
       <View style={styles.tabs}>
-        {TABS.map((t) => {
-          const active = tab === t.key;
+        <TouchableOpacity
+          style={[
+            styles.tabCreate,
+            tab === "create" && {
+              backgroundColor: colorWithAlpha(colors.primary, 0.12),
+            },
+          ]}
+          onPress={() => setTab("create")}
+          accessibilityRole="button"
+          accessibilityLabel="إنشاء اختبار"
+        >
+          <Plus size={20} color={colors.primary} pointerEvents="none" />
+        </TouchableOpacity>
+        {TABS.map((item) => {
+          const active = tab === item.key;
           let count = null;
-          if (t.key === "all") count = counts.all;
-          if (t.key === "upcoming") count = counts.upcoming;
-          if (t.key === "past") count = counts.past;
+          if (item.key === "all") count = counts.all;
+          if (item.key === "upcoming") count = counts.upcoming;
+          if (item.key === "past") count = counts.past;
           return (
             <TouchableOpacity
-              key={t.key}
+              key={item.key}
               style={[styles.tab, active && styles.tabActive]}
-              onPress={() => setTab(t.key)}
+              onPress={() => setTab(item.key)}
             >
               <Text style={[styles.tabText, active && styles.tabTextActive]}>
-                {t.label}
+                {item.label}
               </Text>
-              {count != null ? (
-                <View
-                  style={[
-                    styles.tabCount,
-                    active && styles.tabCountActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.tabCountText,
-                      active && styles.tabCountTextActive,
-                    ]}
-                  >
-                    {count}
-                  </Text>
-                </View>
-              ) : (
-                <Plus
-                  size={14}
-                  color={active ? palette.primary : palette.textSecondary}
-                  style={{ marginTop: 2 }}
-                />
-              )}
+              <View style={[styles.tabCount, active && styles.tabCountActive]}>
+                <Text style={[styles.tabCountText, active && styles.tabCountTextActive]}>
+                  {count}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
       </View>
 
       <KeyboardAvoidingView
-        style={styles.scroll}
+        style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: 24 + bottomGap },
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-        {loading && tab !== "create" ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>جاري التحميل...</Text>
-          </View>
-        ) : tab === "create" ? (
-          <View style={styles.formCard}>
-            <View style={styles.formHeader}>
-              <View style={styles.formHeaderIcon}>
-                <Plus size={20} color={palette.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.formTitle}>إعلان اختبار جديد</Text>
-                <Text style={styles.formSubtitle}>
-                  اختر النوع ثم أعلن التاريخ والتفاصيل
-                </Text>
-              </View>
-            </View>
-
-            <Text style={styles.label}>نوع الاختبار</Text>
-            <View style={styles.groupChips}>
-              {TEST_TYPES.map((item) => {
-                const active = testType === item.key;
-                return (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={[styles.groupChip, active && styles.groupChipActive]}
-                    onPress={() => setTestType(item.key)}
-                  >
-                    <Text
-                      style={[
-                        styles.groupChipText,
-                        active && styles.groupChipTextActive,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <Text style={styles.label}>عنوان الاختبار</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="مثال: اختبار الجزء الأول"
-              placeholderTextColor={palette.placeholder}
-              value={title}
-              onChangeText={setTitle}
-              textAlign={textAlignStart}
-            />
-
-            <Text style={styles.label}>تاريخ الاختبار</Text>
-            <TouchableOpacity
-              style={styles.dateBtn}
-              onPress={() => setShowDatePicker(true)}
-            >
-              <Calendar size={18} color={palette.primary} />
-              <Text style={styles.dateBtnText}>
-                {formatDateLabel(toIsoDate(testDate))}
-              </Text>
-            </TouchableOpacity>
-            {showDatePicker ? (
-              <DateTimePicker
-                value={testDate || new Date()}
-                mode="date"
-                display={Platform.OS === "ios" ? "spinner" : "default"}
-                onChange={(event, selected) => {
-                  if (Platform.OS !== "ios") setShowDatePicker(false);
-                  if (event.type === "dismissed") return;
-                  if (selected) setTestDate(selected);
-                }}
-              />
-            ) : null}
-            {Platform.OS === "ios" && showDatePicker ? (
-              <TouchableOpacity
-                style={styles.dateDoneBtn}
-                onPress={() => setShowDatePicker(false)}
-              >
-                <Text style={styles.dateDoneText}>تم</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {testType === "hifz" ? (
-              <>
-                <Text style={styles.label}>كمية القرآن المراد تقييمها</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="مثال: جزء عمّ — أو 10 صفحات"
-                  placeholderTextColor={palette.placeholder}
-                  value={quranQuantity}
-                  onChangeText={setQuranQuantity}
-                  textAlign={textAlignStart}
-                />
-              </>
-            ) : (
-              <>
-                <Text style={styles.label}>رابط Google Form</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="https://docs.google.com/forms/..."
-                  placeholderTextColor={palette.placeholder}
-                  value={formUrl}
-                  onChangeText={setFormUrl}
-                  autoCapitalize="none"
-                  keyboardType="url"
-                  textAlign={textAlignStart}
-                />
-              </>
-            )}
-
-            <TouchableOpacity
-              style={[styles.submitBtn, saving && { opacity: 0.6 }]}
-              onPress={saving ? undefined : handleCreate}
-            >
-              <Plus size={18} color="#fff" />
-              <Text style={styles.submitText}>
-                {saving ? "جاري الإعلان..." : "إعلان الاختبار"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ) : filteredTests.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <View style={styles.emptyIconWrap}>
-              <ClipboardList
-                size={36}
-                color={palette.primary}
-                pointerEvents="none"
-              />
-            </View>
-            <Text style={styles.emptyTitle}>لا توجد اختبارات هنا</Text>
-            <Text style={styles.emptyText}>
-              {tab === "upcoming"
-                ? "لا توجد اختبارات قادمة حالياً"
-                : tab === "past"
-                  ? "لا توجد اختبارات سابقة بعد"
-                  : "ابدأ بإنشاء أول اختبار للأعضاء"}
-            </Text>
-            <TouchableOpacity
-              style={styles.emptyCreateBtn}
-              onPress={() => setTab("create")}
-              activeOpacity={0.8}
-            >
-              <Plus size={18} color="#fff" />
-              <Text style={styles.emptyCreateText}>إنشاء اختبار</Text>
-            </TouchableOpacity>
+        {showInitialLoader ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={colors.primary} />
           </View>
         ) : (
-          filteredTests.map(renderTestCard)
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: 24 + bottomGap }]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => loadAll("refresh")}
+                colors={[colors.primary]}
+                tintColor={colors.primary}
+              />
+            }
+          >
+            {tab === "create" ? (
+              <SectionCard title="إعلان اختبار جديد" subtitle="اختر الموسم والنوع ثم أعلن الاختبار">
+                {activeSeasons.length === 0 ? (
+                  <Text style={styles.emptyText}>
+                    لا يوجد موسم نشط. أنشئ موسماً قبل إعلان اختبار.
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={styles.label}>الموسم</Text>
+                    <View style={styles.chips}>
+                      {activeSeasons.map((season) => {
+                        const active = saisonId === season.id;
+                        return (
+                          <TouchableOpacity
+                            key={season.id}
+                            style={[styles.chip, active && styles.chipActive]}
+                            onPress={() => setSaisonId(season.id)}
+                          >
+                            <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                              {season.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    <Text style={styles.label}>نوع الاختبار</Text>
+                    <View style={styles.chips}>
+                      {TEST_TYPES.map((item) => {
+                        const active = testType === item.key;
+                        return (
+                          <TouchableOpacity
+                            key={item.key}
+                            style={[styles.chip, active && styles.chipActive]}
+                            onPress={() => setTestType(item.key)}
+                          >
+                            <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                              {item.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    <Text style={styles.label}>عنوان الاختبار</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="مثال: اختبار الجزء الأول"
+                      placeholderTextColor={colors.placeholder}
+                      value={title}
+                      onChangeText={setTitle}
+                      textAlign={textAlignStart}
+                    />
+
+                    {testType === "hifz" ? (
+                      <>
+                        <Text style={styles.label}>مقدار الحفظ</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="مثال: جزء عمّ — أو 10 صفحات"
+                          placeholderTextColor={colors.placeholder}
+                          value={quranQuantity}
+                          onChangeText={(value) => {
+                            setQuantityTouched(true);
+                            setQuranQuantity(value);
+                          }}
+                          textAlign={textAlignStart}
+                        />
+                        {showQuantityError ? (
+                          <Text style={styles.fieldError}>
+                            مقدار الحفظ إلزامي لاختبار الحفظ
+                          </Text>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    <Text style={styles.label}>التواريخ المقترحة</Text>
+                    <View style={styles.chips}>
+                      {[...proposedDates]
+                        .sort((a, b) => a.date.localeCompare(b.date))
+                        .map((slot) => (
+                        <View key={slot.date} style={styles.dateChip}>
+                          <Text style={styles.dateChipText}>
+                            {formatShortTestDate(slot.date) || slot.date}
+                          </Text>
+                          <Text style={[styles.dateChipText, styles.timeLtr]}>
+                            {` · ${formatTestTime(slot.heure)}`}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setDatesAttempted(true);
+                              setProposedDates((prev) =>
+                                prev.filter((item) => item.date !== slot.date)
+                              );
+                            }}
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            accessibilityLabel="حذف التاريخ"
+                          >
+                            <Ionicons name="close" size={14} color={colors.muted} />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.dateAddBtn}
+                      onPress={openDatePicker}
+                    >
+                      <Ionicons name="calendar-outline" size={18} color={colors.primary} />
+                      <Text style={styles.dateAddText}>إضافة تاريخ</Text>
+                    </TouchableOpacity>
+                    {iosPicker ? <IosDateTimePicker picker={iosPicker} /> : null}
+                    {iosPicker ? (
+                      <TouchableOpacity style={styles.dateDoneBtn} onPress={iosPicker.confirm}>
+                        <Text style={styles.dateDoneText}>تم</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {slotError ? <Text style={styles.datesError}>{slotError}</Text> : null}
+                    {showDatesError ? (
+                      <Text style={styles.datesError}>أضف تاريخاً واحداً على الأقل</Text>
+                    ) : null}
+
+                    <TouchableOpacity
+                      style={[styles.submitBtn, !canSubmit && styles.submitBtnDisabled]}
+                      onPress={handleCreate}
+                    >
+                      {saving ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <>
+                          <Plus size={18} color="#fff" />
+                          <Text style={styles.submitText}>إعلان الاختبار</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                )}
+              </SectionCard>
+            ) : error && tests.length === 0 ? (
+              <View style={styles.centerBlock}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={() => loadAll()}>
+                  <Text style={styles.retryText}>إعادة المحاولة</Text>
+                </TouchableOpacity>
+              </View>
+            ) : filteredTests.length === 0 ? (
+              <View style={styles.centerBlock}>
+                <Text style={styles.emptyTitle}>لا توجد اختبارات هنا</Text>
+                <Text style={styles.emptyText}>{EMPTY_BY_TAB[tab] || EMPTY_BY_TAB.all}</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={() => setTab("create")}>
+                  <Text style={styles.retryText}>إنشاء اختبار</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                {filteredTests.map(renderTestCard)}
+              </>
+            )}
+          </ScrollView>
         )}
-        </ScrollView>
       </KeyboardAvoidingView>
       {messagesFab}
       {sidebar}
@@ -521,63 +585,38 @@ export default function AdminTestsScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: palette.background,
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   topBar: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.card,
     paddingHorizontal: 16,
     paddingVertical: 14,
     flexDirection: row,
     alignItems: "center",
     gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: palette.border,
+    borderBottomColor: colors.border,
   },
   topBarTitle: {
     flex: 1,
-    fontWeight: "bold",
-    color: palette.textPrimary,
+    color: colors.text,
     fontSize: 16,
+    fontFamily: fonts.bold,
     ...rtlText,
-  },
-  topBarAvatar: {
-    width: 32,
-    height: 32,
-    backgroundColor: palette.softGreen,
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  topBarAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-  bellBadge: {
-    position: "absolute",
-    top: -4,
-    end: -6,
-    backgroundColor: palette.red,
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 3,
-  },
-  bellBadgeText: {
-    color: "#fff",
-    fontSize: 9,
-    fontWeight: "bold",
   },
   tabs: {
     flexDirection: row,
-    backgroundColor: "#fff",
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
-    borderBottomColor: palette.border,
+    borderBottomColor: colors.border,
     paddingHorizontal: 4,
+  },
+  tabCreate: {
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
   },
   tab: {
     flex: 1,
@@ -588,233 +627,207 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2,
     borderBottomColor: "transparent",
   },
-  tabActive: {
-    borderBottomColor: palette.primary,
-  },
+  tabActive: { borderBottomColor: colors.primary },
   tabText: {
     fontSize: 13,
-    color: palette.textSecondary,
-    fontWeight: "500",
+    color: colors.muted,
+    fontFamily: fonts.medium,
     ...rtlText,
   },
-  tabTextActive: {
-    color: palette.primary,
-    fontWeight: "700",
-  },
+  tabTextActive: { color: colors.primary, fontFamily: fonts.bold },
   tabCount: {
     minWidth: 20,
     height: 18,
-    borderRadius: 9,
+    borderRadius: radii.pill,
     paddingHorizontal: 5,
-    backgroundColor: "#EEEEEE",
+    backgroundColor: colors.soft,
     alignItems: "center",
     justifyContent: "center",
   },
-  tabCountActive: {
-    backgroundColor: palette.softGreen,
-  },
+  tabCountActive: { backgroundColor: colors.primarySoft },
   tabCountText: {
     fontSize: 11,
-    fontWeight: "700",
-    color: palette.textSecondary,
+    fontFamily: fonts.bold,
+    color: colors.muted,
   },
-  tabCountTextActive: {
-    color: palette.primary,
-  },
-  scroll: { flex: 1 },
+  tabCountTextActive: { color: colors.primary },
   scrollContent: { padding: 16 },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  centerBlock: { alignItems: "center", paddingVertical: 36, paddingHorizontal: 24 },
+  listCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
     padding: 14,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 10,
     borderWidth: 1,
-    borderColor: palette.border,
+    borderColor: colors.border,
+    borderStartWidth: 3,
   },
-  cardHeader: {
+  listCardMuted: { opacity: 0.6 },
+  cardTitleRow: {
     flexDirection: row,
     alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
-  cardIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: palette.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardHeaderInfo: {
-    flex: 1,
-    gap: 6,
+    gap: 8,
   },
   cardTitle: {
-    fontWeight: "700",
-    fontSize: 15,
-    color: palette.textPrimary,
-    ...rtlText,
-  },
-  statusBadge: {
-    alignSelf: "flex-start",
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    ...rtlText,
-  },
-  cardDesc: {
-    color: palette.textSecondary,
-    fontSize: 13,
-    marginBottom: 10,
-    lineHeight: 20,
-    ...rtlText,
-  },
-  metaPills: {
-    flexDirection: row,
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  metaPill: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: palette.background,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: palette.border,
-  },
-  metaPillText: {
-    color: palette.textSecondary,
-    fontSize: 12,
-    fontWeight: "500",
-    ...rtlText,
-  },
-  participantsText: {
-    marginTop: 8,
-    color: palette.textSecondary,
-    fontSize: 12,
-    ...rtlText,
-  },
-  scoreText: {
-    marginTop: 8,
-    color: "#F9A825",
-    fontWeight: "700",
-    fontSize: 14,
-    ...rtlText,
-  },
-  cardActions: {
-    flexDirection: row,
-    gap: 8,
-    marginTop: 12,
-  },
-  actionBtn: {
     flex: 1,
-    flexDirection: row,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 11,
-    borderRadius: 12,
-  },
-  completeBtn: { backgroundColor: palette.primary },
-  cancelBtn: { backgroundColor: palette.red },
-  actionBtnText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 13,
+    fontSize: 16,
+    color: colors.text,
+    fontFamily: fonts.bold,
     ...rtlText,
   },
-  emptyCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    paddingVertical: 36,
-    paddingHorizontal: 24,
+  statusWrap: {
+    flexDirection: row,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: palette.border,
+    gap: 6,
+    flexShrink: 0,
   },
-  emptyIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: palette.softGreen,
-    justifyContent: "center",
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusLabel: {
+    fontSize: 12,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  cardMetaRow: {
+    flexDirection: row,
     alignItems: "center",
-    marginBottom: 16,
+    gap: 8,
+  },
+  cardMetaText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  cardDate: {
+    flexShrink: 0,
+    fontSize: 13,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  progressTrack: {
+    flex: 1,
+    height: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.border,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
+  },
+  cardFootRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+  },
+  cardFootText: {
+    flexShrink: 0,
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.medium,
+    ...rtlText,
   },
   emptyTitle: {
     fontSize: 16,
-    fontWeight: "700",
-    color: palette.textPrimary,
+    color: colors.text,
+    fontFamily: fonts.bold,
     marginBottom: 6,
     ...rtlText,
   },
   emptyText: {
-    color: palette.textSecondary,
-    marginBottom: 18,
+    color: colors.muted,
     fontSize: 13,
+    fontFamily: fonts.regular,
     textAlign: "center",
     lineHeight: 20,
     ...rtlText,
   },
-  emptyCreateBtn: {
+  dateChip: {
     flexDirection: row,
     alignItems: "center",
-    gap: 8,
-    backgroundColor: palette.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 14,
-  },
-  emptyCreateText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-    ...rtlText,
-  },
-  formCard: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 16,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    backgroundColor: colors.soft,
     borderWidth: 1,
-    borderColor: palette.border,
+    borderColor: colors.border,
   },
-  formHeader: {
+  dateChipText: {
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.medium,
+    ...rtlText,
+  },
+  timeLtr: { writingDirection: "ltr" },
+  dateAddBtn: {
     flexDirection: row,
     alignItems: "center",
-    gap: 12,
-    marginBottom: 18,
+    alignSelf: "flex-start",
+    gap: 6,
+    marginBottom: 10,
   },
-  formHeaderIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: palette.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  formTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: palette.textPrimary,
+  dateAddText: {
+    fontSize: 14,
+    color: colors.primary,
+    fontFamily: fonts.semiBold,
     ...rtlText,
   },
-  formSubtitle: {
+  dateDoneBtn: {
+    alignSelf: "flex-start",
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  dateDoneText: {
+    color: colors.primary,
+    fontFamily: fonts.bold,
+    ...rtlText,
+  },
+  datesError: {
+    color: colors.red,
     fontSize: 12,
-    color: palette.textSecondary,
-    marginTop: 2,
+    fontFamily: fonts.regular,
+    marginBottom: 14,
     ...rtlText,
   },
+  fieldError: {
+    color: colors.red,
+    fontSize: 12,
+    fontFamily: fonts.regular,
+    marginTop: -8,
+    marginBottom: 14,
+    ...rtlText,
+  },
+  errorText: {
+    color: colors.red,
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    textAlign: "center",
+    marginBottom: 12,
+    ...rtlText,
+  },
+  retryBtn: {
+    marginTop: 14,
+    backgroundColor: colors.primary,
+    borderRadius: radii.md,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  retryText: { color: "#fff", fontFamily: fonts.bold, ...rtlText },
   label: {
     fontSize: 14,
-    fontWeight: "500",
-    color: palette.textSecondary,
+    color: colors.textSecondary,
+    fontFamily: fonts.medium,
     marginBottom: 6,
     ...rtlText,
   },
@@ -823,179 +836,53 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 12,
-    backgroundColor: palette.background,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.inputBg,
     fontSize: 15,
-    color: palette.textPrimary,
+    color: colors.text,
+    fontFamily: fonts.regular,
     marginBottom: 14,
     ...rtlText,
   },
-  textarea: {
-    minHeight: 80,
-    textAlignVertical: "top",
-  },
-  dateBtn: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 12,
-    backgroundColor: palette.background,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 14,
-  },
-  dateBtnText: {
-    fontSize: 15,
-    color: palette.textPrimary,
-    ...rtlText,
-  },
-  dateDoneBtn: {
-    alignSelf: "flex-start",
-    backgroundColor: palette.primary,
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginBottom: 14,
-  },
-  dateDoneText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-    ...rtlText,
-  },
-  groupChips: {
+  chips: {
     flexDirection: row,
     flexWrap: "wrap",
     gap: 8,
     marginBottom: 14,
   },
-  groupChip: {
+  chip: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: palette.background,
+    borderRadius: radii.pill,
+    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: palette.border,
+    borderColor: colors.border,
   },
-  groupChipActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
-  },
-  groupChipText: {
+  chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  chipText: {
     fontSize: 13,
-    color: palette.textSecondary,
+    color: colors.textSecondary,
+    fontFamily: fonts.medium,
     ...rtlText,
   },
-  groupChipTextActive: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  checklistHeader: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  selectAllText: {
-    color: palette.primary,
-    fontSize: 14,
-    fontWeight: "500",
-    ...rtlText,
-  },
-  checkItem: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 12,
-    padding: 10,
-    backgroundColor: palette.background,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: palette.border,
-    marginBottom: 6,
-  },
-  checkItemSelected: {
-    borderColor: palette.primary,
-    backgroundColor: palette.softGreen,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: palette.border,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  checkboxChecked: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
-  },
-  checkmark: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-  checkLabel: {
-    color: palette.textPrimary,
-    fontSize: 14,
-    flex: 1,
-    ...rtlText,
-  },
-  toggleRow: {
-    flexDirection: row,
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 14,
-    backgroundColor: palette.background,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    marginTop: 10,
-    marginBottom: 16,
-  },
-  toggleLabel: {
-    color: palette.textPrimary,
-    fontSize: 14,
-    ...rtlText,
-  },
-  toggleTrack: {
-    width: 48,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: palette.border,
-    justifyContent: "center",
-    paddingHorizontal: 2,
-  },
-  toggleTrackOn: {
-    backgroundColor: palette.gold,
-  },
-  toggleThumb: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#fff",
-    alignSelf: "flex-start",
-  },
-  toggleThumbOn: {
-    alignSelf: "flex-end",
-  },
+  chipTextActive: { color: "#fff", fontFamily: fonts.semiBold },
   submitBtn: {
     width: "100%",
     paddingVertical: 14,
-    backgroundColor: palette.primary,
-    borderRadius: 16,
+    backgroundColor: colors.primary,
+    borderRadius: radii.lg,
     alignItems: "center",
     flexDirection: row,
     justifyContent: "center",
     gap: 8,
+    minHeight: 48,
   },
+  submitBtnDisabled: { opacity: 0.5 },
   submitText: {
     color: "#fff",
-    fontWeight: "bold",
     fontSize: 16,
+    fontFamily: fonts.bold,
     ...rtlText,
   },
 });

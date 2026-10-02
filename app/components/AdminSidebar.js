@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import {
   X,
@@ -36,6 +37,7 @@ import {
 } from "../constants/notifications";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { formatUnreadBadge } from "../lib/messagesApi";
+import { countPlannedTestsAdmin } from "../lib/testsApi";
 import AdminMessagesFab from "./AdminMessagesFab";
 import ProfileAvatar from "./ProfileAvatar";
 
@@ -299,14 +301,34 @@ export function useAdminSidebar(navigation, activeItem = "home") {
     () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
     [threads]
   );
+  const [plannedTestsCount, setPlannedTestsCount] = useState(0);
+
+  // Tests planifiés seulement. 0 ou erreur → pas de badge.
+  const refreshPlannedTests = useCallback(async () => {
+    const res = await countPlannedTestsAdmin();
+    setPlannedTestsCount(res?.ok ? Number(res.count) || 0 : 0);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshPlannedTests();
+    }, [refreshPlannedTests])
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refreshPlannedTests();
+  }, [isOpen, refreshPlannedTests]);
 
   const menuBadges = useMemo(() => {
     const byCategory = getMenuBadgeCounts(currentUser) || {};
     const mapped = {};
     Object.entries(ADMIN_MENU_TO_CATEGORY).forEach(([menuId, category]) => {
+      if (menuId === "tests") return;
       const n = Number(byCategory[category]) || 0;
       if (n > 0) mapped[menuId] = n;
     });
+    if (plannedTestsCount > 0) mapped.tests = plannedTestsCount;
     const pendingRegs = Number(stats?.pendingRegs) || 0;
     if (pendingRegs > 0) {
       mapped.registrations = pendingRegs;
@@ -314,10 +336,12 @@ export function useAdminSidebar(navigation, activeItem = "home") {
       delete mapped.registrations;
     }
     return mapped;
-  }, [currentUser, getMenuBadgeCounts, notifications, stats?.pendingRegs]);
+  }, [currentUser, getMenuBadgeCounts, notifications, stats?.pendingRegs, plannedTestsCount]);
 
   // Ouvrir une section (y compris via navigation hors sidebar) → marquer lue.
+  // Les tests ne sont plus une catégorie de notifications locales.
   useEffect(() => {
+    if (activeItem === "tests") return;
     const category = ADMIN_MENU_TO_CATEGORY[activeItem];
     if (category) {
       markCategoryNotificationsRead(category, currentUser);
@@ -364,6 +388,7 @@ export function useAdminSidebar(navigation, activeItem = "home") {
         unreadTotal={unreadTotal}
         menuBadges={menuBadges}
         onMenuPress={(id) => {
+          if (id === "tests") return;
           const category = ADMIN_MENU_TO_CATEGORY[id];
           if (category) markCategoryNotificationsRead(category, currentUser);
         }}
