@@ -18,7 +18,7 @@ begin;
 --   public.trg_seances_ensure_chat_group          (0054, mis à jour ici)
 --   public.trg_inscriptions_sync_chat_group       (0054, mis à jour ici)
 --   backfill ponctuel en fin de 0054              (déjà exécuté, pas un appelant vivant)
--- 0064 et 0089 n'appellent pas la fonction. 0089 met à jour
+-- 0064 n'appelle pas la fonction. 0096 et 0097 mettent à jour
 -- seances.superviseur_id, ce qui déclenche seances_ensure_chat_group.
 -- Le client (chatGroupsApi.ensureSeanceChatGroup) reste sur le wrapper public.
 

@@ -1,4 +1,4 @@
--- 0089_seance_superviseur_swap.sql
+-- 0096_seance_superviseur_swap.sql
 -- Permutation du superviseur entre deux séances de la même saison.
 --
 -- Schéma live (SQL Editor, 2026-10-01) :

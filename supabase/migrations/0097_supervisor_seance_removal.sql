@@ -1,4 +1,4 @@
--- 0090_supervisor_seance_removal.sql
+-- 0097_supervisor_seance_removal.sql
 -- Suppression cohérente superviseur / séance, sans toucher à l'historique.
 --
 -- Règles :

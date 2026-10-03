@@ -46,12 +46,27 @@ $$;
 alter table public.tests
   add column if not exists saison_id text;
 
--- La saison du test est celle de sa séance, quand elle existe.
-update public.tests t
-set saison_id = s.saison_id
-from public.seances s
-where t.seance_id = s.id
-  and t.saison_id is null;
+-- La saison du test est celle de sa séance, quand la colonne existe encore.
+-- En live, tests.seance_id a déjà été retirée : on ne référence pas la colonne.
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'tests'
+      and column_name = 'seance_id'
+  ) then
+    execute $upd$
+      update public.tests t
+      set saison_id = s.saison_id
+      from public.seances s
+      where t.seance_id = s.id
+        and t.saison_id is null
+    $upd$;
+  end if;
+end;
+$$;
 
 -- Orphelins (séance absente ou sans saison) : suppression.
 -- test_invitations et test_resultats partent par ON DELETE CASCADE (0005).
@@ -84,8 +99,16 @@ drop policy if exists "tests_select_superviseur" on public.tests;
 drop policy if exists "tests_write_superviseur" on public.tests;
 drop policy if exists "test_invitations_select_superviseur" on public.test_invitations;
 drop policy if exists "test_invitations_write_superviseur" on public.test_invitations;
-drop policy if exists "test_resultats_select_superviseur" on public.test_resultats;
-drop policy if exists "test_resultats_write_superviseur" on public.test_resultats;
+
+-- DROP POLICY exige que la table existe, même avec IF EXISTS.
+do $$
+begin
+  if to_regclass('public.test_resultats') is not null then
+    execute 'drop policy if exists "test_resultats_select_superviseur" on public.test_resultats';
+    execute 'drop policy if exists "test_resultats_write_superviseur" on public.test_resultats';
+  end if;
+end;
+$$;
 
 -- Le test n'a plus de séance : le superviseur le voit s'il supervise
 -- au moins un membre invité (inscription accepte dans sa séance).
