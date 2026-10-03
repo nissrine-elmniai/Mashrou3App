@@ -243,45 +243,6 @@ export async function getAllSeances({ saisonId = null, lite = false } = {}) {
 }
 
 /**
- * (Admin) Recherche une séance active par nom (comparaison insensible à la casse).
- * @returns {{ ok, seance? }}
- */
-export async function findActiveSeanceByName(nom, saisonId = null) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  const cleanNom = String(nom || "").trim();
-  if (!cleanNom) {
-    return { ok: true, seance: null };
-  }
-  try {
-    let query = supabase
-      .from("seances")
-      .select("id, nom, statut, superviseur_id, saison_id")
-      .eq("statut", "active");
-    if (saisonId) {
-      query = query.eq("saison_id", saisonId);
-    }
-    const { data, error } = await withTimeout(
-      query,
-      SUPABASE_TIMEOUT_MS,
-      "البحث عن الحصة"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "seances") };
-    }
-    const seance =
-      (data || []).find(
-        (row) =>
-          row.nom && row.nom.trim().toLowerCase() === cleanNom.toLowerCase()
-      ) || null;
-    return { ok: true, seance };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
-/**
  * (Admin) Création d'une séance.
  * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId?, genre?, dateDebut?, dateFin? }
  * @returns { ok, seance? }

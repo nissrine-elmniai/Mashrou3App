@@ -17,11 +17,24 @@ function mapEmailSendError(raw) {
   return msg;
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function htmlParagraph(text, margin = "0 0 16px") {
+  return `<p style="margin:${margin};">${text}</p>`;
+}
+
 /**
  * إرسال بريد التطبيق عبر Edge Function (Resend).
  * إن كان USE_MOCK_EMAIL=true → محاكاة فقط.
+ * html اختياري : إن وُجد يُرسل كما هو، وإلا تولّده الدالة من النص.
  */
-async function sendAppEmail({ toEmail, toName, subject, message }) {
+async function sendAppEmail({ toEmail, toName, subject, message, html }) {
   const email = String(toEmail || "").trim();
   if (!email) {
     return { ok: false, error: "لا يوجد بريد إلكتروني للمستلم" };
@@ -35,6 +48,7 @@ async function sendAppEmail({ toEmail, toName, subject, message }) {
         to: `${toName || ""} <${email}>`,
         subject,
         message,
+        html,
       });
     }
     return {
@@ -58,6 +72,7 @@ async function sendAppEmail({ toEmail, toName, subject, message }) {
         toName: toName || "",
         subject,
         message,
+        ...(html ? { html } : {}),
       },
     });
     const timeoutPromise = new Promise((_, reject) => {
@@ -142,28 +157,59 @@ export async function sendMemberAcceptEmail({
   });
 }
 
-/** رسالة تعيين مشرف على مجموعة */
+/** رسالة دعوة مشرف */
 export async function sendSupervisorInviteEmail({
   toEmail,
   fullName,
-  groupName,
 }) {
-  const subject = "تعيين مشرف — مهندس حامل لكتاب الله";
+  const name = String(fullName || "").trim();
+  const email = String(toEmail || "").trim();
+  const fromName = APP_EMAIL.fromName;
+  const subject = "دعوة للانضمام كمشرف — مهندس حامل لكتاب الله";
   const message = [
-    `السلام عليكم ${fullName || ""}،`,
+    `السلام عليكم ورحمة الله ${name}،`,
     "",
-    `تم تعيينك مشرفاً على المجموعة: ${groupName || "—"}.`,
-    "يمكنك الآن إنشاء حسابك انطلاقاً من التطبيق (تسجيل دخول المشرف ← إنشاء حساب لأول مرة).",
+    "يسعدنا دعوتك للانضمام إلى تطبيق مهندس حامل لكتاب الله بصفتك مشرفاً.",
     "",
-    "بارك الله فيك.",
-    `— ${APP_EMAIL.fromName}`,
+    "لتفعيل حسابك:",
+    "",
+    "1. حمّل التطبيق وافتحه.",
+    "2. اختر «تسجيل دخول المشرف» ثم «إنشاء حساب لأول مرة».",
+    `3. استعمل هذا البريد الإلكتروني نفسه: ${email}`,
+    "",
+    "بعد التفعيل، سيتم تعيين حصتك من طرف الإدارة.",
+    "",
+    "بارك الله فيك وجزاك خيراً.",
+    `— ${fromName}`,
   ].join("\n");
+
+  const safeName = escapeHtml(name);
+  const safeEmail = escapeHtml(email);
+  const safeFrom = escapeHtml(fromName);
+  const html = [
+    `<div dir="rtl">`,
+    htmlParagraph(`السلام عليكم ورحمة الله ${safeName}،`),
+    htmlParagraph(
+      "يسعدنا دعوتك للانضمام إلى تطبيق مهندس حامل لكتاب الله بصفتك مشرفاً."
+    ),
+    htmlParagraph("لتفعيل حسابك:", "0 0 8px"),
+    `<ol dir="rtl" style="margin:0 0 16px;padding-inline-start:1.4em;">`,
+    `<li>حمّل التطبيق وافتحه.</li>`,
+    `<li>اختر «تسجيل دخول المشرف» ثم «إنشاء حساب لأول مرة».</li>`,
+    `<li>استعمل هذا البريد الإلكتروني نفسه: ${safeEmail}</li>`,
+    `</ol>`,
+    htmlParagraph("بعد التفعيل، سيتم تعيين حصتك من طرف الإدارة."),
+    htmlParagraph("بارك الله فيك وجزاك خيراً.", "0 0 8px"),
+    htmlParagraph(`— ${safeFrom}`, "0"),
+    `</div>`,
+  ].join("");
 
   return sendAppEmail({
     toEmail,
     toName: fullName,
     subject,
     message,
+    html,
   });
 }
 

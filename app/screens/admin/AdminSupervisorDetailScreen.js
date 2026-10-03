@@ -11,6 +11,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -28,6 +29,7 @@ import {
   getAllAcceptedInscriptions,
   getMemberProfiles,
   formatSeanceScheduleLabel,
+  assignOrSwapSeanceSuperviseur,
 } from "../../lib/seancesApi";
 import { initials } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
@@ -85,6 +87,12 @@ function SectionCard({ title, children }) {
   );
 }
 
+function seanceSupervisorName(seance) {
+  const sup = seance?.superviseur;
+  const name = `${sup?.first_name || ""} ${sup?.last_name || ""}`.trim();
+  return name || sup?.email || "مشرف";
+}
+
 export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const params = route.params || {};
   const supervisorId = params.supervisorId || null;
@@ -97,6 +105,24 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const [seances, setSeances] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [assigningSeanceId, setAssigningSeanceId] = useState(null);
+
+  const reloadDetail = useCallback(async () => {
+    if (!supervisorId) return { ok: false };
+    const saisonId = activeSeason?.id || null;
+    const [profRes, seaRes, inscRes, memRes] = await Promise.all([
+      fetchProfile(supervisorId),
+      getAllSeances({ saisonId }),
+      getAllAcceptedInscriptions({ saisonId }),
+      getMemberProfiles(),
+    ]);
+    if (profRes.ok) setProfileRow(profRes.profile);
+    if (seaRes.ok) setSeances(seaRes.seances);
+    if (inscRes.ok) setInscriptions(inscRes.inscriptions);
+    if (memRes.ok) setProfiles(memRes.members);
+    return seaRes;
+  }, [supervisorId, activeSeason?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -105,25 +131,15 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
         return undefined;
       }
       let cancelled = false;
-      const saisonId = activeSeason?.id || null;
       (async () => {
-        const [profRes, seaRes, inscRes, memRes] = await Promise.all([
-          fetchProfile(supervisorId),
-          getAllSeances({ saisonId }),
-          getAllAcceptedInscriptions({ saisonId }),
-          getMemberProfiles(),
-        ]);
-        if (cancelled) return;
-        if (profRes.ok) setProfileRow(profRes.profile);
-        if (seaRes.ok) setSeances(seaRes.seances);
-        if (inscRes.ok) setInscriptions(inscRes.inscriptions);
-        if (memRes.ok) setProfiles(memRes.members);
-        setLoading(false);
+        setLoading(true);
+        await reloadDetail();
+        if (!cancelled) setLoading(false);
       })();
       return () => {
         cancelled = true;
       };
-    }, [supervisorId, activeSeason?.id])
+    }, [supervisorId, reloadDetail])
   );
 
   const firstName = profileRow?.first_name || params.firstName || "";
@@ -139,6 +155,45 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       ),
     [seances, supervisorId]
   );
+
+  const assignableSeances = useMemo(
+    () => seances.filter((s) => s.statut !== "archivee"),
+    [seances]
+  );
+
+  const accountStatus = profileRow?.account_status || "active";
+  const canAssignSeance =
+    accountStatus === "active" && supervisorSeances.length === 0;
+
+  const assignSeance = async (seanceId) => {
+    if (!supervisorId || assigningSeanceId) return;
+    setAssigningSeanceId(seanceId);
+    const res = await assignOrSwapSeanceSuperviseur(seanceId, supervisorId);
+    setAssigningSeanceId(null);
+    if (!res.ok) {
+      Alert.alert("تنبيه", res.error || "تعذر تعيين الحصة");
+      return;
+    }
+    setPickerOpen(false);
+    await reloadDetail();
+  };
+
+  const confirmAssignSeance = (seance) => {
+    if (assigningSeanceId) return;
+    if (!seance?.superviseur_id) {
+      assignSeance(seance.id);
+      return;
+    }
+    const currentName = seanceSupervisorName(seance);
+    Alert.alert(
+      "تعيين حصة",
+      `هذه الحصة مسندة إلى ${currentName}، سيصبح بدون حصة. متابعة؟`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        { text: "متابعة", onPress: () => assignSeance(seance.id) },
+      ]
+    );
+  };
 
   const members = useMemo(() => {
     const seanceIds = new Set(supervisorSeances.map((s) => s.id));
@@ -333,7 +388,49 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
                   </View>
                 </View>
               ) : (
-                <Text style={styles.emptyText}>لم يتم تعيين حصة بعد</Text>
+                <>
+                  <Text style={styles.emptyText}>لم يتم تعيين حصة بعد</Text>
+                  {canAssignSeance ? (
+                    <>
+                      <TouchableOpacity
+                        style={styles.assignBtn}
+                        onPress={() => setPickerOpen((open) => !open)}
+                        disabled={!!assigningSeanceId}
+                        accessibilityRole="button"
+                        accessibilityLabel="تعيين حصة"
+                      >
+                        <Text style={styles.assignBtnText}>تعيين حصة</Text>
+                      </TouchableOpacity>
+                      {pickerOpen
+                        ? assignableSeances.length === 0
+                          ? (
+                            <Text style={styles.emptyText}>
+                              لا توجد حصص في هذا الموسم
+                            </Text>
+                          )
+                          : assignableSeances.map((seance) => (
+                            <TouchableOpacity
+                              key={seance.id}
+                              style={styles.seanceChoice}
+                              onPress={() => confirmAssignSeance(seance)}
+                              disabled={!!assigningSeanceId}
+                              accessibilityRole="button"
+                            >
+                              <View style={styles.infoTextWrap}>
+                                <Text style={styles.infoValue}>{seance.nom}</Text>
+                                <Text style={styles.infoLabel}>
+                                  {seanceSupervisorName(seance)}
+                                </Text>
+                              </View>
+                              {assigningSeanceId === seance.id ? (
+                                <ActivityIndicator color={palette.primary} />
+                              ) : null}
+                            </TouchableOpacity>
+                          ))
+                        : null}
+                    </>
+                  ) : null}
+                </>
               )}
             </SectionCard>
           </>
@@ -506,6 +603,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 20,
     ...rtlText,
+  },
+  assignBtn: {
+    marginTop: 16,
+    alignSelf: "stretch",
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  assignBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    ...rtlText,
+  },
+  seanceChoice: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
   },
   memberCard: {
     backgroundColor: "#fff",
