@@ -13,32 +13,29 @@ import {
   Platform,
   Pressable,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, Trash2, Plus, X, Menu, Bell, Ban } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
+import { getSupervisorProfiles, getAllSeances } from "../../lib/seancesApi";
 import {
-  getSupervisorProfiles,
-  getActiveSupervisors,
-  getAllSeances,
-} from "../../lib/seancesApi";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+  getActiveRegularSeason,
+  supervisorIdsForSeason,
+} from "../../lib/seasonScope";
 import ProfileAvatar from "../../components/ProfileAvatar";
-import { canonicalEmail } from "../../lib/authEmail";
 import {
   createSupervisorInvitation,
   listSupervisorInvitations,
   revokeSupervisorInvitation,
   deleteSupervisorAccount,
-  syncSupervisorSeanceLinks,
 } from "../../lib/supervisorInvitationsApi";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
-  gold: "#FBC02D",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
   blue: "#1976D2",
@@ -49,40 +46,47 @@ const palette = {
   border: "#E0E0E0",
 };
 
-function invitationForSupervisor(supervisor, invitations) {
-  const mail = canonicalEmail(supervisor.email);
-  return invitations.find(
-    (inv) => inv.status !== "revoked" && canonicalEmail(inv.email) === mail
-  );
+function supervisorFullName(row) {
+  return `${row?.first_name || ""} ${row?.last_name || ""}`.trim();
 }
 
-function supervisorSessionLabel(supervisor, seances, invitations) {
-  const linked = seances.filter(
+function compareArabicName(a, b) {
+  return supervisorFullName(a).localeCompare(supervisorFullName(b), "ar");
+}
+
+/**
+ * « الكل » : comptes activés, avec ou sans séance.
+ * Inactifs : seulement s'ils ont déjà une séance cette saison (comportement précédent).
+ */
+function supervisorsForAllFilter(profiles, seances, saisonId) {
+  if (!saisonId) return [];
+  const assignedIds = supervisorIdsForSeason(seances, saisonId);
+  return (profiles || []).filter((profile) => {
+    const status = profile?.account_status || "active";
+    if (status === "inactive") return assignedIds.has(profile.id);
+    return status === "active";
+  });
+}
+
+function supervisorSessionLabel(supervisor, seances) {
+  const linked = seances.find(
     (s) => s.superviseur_id === supervisor.id && s.statut !== "archivee"
   );
-  if (linked.length === 1) return linked[0].nom;
-  if (linked.length > 1) return `${linked.length} حصص`;
-
-  const invitation = invitationForSupervisor(supervisor, invitations);
-  if (invitation?.seance_id) {
-    const byId = seances.find((s) => s.id === invitation.seance_id);
-    if (byId) return byId.nom;
-  }
-  if (invitation?.group_name) return invitation.group_name;
-  return "بدون حصة";
+  return linked?.nom || "بدون حصة";
 }
 
 export default function AdminSupervisorsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "supervisors");
-  const { currentUser, stats, seasons } = useApp();
+  const { currentUser, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
   const insets = useSafeAreaInsets();
-  const fabBottom = Math.max(insets.bottom, 16) + 16;
+  const listBottom = Math.max(insets.bottom, 16) + 76;
 
   const [supervisors, setSupervisors] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [seances, setSeances] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -94,36 +98,38 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [selectedSeanceId, setSelectedSeanceId] = useState(null);
   const [sending, setSending] = useState(false);
 
-  const pendingCount = stats?.pendingRegs ?? 0;
-
   const loadAll = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     const saisonId = activeSeason?.id || null;
     const [supRes, invRes, seaRes] = await Promise.all([
       getSupervisorProfiles(),
       listSupervisorInvitations({ saisonId }),
-      getAllSeances({ saisonId }),
+      getAllSeances({ saisonId, lite: true }),
     ]);
-    if (supRes.ok) {
-      await syncSupervisorSeanceLinks(supRes.supervisors);
-      const [refreshedSeances, activeRes] = await Promise.all([
-        getAllSeances({ saisonId }),
-        getActiveSupervisors({ saisonId }),
-      ]);
-      setSupervisors(activeRes.ok ? activeRes.supervisors : []);
-      if (refreshedSeances.ok) setSeances(refreshedSeances.seances);
-      else if (seaRes.ok) setSeances(seaRes.seances);
-    } else if (seaRes.ok) {
-      setSeances(seaRes.seances);
-      setSupervisors([]);
+    if (!supRes.ok || !invRes.ok || !seaRes.ok) {
+      setLoadError(
+        (!supRes.ok && supRes.error) ||
+          (!invRes.ok && invRes.error) ||
+          (!seaRes.ok && seaRes.error) ||
+          "تعذر تحميل المشرفين"
+      );
+      setLoading(false);
+      return;
     }
-    if (invRes.ok) setInvitations(invRes.invitations);
+    setSupervisors(
+      supervisorsForAllFilter(supRes.supervisors, seaRes.seances, saisonId)
+    );
+    setSeances(seaRes.seances);
+    setInvitations(invRes.invitations);
     setLoading(false);
   }, [activeSeason?.id]);
 
-  useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+  useFocusEffect(
+    useCallback(() => {
+      loadAll();
+    }, [loadAll])
+  );
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
@@ -160,22 +166,26 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
   const q = search.trim().toLowerCase();
   const filteredSupervisors = useMemo(() => {
-    return supervisors.filter((s) => {
-      if (!q) return true;
-      const fullName = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
-      const mail = (s.email || "").toLowerCase();
-      return fullName.includes(q) || mail.includes(q);
-    });
+    return supervisors
+      .filter((s) => {
+        if (!q) return true;
+        const fullName = supervisorFullName(s).toLowerCase();
+        const mail = (s.email || "").toLowerCase();
+        return fullName.includes(q) || mail.includes(q);
+      })
+      .sort(compareArabicName);
   }, [supervisors, q]);
 
   const filteredInvitations = useMemo(() => {
     if (filter !== "pending") return [];
-    return pendingInvitations.filter((i) => {
-      if (!q) return true;
-      const fullName = `${i.first_name || ""} ${i.last_name || ""}`.toLowerCase();
-      const mail = (i.email || "").toLowerCase();
-      return fullName.includes(q) || mail.includes(q);
-    });
+    return pendingInvitations
+      .filter((i) => {
+        if (!q) return true;
+        const fullName = supervisorFullName(i).toLowerCase();
+        const mail = (i.email || "").toLowerCase();
+        return fullName.includes(q) || mail.includes(q);
+      })
+      .sort(compareArabicName);
   }, [pendingInvitations, filter, q]);
 
   const resetForm = () => {
@@ -321,7 +331,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: fabBottom + 72 },
+          { paddingBottom: listBottom },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -338,6 +348,17 @@ export default function AdminSupervisorsScreen({ navigation }) {
         </View>
 
         <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() => {
+              resetForm();
+              setShowAdd(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="إضافة مشرف"
+          >
+            <Plus size={20} color={palette.primary} />
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.filterChip, filter === "all" && styles.filterChipActive]}
             onPress={() => setFilter("all")}
@@ -372,6 +393,13 @@ export default function AdminSupervisorsScreen({ navigation }) {
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
+          </View>
+        ) : loadError ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.errorText}>{loadError}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={loadAll}>
+              <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
+            </TouchableOpacity>
           </View>
         ) : filter === "pending" ? (
           filteredInvitations.length === 0 ? (
@@ -416,7 +444,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
           <Text style={styles.emptyText}>
             {!activeSeason
               ? "أنشئ موسماً جديداً أولاً"
-              : "لا يوجد مشرفون معيّنون لحصص هذا الموسم بعد"}
+              : "لا يوجد مشرفون مفعّلون"}
           </Text>
         ) : (
           filteredSupervisors.map((supervisor) => {
@@ -447,7 +475,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
                   ) : null}
                   <View style={styles.sessionBadge}>
                     <Text style={styles.sessionBadgeText}>
-                      {supervisorSessionLabel(supervisor, seances, invitations)}
+                      {supervisorSessionLabel(supervisor, seances)}
                     </Text>
                   </View>
                 </View>
@@ -465,16 +493,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
           })
         )}
       </ScrollView>
-
-      <TouchableOpacity
-        style={[styles.fab, { bottom: fabBottom }]}
-        onPress={() => {
-          resetForm();
-          setShowAdd(true);
-        }}
-      >
-        <Plus size={24} color={palette.textPrimary} />
-      </TouchableOpacity>
 
       <Modal
         visible={showAdd}
@@ -645,23 +663,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 14,
   },
-  bellBadge: {
-    position: "absolute",
-    top: -4,
-    end: -6,
-    backgroundColor: palette.red,
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 3,
-  },
-  bellBadgeText: {
-    color: "#fff",
-    fontSize: 9,
-    fontWeight: "bold",
-  },
   scroll: {
     flex: 1,
   },
@@ -693,8 +694,17 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: row,
+    alignItems: "center",
     gap: 8,
     marginBottom: 16,
+  },
+  addBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.softGreen,
   },
   filterChip: {
     paddingHorizontal: 12,
@@ -726,7 +736,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     paddingVertical: 48,
+    paddingHorizontal: 16,
     alignItems: "center",
+  },
+  errorText: {
+    ...rtlText,
+    color: palette.textSecondary,
+    textAlign: "center",
+    fontSize: 14,
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  retryBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
   },
   card: {
     backgroundColor: "#fff",
@@ -793,21 +822,6 @@ const styles = StyleSheet.create({
   },
   deleteBtn: {
     backgroundColor: "#FFEBEE",
-  },
-  fab: {
-    position: "absolute",
-    left: 16,
-    width: 56,
-    height: 56,
-    backgroundColor: palette.gold,
-    borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 6,
   },
   modalOverlay: {
     flex: 1,

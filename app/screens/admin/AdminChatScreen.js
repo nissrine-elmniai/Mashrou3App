@@ -15,7 +15,7 @@ import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getActiveSupervisors } from "../../lib/seancesApi";
+import { getAssignableSupervisors } from "../../lib/seancesApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { mergeInboxRows } from "../../lib/messagesApi";
 import { initials } from "../supervisor/supervisorHelpers";
@@ -37,7 +37,7 @@ export default function AdminChatScreen({ navigation }) {
     let cancelled = false;
     (async () => {
       setContactsLoading(true);
-      const sRes = await getActiveSupervisors({ saisonId: activeSeasonId });
+      const sRes = await getAssignableSupervisors({ saisonId: activeSeasonId });
       if (cancelled) return;
       const list = [];
       if (sRes.ok) {

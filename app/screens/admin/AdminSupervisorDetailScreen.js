@@ -29,15 +29,7 @@ import {
   getMemberProfiles,
   formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
-import {
-  getAllProgressionAdmin,
-  computeProgressMetrics,
-} from "../../lib/progressApi";
-import {
-  LEVEL_COLORS,
-  deriveLevel,
-  initials,
-} from "../supervisor/supervisorHelpers";
+import { initials } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
 
 const palette = {
@@ -105,7 +97,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const [seances, setSeances] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
   const [profiles, setProfiles] = useState([]);
-  const [progressions, setProgressions] = useState([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -116,20 +107,17 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       let cancelled = false;
       const saisonId = activeSeason?.id || null;
       (async () => {
-        const [profRes, seaRes, inscRes, memRes, progRes] =
-          await Promise.all([
-            fetchProfile(supervisorId),
-            getAllSeances({ saisonId }),
-            getAllAcceptedInscriptions({ saisonId }),
-            getMemberProfiles(),
-            getAllProgressionAdmin(),
-          ]);
+        const [profRes, seaRes, inscRes, memRes] = await Promise.all([
+          fetchProfile(supervisorId),
+          getAllSeances({ saisonId }),
+          getAllAcceptedInscriptions({ saisonId }),
+          getMemberProfiles(),
+        ]);
         if (cancelled) return;
         if (profRes.ok) setProfileRow(profRes.profile);
         if (seaRes.ok) setSeances(seaRes.seances);
         if (inscRes.ok) setInscriptions(inscRes.inscriptions);
         if (memRes.ok) setProfiles(memRes.members);
-        if (progRes.ok) setProgressions(progRes.entries);
         setLoading(false);
       })();
       return () => {
@@ -170,13 +158,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       .map((i) => {
         const profile = profileById.get(i.membre_id);
         const seance = seanceById.get(i.seance_id) || i.seance || null;
-        const entries = progressions
-          .filter((e) => e.membre_id === i.membre_id)
-          .sort(
-            (a, b) =>
-              new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-          );
-        const pct = computeProgressMetrics(entries[0])?.globalPct ?? 0;
         const name = `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim();
         return {
           id: i.membre_id,
@@ -189,8 +170,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
           school: profile?.school || null,
           levelLabel: profile?.level || null,
           hifzAmount: profile?.hifz_amount || null,
-          level: deriveLevel(pct),
-          pct,
           seanceId: i.seance_id,
           saisonId: i.saison_id || seance?.saison_id || activeSeason?.id || null,
           session: seance?.nom || "بدون حصة",
@@ -202,7 +181,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   }, [
     inscriptions,
     profiles,
-    progressions,
     supervisorSeances,
     activeSeason?.id,
   ]);
@@ -337,29 +315,25 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               />
             </SectionCard>
 
-            <SectionCard title={`الحصص (${supervisorSeances.length})`}>
-              {supervisorSeances.length === 0 ? (
-                <Text style={styles.emptyText}>
-                  لا توجد حصص مسندة لهذا المشرف
-                </Text>
-              ) : (
-                supervisorSeances.map((seance) => (
-                  <View key={seance.id} style={styles.seanceRow}>
-                    <View style={styles.infoIcon}>
-                      <Ionicons
-                        name="people-outline"
-                        size={18}
-                        color={palette.primary}
-                      />
-                    </View>
-                    <View style={styles.infoTextWrap}>
-                      <Text style={styles.infoValue}>{seance.nom}</Text>
-                      <Text style={styles.infoLabel}>
-                        {formatSeanceScheduleLabel(seance) || "—"}
-                      </Text>
-                    </View>
+            <SectionCard title="الحصة">
+              {supervisorSeances[0] ? (
+                <View style={styles.seanceRow}>
+                  <View style={styles.infoIcon}>
+                    <Ionicons
+                      name="people-outline"
+                      size={18}
+                      color={palette.primary}
+                    />
                   </View>
-                ))
+                  <View style={styles.infoTextWrap}>
+                    <Text style={styles.infoValue}>{supervisorSeances[0].nom}</Text>
+                    <Text style={styles.infoLabel}>
+                      {formatSeanceScheduleLabel(supervisorSeances[0]) || "—"}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.emptyText}>لم يتم تعيين حصة بعد</Text>
               )}
             </SectionCard>
           </>
@@ -387,30 +361,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               />
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>{member.name || "عضو"}</Text>
-                <View style={styles.memberMeta}>
-                  <View
-                    style={[
-                      styles.levelPill,
-                      {
-                        backgroundColor: `${
-                          LEVEL_COLORS[member.level] || palette.primary
-                        }22`,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.levelPillText,
-                        { color: LEVEL_COLORS[member.level] || palette.primary },
-                      ]}
-                    >
-                      {member.level}
-                    </Text>
-                  </View>
-                  <Text style={styles.memberSession}>{member.session}</Text>
-                </View>
               </View>
-              <Text style={styles.memberPct}>{member.pct}%</Text>
             </TouchableOpacity>
           ))
         )}
@@ -572,32 +523,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: palette.textPrimary,
-    marginBottom: 6,
     ...rtlText,
-  },
-  memberMeta: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  levelPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-  },
-  levelPillText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  memberSession: {
-    fontSize: 12,
-    color: palette.textSecondary,
-    ...rtlText,
-  },
-  memberPct: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: palette.textSecondary,
   },
 });
