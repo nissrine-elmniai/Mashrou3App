@@ -39,6 +39,17 @@ function isTableMissingError(error) {
   return /relation.*does not exist|Could not find the table/i.test(msg);
 }
 
+/** Refus d'accès (RLS, 42501, JWT PGRST301) : ne pas le traiter comme une liste vide. */
+function isPermissionDenied(error) {
+  const msg = String(error?.message || "");
+  const code = String(error?.code || "");
+  return (
+    code === "42501" ||
+    code === "PGRST301" ||
+    /permission|row-level security|RLS|42501|PGRST301|violates row/i.test(msg)
+  );
+}
+
 /** Normalise statut depuis la colonne presences.statut ('present' | 'absent'). */
 function normalizePresenceStatus(row) {
   if (row == null) return "unset";
@@ -856,10 +867,7 @@ export async function getSeancePresenceOverview(seanceId) {
     );
 
     if (error) {
-      if (
-        isTableMissingError(error) ||
-        /permission|row-level security|RLS|42501|violates row/i.test(error?.message || "")
-      ) {
+      if (isTableMissingError(error)) {
         return {
           ok: true,
           presentCount: 0,
@@ -868,6 +876,9 @@ export async function getSeancePresenceOverview(seanceId) {
           byDateRows: [],
           degraded: true,
         };
+      }
+      if (isPermissionDenied(error)) {
+        return { ok: false, error: "تعذّر تحميل بيانات الحضور" };
       }
       return { ok: false, error: mapTableError(error, "presences") };
     }

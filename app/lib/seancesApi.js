@@ -729,37 +729,6 @@ export async function archiveSeancesForSaisonIds(saisonIds = []) {
   }
 }
 
-/**
- * (Admin) Membres 'accepte' d'une séance, avec leur profil joint.
- * @param {string} seanceId
- * @returns { ok, members }
- */
-export async function getSeanceMembers(seanceId) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  if (!seanceId) {
-    return { ok: false, error: "معرّف الحصة مفقود" };
-  }
-  try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select("*, membre:profiles!inscriptions_membre_id_fkey(id, first_name, last_name, email)")
-        .eq("seance_id", seanceId)
-        .eq("statut", "accepte"),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة أعضاء الحصة"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "inscriptions") };
-    }
-    return { ok: true, members: data || [] };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
 function supervisorCanonicalKey(profile) {
   return canonicalEmail(profile?.canonical_email || profile?.email);
 }

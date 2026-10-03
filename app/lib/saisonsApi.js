@@ -190,7 +190,11 @@ export async function getSeasonDashboardStats(saisonId) {
     const supervisorIds = new Set(
       seances.map((s) => s.superviseur_id).filter(Boolean)
     );
-    const members = inscRes.ok ? inscRes.inscriptions.length : 0;
+    const members = inscRes.ok
+      ? new Set(
+          (inscRes.inscriptions || []).map((row) => row.membre_id).filter(Boolean)
+        ).size
+      : 0;
     return {
       ok: true,
       members,

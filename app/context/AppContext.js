@@ -1,5 +1,6 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -47,7 +48,6 @@ import {
   upsertMemberApplication,
   insertPendingMemberApplication,
   listMemberApplications,
-  markMemberApplicationActivated,
   findOpenSeasonRenewal,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
@@ -152,15 +152,6 @@ function splitFullName(fullName) {
     firstName: parts.slice(0, -1).join(" "),
     lastName: parts[parts.length - 1],
   };
-}
-
-/** Lie la demande join après Auth ; retourne un message d'avertissement ou null. */
-async function linkApplicationAfterAuth(email, userId) {
-  const linked = await markMemberApplicationActivated({ email, userId });
-  if (!linked.ok && !linked.skipped) {
-    return linked.error || "تعذر ربط طلب الانضمام بالحساب";
-  }
-  return null;
 }
 
 /** Union des rôles Supabase (profiles.role) et mock locaux pour le routing multi-rôle. */
@@ -405,6 +396,30 @@ export function AppProvider({ children }) {
     };
   }, [hydrated, supabaseSession?.user?.id, currentUser?.id]);
 
+  // Liste distante = source de vérité. Les demandes locales absentes sont retirées
+  // (l'effet de sauvegarde les enlève aussi d'AsyncStorage).
+  const refreshRegistrations = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      return { ok: true, skipped: true };
+    }
+    const res = await listMemberApplications();
+    if (!res.ok || res.skipped) {
+      return { ok: false, error: res.error || "تعذّر تحميل الطلبات" };
+    }
+    const remote = res.applications || [];
+    const remoteIds = new Set(remote.map((row) => row.id));
+    setRegistrations((prev) => {
+      const dropped = prev.filter((row) => !remoteIds.has(row.id)).length;
+      if (dropped > 0) {
+        console.warn(
+          `[registrations] ${dropped} demande(s) locale(s) absente(s) de Supabase retirée(s)`
+        );
+      }
+      return remote;
+    });
+    return { ok: true, applications: remote };
+  }, []);
+
   // Admin : synchroniser les demandes depuis Supabase (réessaie si échec)
   useEffect(() => {
     if (!hydrated || !isSupabaseConfigured() || !supabaseSession?.user?.id) return;
@@ -413,25 +428,15 @@ export function AppProvider({ children }) {
 
     let cancelled = false;
     (async () => {
-      const res = await listMemberApplications();
-      if (cancelled) return;
-      if (!res.ok || res.skipped) {
-        // Ne pas verrouiller : un prochain rendu / reconnexion réessayera
-        return;
-      }
+      const res = await refreshRegistrations();
+      if (cancelled || !res.ok) return;
       applicationsSyncedRef.current = true;
-      const remote = res.applications || [];
-      setRegistrations((prev) => {
-        const remoteById = new Map(remote.map((r) => [r.id, r]));
-        const localOnly = prev.filter((r) => !remoteById.has(r.id));
-        return [...localOnly, ...remote];
-      });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [hydrated, supabaseSession?.user?.id, currentUser]);
+  }, [hydrated, supabaseSession?.user?.id, currentUser, refreshRegistrations]);
 
   // Membre : synchroniser ses propres demandes (réessaie si échec)
   useEffect(() => {
@@ -1524,10 +1529,6 @@ export function AppProvider({ children }) {
           code: otp,
         });
         if (!authResult.ok) return authResult;
-        const linkWarning = await linkApplicationAfterAuth(
-          pendingUser.email,
-          authResult.authUser.id
-        );
         setUsers((prev) =>
           prev.map((u) =>
             u.id === pendingUser.id
@@ -1557,7 +1558,7 @@ export function AppProvider({ children }) {
           },
           role: pendingUser.role,
           needsEmailConfirmation: authResult.needsEmailConfirmation,
-          warning: linkWarning || authResult.warning || undefined,
+          warning: authResult.warning || undefined,
         };
       }
 
@@ -1616,7 +1617,6 @@ export function AppProvider({ children }) {
         if (!authResult.ok) return authResult;
 
         const authId = authResult.authUser.id;
-        const linkWarning = await linkApplicationAfterAuth(mail, authId);
 
         const profile = authResult.profile || {};
         const firstName =
@@ -1671,7 +1671,7 @@ export function AppProvider({ children }) {
           user,
           role: ROLES.MEMBER,
           needsEmailConfirmation: !!authResult.needsEmailConfirmation,
-          warning: linkWarning || authResult.warning || undefined,
+          warning: authResult.warning || undefined,
         };
       }
       return {
@@ -1701,7 +1701,7 @@ export function AppProvider({ children }) {
     if (existingUser) {
       let authId = existingUser.authId || null;
       let needsEmailConfirmation = false;
-      let linkWarning = null;
+      let activationWarning = null;
 
       if (isSupabaseConfigured()) {
         // L'écran demande de choisir un nouveau mot de passe. Même si une fiche
@@ -1726,10 +1726,7 @@ export function AppProvider({ children }) {
         if (!authResult.ok) return authResult;
         authId = authResult.authUser.id;
         needsEmailConfirmation = !!authResult.needsEmailConfirmation;
-        linkWarning = await linkApplicationAfterAuth(mail, authId);
-        if (authResult.warning) {
-          linkWarning = linkWarning || authResult.warning;
-        }
+        activationWarning = authResult.warning || null;
       } else if (
         existingUser.accountStatus === ACCOUNT_STATUS.ACTIVE &&
         existingUser.password &&
@@ -1785,13 +1782,13 @@ export function AppProvider({ children }) {
         user: merged,
         role: ROLES.MEMBER,
         needsEmailConfirmation,
-        warning: linkWarning || undefined,
+        warning: activationWarning || undefined,
       };
     }
 
     let authId = null;
     let needsEmailConfirmation = false;
-    let linkWarning = null;
+    let activationWarning = null;
     if (isSupabaseConfigured()) {
       const authResult = await signUpWithProfile({
         email: mail,
@@ -1804,10 +1801,7 @@ export function AppProvider({ children }) {
       if (!authResult.ok) return authResult;
       authId = authResult.authUser.id;
       needsEmailConfirmation = !!authResult.needsEmailConfirmation;
-      linkWarning = await linkApplicationAfterAuth(mail, authId);
-      if (authResult.warning) {
-        linkWarning = linkWarning || authResult.warning;
-      }
+      activationWarning = authResult.warning || null;
     }
 
     const user = {
@@ -1853,7 +1847,7 @@ export function AppProvider({ children }) {
       user,
       role: ROLES.MEMBER,
       needsEmailConfirmation,
-      warning: linkWarning || undefined,
+      warning: activationWarning || undefined,
     };
   };
 
@@ -2868,6 +2862,7 @@ export function AppProvider({ children }) {
     activateSeason,
     announceRegistrationForm,
     submitSeasonRegistration,
+    refreshRegistrations,
     reviewRegistration,
     createGroup,
     updateGroup,
