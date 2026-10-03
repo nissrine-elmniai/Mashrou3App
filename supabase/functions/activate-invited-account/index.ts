@@ -5,12 +5,19 @@
 // Deploy:
 //   npx supabase functions deploy activate-invited-account --no-verify-jwt
 //
-// Sécurité : uniquement si une invitation / demande acceptée existe en base
-// (member_applications.status = invited | supervisor_invitations.status = pending).
-// Si le compte Auth existe déjà : on vérifie le mot de passe fourni, on ne
-// le réécrit jamais (évite la prise de compte pendant la fenêtre d'invitation).
+// Sécurité : invitation en base (member_applications.status = invited ou
+// supervisor_invitations.status = pending) ET code OTP à 6 chiffres
+// envoyé par send-activation-code, non expiré, non consommé, ≤ 5 essais.
+// Le code est marqué consommé avant createUser. Un compte Auth déjà
+// existant n'est ni confirmé ni réécrit : l'invité se connecte ou
+// récupère son mot de passe.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  canonicalActivationEmail,
+  hashActivationCode,
+  timingSafeEqual,
+} from "../_shared/activationCode.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,22 +47,15 @@ function clientIp(req: Request): string {
 }
 
 function canonicalEmail(email: string) {
-  const mail = String(email || "").trim().toLowerCase();
-  if (!mail) return "";
-  return mail.replace(/\+supervisor(?=@)/i, "");
+  return canonicalActivationEmail(email);
 }
 
-function authEmailForRole(email: string, role: string) {
-  const canonical = canonicalEmail(email);
-  if (!canonical || !canonical.includes("@")) return canonical;
-  if (role === "supervisor") {
-    const at = canonical.indexOf("@");
-    const local = canonical.slice(0, at);
-    const domain = canonical.slice(at + 1);
-    if (local.toLowerCase().endsWith("+supervisor")) return canonical;
-    return `${local}+supervisor@${domain}`;
-  }
-  return canonical;
+function isSupervisorProfile(profile: {
+  role?: string;
+  roles?: string[] | null;
+}) {
+  if (profile?.role === "supervisor") return true;
+  return Array.isArray(profile?.roles) && profile.roles.includes("supervisor");
 }
 
 Deno.serve(async (req) => {
@@ -85,6 +85,13 @@ Deno.serve(async (req) => {
     }
     if (role !== "member" && role !== "supervisor") {
       return json({ ok: false, error: "دور غير صالح" }, 200);
+    }
+    const code = String(body.code || "").trim();
+    if (!/^\d{6}$/.test(code)) {
+      return json(
+        { ok: false, error: "أدخل رمز التحقق المكوّن من 6 أرقام" },
+        200
+      );
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -172,7 +179,42 @@ Deno.serve(async (req) => {
       supervisorInvRow = inv as Record<string, unknown>;
     }
 
-    const authMail = authEmailForRole(displayEmail, role);
+    if (role === "member") {
+      const [{ data: byEmail }, { data: byCanonical }, { data: pendingInv }] =
+        await Promise.all([
+          admin
+            .from("profiles")
+            .select("id, role, roles")
+            .eq("email", displayEmail),
+          admin
+            .from("profiles")
+            .select("id, role, roles")
+            .eq("canonical_email", displayEmail),
+          admin
+            .from("supervisor_invitations")
+            .select("id")
+            .ilike("email", displayEmail)
+            .eq("status", "pending")
+            .limit(1),
+        ]);
+      const supervisorHit = [...(byEmail || []), ...(byCanonical || [])].some(
+        isSupervisorProfile
+      );
+      if (supervisorHit) {
+        return json(
+          { ok: false, error: "هذا البريد مستعمل من طرف حساب مشرف" },
+          200
+        );
+      }
+      if ((pendingInv || []).length > 0) {
+        return json(
+          { ok: false, error: "هذا البريد مرتبط بدعوة مشرف" },
+          200
+        );
+      }
+    }
+
+    const authMail = displayEmail;
     const meta = {
       role,
       first_name: firstName,
@@ -181,7 +223,10 @@ Deno.serve(async (req) => {
       canonical_email: displayEmail,
     };
 
-    let userId: string | null = null;
+    const codeCheck = await consumeActivationCode(admin, displayEmail, role, code);
+    if (!codeCheck.ok) {
+      return json({ ok: false, error: codeCheck.error }, 200);
+    }
 
     const { data: created, error: createErr } = await admin.auth.admin.createUser({
       email: authMail,
@@ -190,23 +235,12 @@ Deno.serve(async (req) => {
       user_metadata: meta,
     });
 
-    if (createErr) {
+    if (createErr || !created?.user?.id) {
       const already =
         /already registered|already exists|duplicate|email_exists/i.test(
-          createErr.message || ""
+          createErr?.message || ""
         );
-      if (!already) {
-        return json(
-          { ok: false, error: createErr.message || "تعذر إنشاء الحساب" },
-          200
-        );
-      }
-
-      // Compte déjà créé : on NE change PAS le mot de passe (prise de compte).
-      // Relier l'invitation seulement si le mot de passe fourni est le bon
-      // (nouvelle tentative après un createUser réussi mais un lien invitation raté).
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-      if (!anonKey) {
+      if (already) {
         return json(
           {
             ok: false,
@@ -216,31 +250,13 @@ Deno.serve(async (req) => {
           200
         );
       }
-      const anon = createClient(supabaseUrl, anonKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      const { data: signed, error: signErr } = await anon.auth.signInWithPassword({
-        email: authMail,
-        password,
-      });
-      if (signErr || !signed?.user?.id) {
-        return json(
-          {
-            ok: false,
-            error:
-              "هذا البريد مسجّل مسبقاً. سجّل الدخول أو استخدم استعادة كلمة المرور",
-          },
-          200
-        );
-      }
-      userId = signed.user.id;
-      await admin.auth.admin.updateUserById(userId, {
-        email_confirm: true,
-        user_metadata: meta,
-      });
-    } else {
-      userId = created.user!.id;
+      return json(
+        { ok: false, error: createErr?.message || "تعذر إنشاء الحساب" },
+        200
+      );
     }
+
+    const userId = created!.user!.id;
 
     const now = new Date().toISOString();
     const profilePayload: Record<string, unknown> = {
@@ -337,6 +353,76 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+async function consumeActivationCode(
+  admin: ReturnType<typeof createClient>,
+  email: string,
+  role: string,
+  code: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hash = await hashActivationCode(email, role, code);
+  const { data: rows, error } = await admin
+    .from("activation_codes")
+    .select("id, code_hash, expires_at, attempts")
+    .eq("email", email)
+    .eq("role", role)
+    .is("consumed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error("activation_codes:", error.message);
+    return { ok: false, error: "تعذر التحقق من الرمز" };
+  }
+
+  const row = rows?.[0];
+  if (!row) {
+    return {
+      ok: false,
+      error: "الرمز غير صحيح أو منتهٍ. اطلب رمزاً جديداً",
+    };
+  }
+  if (row.attempts >= 5) {
+    await admin
+      .from("activation_codes")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("id", row.id)
+      .is("consumed_at", null);
+    return { ok: false, error: "تجاوزت عدد المحاولات. اطلب رمزاً جديداً" };
+  }
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    return { ok: false, error: "انتهت صلاحية الرمز. اطلب رمزاً جديداً" };
+  }
+  if (!timingSafeEqual(String(row.code_hash || ""), hash)) {
+    const next = Number(row.attempts || 0) + 1;
+    const patch: Record<string, unknown> = { attempts: next };
+    if (next >= 5) patch.consumed_at = new Date().toISOString();
+    await admin
+      .from("activation_codes")
+      .update(patch)
+      .eq("id", row.id)
+      .is("consumed_at", null);
+    return {
+      ok: false,
+      error:
+        next >= 5 ? "تجاوزت عدد المحاولات. اطلب رمزاً جديداً" : "الرمز غير صحيح",
+    };
+  }
+
+  const { data: consumed, error: consumeErr } = await admin
+    .from("activation_codes")
+    .update({ consumed_at: new Date().toISOString() })
+    .eq("id", row.id)
+    .is("consumed_at", null)
+    .lt("attempts", 5)
+    .gt("expires_at", new Date().toISOString())
+    .select("id");
+
+  if (consumeErr || !consumed?.length) {
+    return { ok: false, error: "الرمز غير صالح. اطلب رمزاً جديداً" };
+  }
+  return { ok: true };
+}
 
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {

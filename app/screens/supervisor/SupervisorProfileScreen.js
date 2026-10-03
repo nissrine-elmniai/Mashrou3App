@@ -30,6 +30,7 @@ import EditableAvatar from "../../components/EditableAvatar";
 import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
 import EditSupervisorProfileModal from "../../components/profile/EditSupervisorProfileModal";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
+import { displayProfileEmail } from "../../lib/authEmail";
 
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -173,7 +174,7 @@ export default function SupervisorProfileScreen({ navigation }) {
   const phone =
     profileRow?.phone || currentUser?.phone;
   const email =
-    profileRow?.email || currentUser?.email;
+    displayProfileEmail(profileRow) || currentUser?.email;
   const gender =
     formatGenderLabel(profileRow?.genre) ||
     formatGenderLabel(currentUser?.gender);

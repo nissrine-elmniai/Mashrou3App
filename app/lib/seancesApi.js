@@ -215,7 +215,7 @@ async function currentAuthId() {
  * @returns { ok, seances }
  */
 const SEANCES_SELECT_FULL =
-  "*, superviseur:profiles!seances_superviseur_id_fkey(first_name, last_name, email), inscriptions:inscriptions!inscriptions_seance_id_fkey(id, statut)";
+  "*, superviseur:profiles!seances_superviseur_id_fkey(first_name, last_name, email, canonical_email), inscriptions:inscriptions!inscriptions_seance_id_fkey(id, statut)";
 const SEANCES_SELECT_LITE = "id, nom, statut, superviseur_id, saison_id";
 
 export async function getAllSeances({ saisonId = null, lite = false } = {}) {
@@ -1000,7 +1000,7 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
       supabase
         .from("inscriptions")
         .select(
-          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, avatar_url))"
+          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, canonical_email, avatar_url))"
         )
         .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,

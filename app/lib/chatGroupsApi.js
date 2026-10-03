@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { resolvePublicAvatarUrl } from "./avatarApi";
+import { displayProfileEmail } from "./authEmail";
 import { formatRelativeTime } from "./messagesApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
@@ -518,7 +519,7 @@ export async function getGroupMembers(groupId) {
       supabase
         .from("chat_group_members")
         .select(
-          `role, added_at, membre:profiles!chat_group_members_membre_id_fkey(id, first_name, last_name, email, avatar_url, role)`
+          `role, added_at, membre:profiles!chat_group_members_membre_id_fkey(id, first_name, last_name, email, canonical_email, avatar_url, role)`
         )
         .eq("group_id", groupId)
         .order("added_at", { ascending: true }),
@@ -537,16 +538,17 @@ export async function getGroupMembers(groupId) {
       .map((row) => {
         const p = row.membre;
         if (!p?.id) return null;
+        const shownEmail = displayProfileEmail(p);
         const name =
           `${p.first_name || ""} ${p.last_name || ""}`.trim() ||
-          p.email ||
+          shownEmail ||
           "—";
         return {
           id: p.id,
           name,
           firstName: p.first_name || "",
           lastName: p.last_name || "",
-          email: p.email || "",
+          email: shownEmail,
           avatarUrl: resolvePublicAvatarUrl(p.id, p.avatar_url),
           groupRole: row.role || "member",
           profileRole: p.role || "",

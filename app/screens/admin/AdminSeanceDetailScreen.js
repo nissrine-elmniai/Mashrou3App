@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { rtlText, arrowBack, row } from "../../constants/rtl";
 import { formatSeanceScheduleLabel } from "../../lib/seancesApi";
+import { displayProfileEmail } from "../../lib/authEmail";
 import { getSeancePresenceOverview } from "../../lib/presenceApi";
 
 const palette = {
@@ -88,7 +89,7 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
   const supervisor = seance?.superviseur || null;
   const supervisorName = supervisor
     ? `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim() ||
-      supervisor.email
+      displayProfileEmail(supervisor)
     : null;
   const schedule = formatSeanceScheduleLabel(seance);
   const archived = seance?.statut === "archivee";

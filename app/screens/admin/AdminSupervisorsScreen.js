@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Search, Trash2, Plus, X, Menu, Bell, Ban } from "lucide-react-native";
+import { Search, Trash2, Plus, X, Menu, Bell, Ban, Check } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
@@ -37,6 +37,7 @@ import {
   reassignAndRemoveSupervisor,
 } from "../../lib/supervisorInvitationsApi";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import { displayProfileEmail } from "../../lib/authEmail";
 
 const palette = {
   primary: "#2E7D32",
@@ -103,6 +104,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
+  const addLock = useRef(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -175,7 +177,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
       .filter((s) => {
         if (!q) return true;
         const fullName = supervisorFullName(s).toLowerCase();
-        const mail = (s.email || "").toLowerCase();
+        const mail = displayProfileEmail(s).toLowerCase();
         return fullName.includes(q) || mail.includes(q);
       })
       .sort(compareArabicName);
@@ -200,45 +202,59 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const handleAdd = async () => {
+    if (addLock.current) return;
     if (!email.trim() || !firstName.trim() || !lastName.trim()) {
       Alert.alert("تنبيه", "أدخل الاسم واللقب والبريد الإلكتروني");
       return;
     }
+    addLock.current = true;
     setSending(true);
-    const result = await createSupervisorInvitation({
-      email,
-      firstName,
-      lastName,
-      saisonId: activeSeason?.id || null,
-    });
-    if (!result.ok) {
+    try {
+      const result = await createSupervisorInvitation({
+        email,
+        firstName,
+        lastName,
+        saisonId: activeSeason?.id || null,
+      });
+      if (!result.ok) {
+        Alert.alert("خطأ", result.error);
+        return;
+      }
+
+      if (result.reactivated) {
+        Alert.alert("تم إعادة تفعيل حساب المشرف");
+        resetForm();
+        setShowAdd(false);
+        loadAll();
+        return;
+      }
+
+      const fullName = `${firstName.trim()} ${lastName.trim()}`;
+      const invitedEmail = result.invitation?.email || email.trim();
+      const mail = await sendSupervisorInviteEmail({
+        toEmail: invitedEmail,
+        fullName,
+      });
+
+      if (mail.ok) {
+        Alert.alert(
+          "تمت الإضافة",
+          `تمت إضافة ${fullName} وإرسال الرسالة إلى:\n${invitedEmail}`
+        );
+      } else {
+        Alert.alert(
+          "تمت الإضافة — فشل إرسال البريد",
+          `${mail.error || ""}\n\nتم حفظ الدعوة. أبلغ المشرف أنه يمكنه إنشاء حسابه من التطبيق.`
+        );
+      }
+
+      resetForm();
+      setShowAdd(false);
+      loadAll();
+    } finally {
+      addLock.current = false;
       setSending(false);
-      Alert.alert("خطأ", result.error);
-      return;
     }
-
-    const fullName = `${firstName.trim()} ${lastName.trim()}`;
-    const mail = await sendSupervisorInviteEmail({
-      toEmail: email.trim(),
-      fullName,
-    });
-    setSending(false);
-
-    if (mail.ok) {
-      Alert.alert(
-        "تمت الإضافة",
-        `تمت إضافة ${fullName} وإرسال الرسالة إلى:\n${email.trim()}`
-      );
-    } else {
-      Alert.alert(
-        "تمت الإضافة — فشل إرسال البريد",
-        `${mail.error || ""}\n\nتم حفظ الدعوة. أبلغ المشرف أنه يمكنه إنشاء حسابه من التطبيق.`
-      );
-    }
-
-    resetForm();
-    setShowAdd(false);
-    loadAll();
   };
 
   const confirmDelete = (supervisor) => {
@@ -261,7 +277,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
     const name = `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim();
     Alert.alert(
       "حذف المشرف",
-      `«${name || supervisor.email}» غير مرتبط بأي حصة في الموسم الحالي. إذا بقيت له حصص مؤرشفة، يُعطّل حسابه ويبقى اسمه في السجل. وإلا يُحذف الحساب نهائياً.`,
+      `«${name || displayProfileEmail(supervisor)}» غير مرتبط بأي حصة في الموسم الحالي. إذا بقيت له حصص مؤرشفة، يُعطّل حسابه ويبقى اسمه في السجل. وإلا يُحذف الحساب نهائياً.`,
       [
         { text: "إلغاء", style: "cancel" },
         {
@@ -326,7 +342,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
       supervisorId: supervisor.id,
       firstName: supervisor.first_name || "",
       lastName: supervisor.last_name || "",
-      email: supervisor.email || "",
+      email: displayProfileEmail(supervisor),
       avatarUrl: supervisor.avatar_url || null,
     });
   };
@@ -505,7 +521,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 onPress={() => openSupervisorDetail(supervisor)}
                 activeOpacity={0.85}
                 accessibilityRole="button"
-                accessibilityLabel={`عرض ملف ${name || supervisor.email}`}
+                accessibilityLabel={`عرض ملف ${name || displayProfileEmail(supervisor)}`}
               >
                 <ProfileAvatar
                   userId={supervisor.id}
@@ -517,8 +533,8 @@ export default function AdminSupervisorsScreen({ navigation }) {
                   letterColor={palette.primary}
                 />
                 <View style={styles.cardInfo}>
-                  <Text style={styles.cardName}>{name || supervisor.email}</Text>
-                  <Text style={styles.cardEmail}>{supervisor.email}</Text>
+                  <Text style={styles.cardName}>{name || displayProfileEmail(supervisor)}</Text>
+                  <Text style={styles.cardEmail}>{displayProfileEmail(supervisor)}</Text>
                   {supervisor.account_status === "inactive" ? (
                     <Text style={styles.inactiveHint}>معطّل — موسم سابق</Text>
                   ) : null}
@@ -631,7 +647,12 @@ export default function AdminSupervisorsScreen({ navigation }) {
           if (!removing) setRemoveTarget(null);
         }}
       >
-        <View style={styles.modalOverlay}>
+        <View
+          style={[
+            styles.modalOverlay,
+            { paddingBottom: Math.max(insets.bottom, 16) },
+          ]}
+        >
           <Pressable
             style={StyleSheet.absoluteFill}
             onPress={() => {
@@ -656,49 +677,76 @@ export default function AdminSupervisorsScreen({ navigation }) {
             <Text style={styles.modalFieldLabel}>المشرف الجديد</Text>
             {replacementOptions.length === 0 ? (
               <Text style={styles.modalHint}>
-                لا يوجد مشرف آخر متاح. أضف مشرفاً غير مكلّف بحصة، أو ألغِ الحذف.
+                لا يوجد مشرف بدون حصة. أضف مشرفاً جديداً أو غيّر مشرف الحصة من صفحة الحصص.
               </Text>
             ) : (
-              <View style={styles.seancePicker}>
+              <ScrollView
+                style={styles.replacementList}
+                contentContainerStyle={styles.replacementListContent}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
                 {replacementOptions.map((s) => {
                   const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
+                  const label = name || displayProfileEmail(s);
                   const selected = replacementId === s.id;
                   return (
                     <TouchableOpacity
                       key={s.id}
-                      style={[styles.seanceChip, selected && styles.seanceChipActive]}
+                      style={[
+                        styles.replacementRow,
+                        selected && styles.replacementRowSelected,
+                      ]}
                       onPress={() => setReplacementId(s.id)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={label}
                     >
-                      <Text
-                        style={[
-                          styles.seanceChipText,
-                          selected && styles.seanceChipTextActive,
-                        ]}
-                      >
-                        {name || s.email}
+                      <ProfileAvatar
+                        userId={s.id}
+                        avatarUrl={s.avatar_url}
+                        cacheKey={s.avatar_url || s.id}
+                        fallbackLetter={label.charAt(0) || "؟"}
+                        size={40}
+                        softBackgroundColor={palette.softGreen}
+                        letterColor={palette.primary}
+                      />
+                      <Text style={styles.replacementName} numberOfLines={1}>
+                        {label}
                       </Text>
+                      {selected ? (
+                        <Check size={20} color={palette.primary} />
+                      ) : (
+                        <View style={styles.replacementRadio} />
+                      )}
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
             )}
-            <TouchableOpacity
-              style={[
-                styles.modalSubmit,
-                styles.modalSubmitDanger,
-                (removing || !replacementId) && { opacity: 0.6 },
-              ]}
-              onPress={
-                removing || !replacementId || !removeTarget || !removalSeance?.id
-                  ? undefined
-                  : () =>
-                      finishRemoval(removeTarget, removalSeance.id, replacementId)
-              }
-            >
-              <Text style={styles.modalSubmitText}>
-                {removing ? "جاري الحذف..." : "إعادة الإسناد ثم الحذف"}
-              </Text>
-            </TouchableOpacity>
+            {replacementOptions.length > 0 ? (
+              <TouchableOpacity
+                style={[
+                  styles.modalSubmit,
+                  replacementId ? styles.modalSubmitDanger : styles.modalSubmitDisabled,
+                  removing && { opacity: 0.6 },
+                ]}
+                disabled={!replacementId || removing || !removeTarget || !removalSeance?.id}
+                onPress={() =>
+                  finishRemoval(removeTarget, removalSeance.id, replacementId)
+                }
+              >
+                <Text
+                  style={[
+                    styles.modalSubmitText,
+                    !replacementId && styles.modalSubmitTextDisabled,
+                  ]}
+                >
+                  {removing ? "جاري الحذف..." : "إعادة الإسناد ثم الحذف"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={styles.modalCancel}
               onPress={removing ? undefined : () => setRemoveTarget(null)}
@@ -932,6 +980,56 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     ...rtlText,
   },
+  modalHint: {
+    color: palette.textSecondary,
+    fontSize: 14,
+    lineHeight: 22,
+    marginBottom: 12,
+    ...rtlText,
+  },
+  modalFieldLabel: {
+    fontWeight: "700",
+    fontSize: 14,
+    color: palette.textPrimary,
+    marginBottom: 8,
+    ...rtlText,
+  },
+  replacementList: {
+    maxHeight: 280,
+  },
+  replacementListContent: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  replacementRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "#fff",
+  },
+  replacementRowSelected: {
+    borderColor: palette.primary,
+    backgroundColor: palette.softGreen,
+  },
+  replacementName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "600",
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  replacementRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: palette.placeholder,
+  },
   modalInput: {
     borderWidth: 1,
     borderColor: palette.border,
@@ -957,6 +1055,12 @@ const styles = StyleSheet.create({
   },
   modalSubmitDanger: {
     backgroundColor: palette.red,
+  },
+  modalSubmitDisabled: {
+    backgroundColor: "#E0E0E0",
+  },
+  modalSubmitTextDisabled: {
+    color: palette.placeholder,
   },
   modalCancel: {
     marginTop: 8,

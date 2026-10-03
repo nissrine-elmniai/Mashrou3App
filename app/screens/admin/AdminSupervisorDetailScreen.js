@@ -32,6 +32,7 @@ import {
   assignOrSwapSeanceSuperviseur,
 } from "../../lib/seancesApi";
 import { initials } from "../supervisor/supervisorHelpers";
+import { displayProfileEmail } from "../../lib/authEmail";
 import ProfileAvatar from "../../components/ProfileAvatar";
 
 const palette = {
@@ -90,7 +91,7 @@ function SectionCard({ title, children }) {
 function seanceSupervisorName(seance) {
   const sup = seance?.superviseur;
   const name = `${sup?.first_name || ""} ${sup?.last_name || ""}`.trim();
-  return name || sup?.email || "مشرف";
+  return name || displayProfileEmail(sup) || "مشرف";
 }
 
 export default function AdminSupervisorDetailScreen({ navigation, route }) {
@@ -145,7 +146,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const firstName = profileRow?.first_name || params.firstName || "";
   const lastName = profileRow?.last_name || params.lastName || "";
   const fullName = `${firstName} ${lastName}`.trim();
-  const email = profileRow?.email || params.email || "";
+  const email = displayProfileEmail(profileRow) || params.email || "";
   const avatarUrl = profileRow?.avatar_url || params.avatarUrl || null;
 
   const supervisorSeances = useMemo(

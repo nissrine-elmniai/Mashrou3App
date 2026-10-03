@@ -19,6 +19,7 @@ import { getAssignableSupervisors } from "../../lib/seancesApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { mergeInboxRows } from "../../lib/messagesApi";
 import { initials } from "../supervisor/supervisorHelpers";
+import { displayProfileEmail } from "../../lib/authEmail";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 export default function AdminChatScreen({ navigation }) {
@@ -43,11 +44,12 @@ export default function AdminChatScreen({ navigation }) {
       if (sRes.ok) {
         for (const p of sRes.supervisors || []) {
           const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+          const shownEmail = displayProfileEmail(p);
           list.push({
             id: p.id,
-            name: name || p.email,
+            name: name || shownEmail,
             role: "supervisor",
-            avatarLetter: initials(p.first_name || name || p.email),
+            avatarLetter: initials(p.first_name || name || shownEmail),
             avatarUrl: p.avatar_url || null,
           });
         }
