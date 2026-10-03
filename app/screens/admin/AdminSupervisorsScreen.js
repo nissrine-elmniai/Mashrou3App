@@ -94,8 +94,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const [groupName, setGroupName] = useState("");
-  const [selectedSeanceId, setSelectedSeanceId] = useState(null);
   const [sending, setSending] = useState(false);
 
   const loadAll = useCallback(async () => {
@@ -149,11 +147,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
     };
   }, [showAdd]);
 
-  const activeSeances = useMemo(
-    () => seances.filter((s) => s.statut !== "archivee"),
-    [seances]
-  );
-
   const pendingInvitations = useMemo(
     () =>
       invitations.filter(
@@ -192,8 +185,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
     setFirstName("");
     setLastName("");
     setEmail("");
-    setGroupName("");
-    setSelectedSeanceId(null);
   };
 
   const handleAdd = async () => {
@@ -206,8 +197,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
       email,
       firstName,
       lastName,
-      groupName,
-      seanceId: selectedSeanceId,
       saisonId: activeSeason?.id || null,
     });
     if (!result.ok) {
@@ -220,7 +209,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
     const mail = await sendSupervisorInviteEmail({
       toEmail: email.trim(),
       fullName,
-      groupName: groupName.trim(),
     });
     setSending(false);
 
@@ -418,11 +406,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
                   <View style={styles.cardInfo}>
                     <Text style={styles.cardName}>{name || "دعوة مشرف"}</Text>
                     <Text style={styles.cardEmail}>{invitation.email}</Text>
-                    {invitation.group_name ? (
-                      <Text style={styles.cardGroup}>
-                        المجموعة: {invitation.group_name}
-                      </Text>
-                    ) : null}
                     <View style={styles.sessionBadge}>
                       <Text style={styles.sessionBadgeText}>
                         بانتظار التفعيل
@@ -559,55 +542,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 onChangeText={setEmail}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                textAlign={textAlignStart}
-              />
-              <Text style={styles.modalFieldLabel}>الحصة / المجموعة</Text>
-              {activeSeances.length === 0 ? (
-                <Text style={styles.modalHint}>
-                  لا توجد حصص نشطة — أنشئ حصة أولاً من شاشة «الحصص»
-                </Text>
-              ) : (
-                <View style={styles.seancePicker}>
-                  {activeSeances.map((seance) => {
-                    const selected = selectedSeanceId === seance.id;
-                    return (
-                      <TouchableOpacity
-                        key={seance.id}
-                        style={[
-                          styles.seanceChip,
-                          selected && styles.seanceChipActive,
-                        ]}
-                        onPress={() => {
-                          setSelectedSeanceId(seance.id);
-                          setGroupName(seance.nom);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.seanceChipText,
-                            selected && styles.seanceChipTextActive,
-                          ]}
-                        >
-                          {seance.nom}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-              <TextInput
-                style={styles.modalInput}
-                placeholder="أو اكتب اسم المجموعة يدوياً"
-                placeholderTextColor={palette.placeholder}
-                value={groupName}
-                onChangeText={(value) => {
-                  setGroupName(value);
-                  const match = activeSeances.find(
-                    (s) =>
-                      s.nom.trim().toLowerCase() === value.trim().toLowerCase()
-                  );
-                  setSelectedSeanceId(match?.id || null);
-                }}
                 textAlign={textAlignStart}
               />
               <TouchableOpacity
@@ -793,12 +727,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     ...rtlText,
   },
-  cardGroup: {
-    color: palette.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-    ...rtlText,
-  },
   sessionBadge: {
     alignSelf: "flex-start",
     marginTop: 6,
@@ -862,46 +790,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: palette.textPrimary,
     backgroundColor: palette.background,
-  },
-  modalFieldLabel: {
-    ...rtlText,
-    color: palette.textPrimary,
-    fontWeight: "600",
-    marginBottom: 8,
-    fontSize: 14,
-  },
-  modalHint: {
-    ...rtlText,
-    color: palette.textSecondary,
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  seancePicker: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 10,
-  },
-  seanceChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "#fff",
-  },
-  seanceChipActive: {
-    backgroundColor: palette.softGreen,
-    borderColor: palette.primary,
-  },
-  seanceChipText: {
-    ...rtlText,
-    color: palette.textSecondary,
-    fontSize: 13,
-  },
-  seanceChipTextActive: {
-    color: palette.primary,
-    fontWeight: "700",
   },
   modalSubmit: {
     marginTop: 8,

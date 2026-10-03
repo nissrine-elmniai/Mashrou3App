@@ -1,8 +1,6 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { ROLES } from "../constants/roles";
 import { authEmailForRole, canonicalEmail } from "./authEmail";
-import { findActiveSeanceByName } from "./seancesApi";
-
 const SUPABASE_TIMEOUT_MS = 15000;
 
 function withTimeout(promise, ms, label) {
@@ -166,68 +164,18 @@ export async function reactivateSupervisorProfile(profileId) {
 }
 
 /**
- * (Admin) Rattache la séance de l'invitation au profil superviseur (RPC 0032).
- * @returns {{ ok, error? }}
- */
-export async function assignSupervisorSeanceFromInvitation(profileId, invitationEmail) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  const mail = canonicalEmail(invitationEmail);
-  if (!profileId || !mail) {
-    return { ok: false, error: "بيانات الربط غير مكتملة" };
-  }
-  try {
-    const { error } = await withTimeout(
-      supabase.rpc("assign_supervisor_seance_from_invitation", {
-        p_profile_id: profileId,
-        p_canonical_email: mail,
-      }),
-      SUPABASE_TIMEOUT_MS,
-      "ربط الحصة بالمشرف"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "seances") };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
-/**
- * (Admin) Tente de rattacher les séances pour tous les superviseurs existants.
- * @returns {{ ok }}
- */
-export async function syncSupervisorSeanceLinks(supervisors = []) {
-  if (!isSupabaseConfigured() || !supervisors.length) {
-    return { ok: true };
-  }
-  await Promise.all(
-    supervisors.map((supervisor) =>
-      assignSupervisorSeanceFromInvitation(
-        supervisor.id,
-        supervisor.canonical_email || supervisor.email
-      )
-    )
-  );
-  return { ok: true };
-}
-
-/**
  * (Admin) Création d'une invitation superviseur (migration 0013).
  * L'index unique partiel (lower(email) where status <> 'revoked') rejette
  * toute seconde invitation « en cours » pour le même email : l'erreur
  * 23505 est traduite en message explicite.
- * @param {object} payload { email, firstName?, lastName?, groupName?, seanceId?, saisonId? }
+ * La séance se rattache ensuite depuis la fiche superviseur, pas ici.
+ * @param {object} payload { email, firstName?, lastName?, saisonId? }
  * @returns { ok, invitation? }
  */
 export async function createSupervisorInvitation({
   email,
   firstName,
   lastName,
-  groupName,
-  seanceId = null,
   saisonId = null,
 }) {
   if (!isSupabaseConfigured()) {
@@ -245,23 +193,11 @@ export async function createSupervisorInvitation({
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
-  const cleanGroupName = String(groupName || "").trim();
-  let resolvedSeanceId = seanceId || null;
-  if (!resolvedSeanceId && cleanGroupName) {
-    const lookup = await findActiveSeanceByName(cleanGroupName, saisonId);
-    if (!lookup.ok) {
-      return { ok: false, error: lookup.error };
-    }
-    resolvedSeanceId = lookup.seance?.id || null;
-  }
-
   const row = {
     id: uid("sinv"),
     email: mail,
     first_name: String(firstName).trim(),
     last_name: String(lastName).trim(),
-    group_name: cleanGroupName || null,
-    seance_id: resolvedSeanceId,
     saison_id: saisonId || null,
     status: "pending",
     created_by: userId,
@@ -280,7 +216,6 @@ export async function createSupervisorInvitation({
     const existingProfile = await findSupervisorProfileByInvitationEmail(mail);
     if (existingProfile) {
       await reactivateSupervisorProfile(existingProfile.id);
-      await assignSupervisorSeanceFromInvitation(existingProfile.id, mail);
     }
 
     return { ok: true, invitation: data };
@@ -302,7 +237,7 @@ export async function listSupervisorInvitations({ saisonId = null } = {}) {
     let query = supabase
       .from("supervisor_invitations")
       .select(
-        "id, email, first_name, last_name, group_name, seance_id, saison_id, status"
+        "id, email, first_name, last_name, saison_id, status"
       )
       .order("created_at", { ascending: false });
     if (saisonId) {
