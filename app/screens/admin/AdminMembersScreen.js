@@ -28,6 +28,7 @@ import {
 } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import { displayProfileEmail } from "../../lib/authEmail";
 
 const palette = {
   primary: "#2E7D32",
@@ -53,7 +54,7 @@ function levelColor(level) {
 function supervisorName(profile) {
   if (!profile) return null;
   const name = `${profile.first_name || ""} ${profile.last_name || ""}`.trim();
-  return name || profile.email || null;
+  return name || displayProfileEmail(profile) || null;
 }
 
 const ARABIC_ORDINALS = {

@@ -79,6 +79,15 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
 
+    const { data: targetProfile, error: profileReadError } = await admin
+      .from("profiles")
+      .select("email, canonical_email")
+      .eq("id", userId)
+      .maybeSingle();
+    if (profileReadError) {
+      console.error("lookup profile email:", profileReadError.message);
+    }
+
     // seances.superviseur_id est NOT NULL (schéma live) alors que la FK est
     // ON DELETE SET NULL. deleteUser échoue alors avec une violation
     // not-null. On refuse avant, avec le nom des séances concernées.
@@ -152,6 +161,17 @@ Deno.serve(async (req) => {
       );
     }
 
+    const revokeError = await revokeSupervisorInvitations(admin, targetProfile);
+    if (revokeError) {
+      return json(
+        {
+          ok: false,
+          error: `تم حذف الحساب لكن تعذر إلغاء الدعوة: ${revokeError}`,
+        },
+        502
+      );
+    }
+
     return json({ ok: true });
   } catch (e) {
     return json(
@@ -160,6 +180,30 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+async function revokeSupervisorInvitations(
+  admin: ReturnType<typeof createClient>,
+  profile: { email?: string | null; canonical_email?: string | null } | null
+): Promise<string | null> {
+  const emails = [
+    ...new Set(
+      [profile?.email, profile?.canonical_email]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value) => value.includes("@"))
+    ),
+  ];
+  if (!emails.length) return null;
+
+  const orFilter = emails.map((email) => `email.ilike.${email}`).join(",");
+  const { error } = await admin
+    .from("supervisor_invitations")
+    .update({ status: "revoked", updated_at: new Date().toISOString() })
+    .or(orFilter)
+    .neq("status", "revoked");
+  if (!error) return null;
+  console.error("revoke invitations:", error.message);
+  return error.message || "تعذر إلغاء الدعوة";
+}
 
 function ignorableMissingColumn(message: string) {
   return /does not exist|schema cache|Could not find the|column .* does not exist/i.test(

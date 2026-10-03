@@ -1492,10 +1492,14 @@ export function AppProvider({ children }) {
     }
   };
 
-  /** إنشاء حساب العضو بعد قبول الطلب (بالبريد، بدون رمز دعوة) */
-  const activateInvite = async ({ email, password, confirmPassword }) => {
+  /** إنشاء حساب العضو بعد قبول الطلب (بريد + رمز OTP). */
+  const activateInvite = async ({ email, password, confirmPassword, code }) => {
     const mail = String(email || "").trim().toLowerCase();
+    const otp = String(code || "").trim();
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
+    if (!/^\d{6}$/.test(otp)) {
+      return { ok: false, error: "أدخل رمز التحقق المكوّن من 6 أرقام" };
+    }
     if (isPasswordTooShort(password)) {
       return { ok: false, error: passwordTooShortMessage() };
     }
@@ -1517,6 +1521,7 @@ export function AppProvider({ children }) {
           role: pendingUser.role,
           firstName: pendingUser.firstName,
           lastName: pendingUser.lastName,
+          code: otp,
         });
         if (!authResult.ok) return authResult;
         const linkWarning = await linkApplicationAfterAuth(
@@ -1594,6 +1599,7 @@ export function AppProvider({ children }) {
             email: mail,
             password,
             confirmPassword,
+            code: otp,
           });
         }
 
@@ -1605,6 +1611,7 @@ export function AppProvider({ children }) {
           role: ROLES.MEMBER,
           firstName: "",
           lastName: "",
+          code: otp,
         });
         if (!authResult.ok) return authResult;
 
@@ -1714,6 +1721,7 @@ export function AppProvider({ children }) {
             existingUser.lastName ||
             reg.lastName ||
             splitFullName(reg.fullName).lastName,
+          code: otp,
         });
         if (!authResult.ok) return authResult;
         authId = authResult.authUser.id;
@@ -1791,6 +1799,7 @@ export function AppProvider({ children }) {
         role: ROLES.MEMBER,
         firstName: reg.firstName || splitFullName(reg.fullName).firstName,
         lastName: reg.lastName || splitFullName(reg.fullName).lastName,
+        code: otp,
       });
       if (!authResult.ok) return authResult;
       authId = authResult.authUser.id;
@@ -1854,9 +1863,14 @@ export function AppProvider({ children }) {
     email,
     password,
     confirmPassword,
+    code,
   }) => {
     const mail = canonicalEmail(email);
+    const otp = String(code || "").trim();
     if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
+    if (!/^\d{6}$/.test(otp)) {
+      return { ok: false, error: "أدخل رمز التحقق المكوّن من 6 أرقام" };
+    }
     if (isPasswordTooShort(password)) {
       return { ok: false, error: passwordTooShortMessage() };
     }
@@ -1900,6 +1914,7 @@ export function AppProvider({ children }) {
         role: ROLES.SUPERVISOR,
         firstName,
         lastName,
+        code: otp,
       });
       if (!authResult.ok) return authResult;
 

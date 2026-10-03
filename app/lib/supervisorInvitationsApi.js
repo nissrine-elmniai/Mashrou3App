@@ -1,6 +1,6 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { ROLES } from "../constants/roles";
-import { authEmailForRole, canonicalEmail } from "./authEmail";
+import { canonicalEmail } from "./authEmail";
 import { assignOrSwapSeanceSuperviseur, listSupervisorSeances } from "./seancesApi";
 import { parseEdgeFunctionError } from "./edgeFunctionError";
 
@@ -26,6 +26,9 @@ function mapTableError(error, tableLabel) {
   }
   if (/permission|row-level security|RLS|42501|violates row/i.test(msg)) {
     return "لا صلاحية كافية لهذه العملية";
+  }
+  if (/هذا البريد مستعمل من طرف حساب آخر/.test(msg)) {
+    return "هذا البريد مستعمل من طرف حساب آخر";
   }
   if (/duplicate key|23505/i.test(msg)) {
     return "دعوة نشطة موجودة مسبقاً لهذا البريد — راجع قائمة المشرفين";
@@ -53,41 +56,41 @@ function profileIsSupervisor(profile) {
   return Array.isArray(profile.roles) && profile.roles.includes(ROLES.SUPERVISOR);
 }
 
-async function findSupervisorProfileByInvitationEmail(mail) {
+async function findProfilesByEmail(mail) {
   const canonical = canonicalEmail(mail);
-  if (!canonical) return null;
-  const supervisorAuthMail = authEmailForRole(canonical, ROLES.SUPERVISOR);
+  if (!canonical) return { ok: true, profiles: [] };
 
   const queries = [
     supabase
       .from("profiles")
-      .select("id, email, canonical_email, role, roles")
+      .select("id, email, canonical_email, role, roles, account_status")
       .eq("canonical_email", canonical),
     supabase
       .from("profiles")
-      .select("id, email, canonical_email, role, roles")
+      .select("id, email, canonical_email, role, roles, account_status")
       .eq("email", canonical),
   ];
-  if (supervisorAuthMail !== canonical) {
-    queries.push(
-      supabase
-        .from("profiles")
-        .select("id, email, canonical_email, role, roles")
-        .eq("email", supervisorAuthMail)
-    );
-  }
 
+  const byId = new Map();
+  let sawError = null;
   for (const query of queries) {
     const { data, error } = await withTimeout(
       query,
       SUPABASE_TIMEOUT_MS,
       "البحث عن المشرف"
     );
-    if (error) continue;
-    const match = (data || []).find(profileIsSupervisor);
-    if (match) return match;
+    if (error) {
+      sawError = error;
+      continue;
+    }
+    for (const profile of data || []) {
+      if (profile?.id) byId.set(profile.id, profile);
+    }
   }
-  return null;
+  if (byId.size === 0 && sawError) {
+    return { ok: false, error: mapTableError(sawError, "profiles"), profiles: [] };
+  }
+  return { ok: true, profiles: [...byId.values()] };
 }
 
 /**
@@ -184,7 +187,7 @@ export async function createSupervisorInvitation({
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  const mail = String(email || "").trim().toLowerCase();
+  const mail = canonicalEmail(email);
   if (!mail || !mail.includes("@")) {
     return { ok: false, error: "أدخل بريداً إلكترونياً صالحاً" };
   }
@@ -194,6 +197,23 @@ export async function createSupervisorInvitation({
   const userId = await currentAuthId();
   if (!userId) {
     return { ok: false, error: "يجب تسجيل الدخول" };
+  }
+
+  const existing = await findProfilesByEmail(mail);
+  if (!existing.ok) return existing;
+  const inactiveSupervisor = existing.profiles.find(
+    (profile) =>
+      profileIsSupervisor(profile) && profile.account_status === "inactive"
+  );
+  const blocksReactivate = existing.profiles.some(
+    (profile) =>
+      profile.id !== inactiveSupervisor?.id &&
+      (!profileIsSupervisor(profile) || profile.account_status !== "inactive")
+  );
+  if (inactiveSupervisor && !blocksReactivate) {
+    const reactivated = await reactivateSupervisorProfile(inactiveSupervisor.id);
+    if (!reactivated.ok) return reactivated;
+    return { ok: true, reactivated: true };
   }
 
   const row = {
@@ -214,11 +234,6 @@ export async function createSupervisorInvitation({
     );
     if (error) {
       return { ok: false, error: mapTableError(error, "supervisor_invitations") };
-    }
-
-    const existingProfile = await findSupervisorProfileByInvitationEmail(mail);
-    if (existingProfile) {
-      await reactivateSupervisorProfile(existingProfile.id);
     }
 
     return { ok: true, invitation: data };

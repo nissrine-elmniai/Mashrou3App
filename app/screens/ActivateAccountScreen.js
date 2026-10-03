@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -18,19 +18,66 @@ import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../context/AppContext";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
+import { ROLES } from "../constants/roles";
+import { requestActivationCode } from "../lib/auth";
+
+const RESEND_DELAY_SEC = 60;
 
 export default function ActivateAccountScreen({ navigation, route }) {
   const { activateInvite, activateSupervisorAccount } = useApp();
   const isSupervisor = route?.params?.role === "supervisor";
+  const [step, setStep] = useState("email");
   const [email, setEmail] = useState(route?.params?.email || "");
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (resendIn <= 0) return undefined;
+    const id = setInterval(() => {
+      setResendIn((left) => (left <= 1 ? 0 : left - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [resendIn]);
+
+  const handleSendCode = async () => {
+    if (submitting || resendIn > 0) return;
+    const mail = email.trim();
+    if (!mail || !mail.includes("@")) {
+      Alert.alert("تنبيه", "أدخل بريداً إلكترونياً صالحاً");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await requestActivationCode({
+        email: mail,
+        role: isSupervisor ? ROLES.SUPERVISOR : ROLES.MEMBER,
+      });
+      if (!result.ok) {
+        Alert.alert("خطأ", result.error);
+        return;
+      }
+      setStep("code");
+      setResendIn(RESEND_DELAY_SEC);
+      Alert.alert(
+        "تم",
+        "إذا كان لهذا البريد دعوة معلّقة، سيصلك رمز مكوّن من 6 أرقام خلال دقائق."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleActivate = async () => {
     if (submitting) return;
+    if (!/^\d{6}$/.test(code.trim())) {
+      Alert.alert("تنبيه", "أدخل رمز التحقق المكوّن من 6 أرقام");
+      return;
+    }
     setSubmitting(true);
     try {
       const result = isSupervisor
@@ -38,11 +85,13 @@ export default function ActivateAccountScreen({ navigation, route }) {
             email,
             password,
             confirmPassword,
+            code: code.trim(),
           })
         : await activateInvite({
             email,
             password,
             confirmPassword,
+            code: code.trim(),
           });
       if (!result.ok) {
         Alert.alert("خطأ", result.error);
@@ -95,86 +144,150 @@ export default function ActivateAccountScreen({ navigation, route }) {
           </View>
 
           <View style={styles.formContainer}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>البريد الإلكتروني</Text>
-              <View style={styles.inputWrapper}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="quran@gmail.com"
-                  placeholderTextColor={colors.placeholder}
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  textAlign={textAlignStart}
-                />
-              </View>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>كلمة المرور</Text>
-              <View style={styles.passwordWrapper}>
-                <TextInput
-                  style={styles.passwordInput}
-                  placeholder="*********"
-                  placeholderTextColor={colors.placeholder}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  textAlign={textAlignStart}
-                />
+            {step === "email" ? (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>البريد الإلكتروني</Text>
+                  <View style={styles.inputWrapper}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="quran@gmail.com"
+                      placeholderTextColor={colors.placeholder}
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      textAlign={textAlignStart}
+                    />
+                  </View>
+                </View>
                 <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowPassword((v) => !v)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={[styles.loginButton, submitting && { opacity: 0.7 }]}
+                  onPress={handleSendCode}
+                  activeOpacity={0.85}
+                  disabled={submitting}
                 >
-                  <Ionicons
-                    name={showPassword ? "eye-off-outline" : "eye-outline"}
-                    size={22}
-                    color={colors.muted}
-                  />
+                  {submitting ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text style={styles.loginButtonText}>إرسال الرمز</Text>
+                  )}
                 </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>تأكيد كلمة المرور</Text>
-              <View style={styles.passwordWrapper}>
-                <TextInput
-                  style={styles.passwordInput}
-                  placeholder="*********"
-                  placeholderTextColor={colors.placeholder}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry={!showConfirm}
-                  textAlign={textAlignStart}
-                />
+              </>
+            ) : (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>البريد الإلكتروني</Text>
+                  <View style={styles.inputWrapper}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="quran@gmail.com"
+                      placeholderTextColor={colors.placeholder}
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      textAlign={textAlignStart}
+                    />
+                  </View>
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>رمز التحقق</Text>
+                  <View style={styles.inputWrapper}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="000000"
+                      placeholderTextColor={colors.placeholder}
+                      value={code}
+                      onChangeText={(value) =>
+                        setCode(value.replace(/\D/g, "").slice(0, 6))
+                      }
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      textAlign={textAlignStart}
+                    />
+                  </View>
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>كلمة المرور</Text>
+                  <View style={styles.passwordWrapper}>
+                    <TextInput
+                      style={styles.passwordInput}
+                      placeholder="*********"
+                      placeholderTextColor={colors.placeholder}
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      textAlign={textAlignStart}
+                    />
+                    <TouchableOpacity
+                      style={styles.eyeButton}
+                      onPress={() => setShowPassword((v) => !v)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name={showPassword ? "eye-off-outline" : "eye-outline"}
+                        size={22}
+                        color={colors.muted}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>تأكيد كلمة المرور</Text>
+                  <View style={styles.passwordWrapper}>
+                    <TextInput
+                      style={styles.passwordInput}
+                      placeholder="*********"
+                      placeholderTextColor={colors.placeholder}
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      secureTextEntry={!showConfirm}
+                      textAlign={textAlignStart}
+                    />
+                    <TouchableOpacity
+                      style={styles.eyeButton}
+                      onPress={() => setShowConfirm((v) => !v)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name={showConfirm ? "eye-off-outline" : "eye-outline"}
+                        size={22}
+                        color={colors.muted}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
                 <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowConfirm((v) => !v)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={[styles.loginButton, submitting && { opacity: 0.7 }]}
+                  onPress={handleActivate}
+                  activeOpacity={0.85}
+                  disabled={submitting}
                 >
-                  <Ionicons
-                    name={showConfirm ? "eye-off-outline" : "eye-outline"}
-                    size={22}
-                    color={colors.muted}
-                  />
+                  {submitting ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text style={styles.loginButtonText}>إنشاء الحساب</Text>
+                  )}
                 </TouchableOpacity>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.loginButton, submitting && { opacity: 0.7 }]}
-              onPress={handleActivate}
-              activeOpacity={0.85}
-              disabled={submitting}
-            >
-              {submitting ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.loginButtonText}>إنشاء الحساب</Text>
-              )}
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.linkBtn}
+                  onPress={handleSendCode}
+                  disabled={submitting || resendIn > 0}
+                >
+                  <Text
+                    style={[
+                      styles.forgotPasswordLink,
+                      (submitting || resendIn > 0) && { opacity: 0.5 },
+                    ]}
+                  >
+                    {resendIn > 0
+                      ? `إعادة إرسال الرمز (${resendIn})`
+                      : "إعادة إرسال الرمز"}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
 
             <TouchableOpacity
               style={styles.linkBtn}

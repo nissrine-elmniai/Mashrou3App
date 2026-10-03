@@ -26,6 +26,7 @@ import {
   supervisorIdsForSeason,
 } from "../../lib/seasonScope";
 import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
+import { displayProfileEmail } from "../../lib/authEmail";
 import {
   getAllSeances,
   createSeance,
@@ -113,9 +114,14 @@ function cardSupervisor(profile) {
   if (!profile) return null;
   const first = profile.first_name || "";
   const last = profile.last_name || "";
-  const email = profile.email || "";
+  const email = displayProfileEmail(profile);
   if (!first && !last && !email) return null;
-  return { first_name: first, last_name: last, email };
+  return {
+    first_name: first,
+    last_name: last,
+    email,
+    canonical_email: profile.canonical_email || "",
+  };
 }
 
 export default function AdminSeasonsScreen({ navigation }) {
@@ -393,7 +399,8 @@ export default function AdminSeasonsScreen({ navigation }) {
   const confirmArchive = (seance) => {
     const sup = seance.superviseur || null;
     const supName = sup
-      ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() || sup.email
+      ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() ||
+        displayProfileEmail(sup)
       : "";
     const message = supName
       ? `هذه الحصة مسندة حالياً إلى المشرف ${supName}. حذف الحصة سيُحرّر هذا المشرف ويمكن تعيينه لحصة أخرى. حسابه يبقى. الأعضاء والمجموعة والحضور والتقدم يبقون في أرشيف هذا الموسم. هل تريد المتابعة؟`
@@ -473,7 +480,7 @@ export default function AdminSeasonsScreen({ navigation }) {
             const sup = seance.superviseur || null;
             const supName = sup
               ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() ||
-                sup.email
+                displayProfileEmail(sup)
               : "";
             const archived = seance.statut === "archivee";
             return (
@@ -752,7 +759,7 @@ export default function AdminSeasonsScreen({ navigation }) {
                         active && styles.supervisorChipTextActive,
                       ]}
                     >
-                      {name || s.email}
+                      {name || displayProfileEmail(s)}
                     </Text>
                     <Text
                       style={[

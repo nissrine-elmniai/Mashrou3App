@@ -1,8 +1,6 @@
 import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
 import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
-import { canonicalEmail } from "./authEmail";
 import { formatGenderLabel } from "./membersApi";
-import { markMemberApplicationActivated } from "./memberApplicationsApi";
 import {
   isPasswordTooShort,
   passwordTooShortMessage,
@@ -324,12 +322,68 @@ export async function signInWithEmailPassword(email, password) {
  * Crée / active un compte invité via Edge Function (service role + email_confirm).
  * Évite auth.signUp qui dépend du SMTP Auth (souvent en panne).
  */
+export async function requestActivationCode({ email, role }) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  const mail = String(email || "").trim().toLowerCase();
+  if (!mail || !mail.includes("@")) {
+    return { ok: false, error: "أدخل بريداً إلكترونياً صالحاً" };
+  }
+  if (role !== ROLES.MEMBER && role !== ROLES.SUPERVISOR) {
+    return { ok: false, error: "دور غير صالح" };
+  }
+  try {
+    const { data, error } = await supabase.functions.invoke("send-activation-code", {
+      body: { email: mail, role },
+    });
+    const payload = await readFunctionPayload(data, error);
+    if (payload?.ok === true) return { ok: true };
+    if (payload?.ok === false) {
+      return { ok: false, error: payload.error || "تعذر إرسال الرمز" };
+    }
+    const status = error?.context?.status || error?.status;
+    const msg = error?.message || "";
+    if (
+      status === 404 ||
+      /not found|FunctionsFetchError|Failed to send|relay error/i.test(msg)
+    ) {
+      return {
+        ok: false,
+        error: "دالة إرسال الرمز غير منشورة — أعد نشر send-activation-code",
+      };
+    }
+    if (error) return { ok: false, error: msg || "تعذر إرسال الرمز" };
+    return { ok: false, error: "تعذر إرسال الرمز" };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بخدمة الرمز" };
+  }
+}
+
+async function readFunctionPayload(data, error) {
+  let payload = data;
+  if ((!payload || payload.ok === undefined) && error?.context) {
+    try {
+      const ctx = error.context;
+      if (typeof ctx.json === "function") payload = await ctx.json();
+      else if (typeof ctx.text === "function") {
+        const text = await ctx.text();
+        payload = text ? JSON.parse(text) : null;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return payload;
+}
+
 export async function activateInvitedAuthAccount({
   email,
   password,
   role,
   firstName,
   lastName,
+  code,
 }) {
   const mail = String(email || "").trim().toLowerCase();
   try {
@@ -342,25 +396,13 @@ export async function activateInvitedAuthAccount({
           role,
           firstName: firstName || "",
           lastName: lastName || "",
+          code: String(code || "").trim(),
         },
       }
     );
 
     // Corps JSON même si HTTP non-2xx (Supabase met souvent l'erreur dans error.context)
-    let payload = data;
-    if ((!payload || payload.ok === undefined) && error?.context) {
-      try {
-        const ctx = error.context;
-        if (typeof ctx.json === "function") {
-          payload = await ctx.json();
-        } else if (typeof ctx.text === "function") {
-          const text = await ctx.text();
-          payload = text ? JSON.parse(text) : null;
-        }
-      } catch {
-        /* ignore */
-      }
-    }
+    const payload = await readFunctionPayload(data, error);
 
     if (payload && payload.ok === false) {
       return { ok: false, error: payload.error || "تعذر إنشاء الحساب" };
@@ -421,141 +463,25 @@ export async function signUpWithProfile({
   role,
   firstName,
   lastName,
-  accountStatus = ACCOUNT_STATUS.ACTIVE,
-  signOutAfter = true,
+  code,
 }) {
-  // Activation d'invité : Edge Function (createUser + email_confirm) pour éviter
-  // l'échec SMTP de auth.signUp (« تعذر إرسال بريد التأكيد »).
-  if (role === ROLES.MEMBER || role === ROLES.SUPERVISOR) {
-    const invited = await activateInvitedAuthAccount({
-      email,
-      password,
-      role,
-      firstName,
-      lastName,
-    });
-    if (!invited.functionMissing) {
-      return invited;
-    }
-    if (role === ROLES.SUPERVISOR) {
-      return {
-        ok: false,
-        error: "تعذر تفعيل حساب المشرف. أعد المحاولة لاحقاً",
-      };
-    }
-    // Fonction non déployée (membre seulement) : repli signUp sans rôle privilegié
+  // Activation uniquement via activate-invited-account (OTP déjà vérifié).
+  // Pas de repli auth.signUp : il créerait un compte sans preuve de boîte mail.
+  if (role !== ROLES.MEMBER && role !== ROLES.SUPERVISOR) {
+    return { ok: false, error: "دور غير صالح" };
   }
-
-  const mail = String(email || "").trim().toLowerCase();
-  const { data, error } = await supabase.auth.signUp({
-    email: mail,
+  const invited = await activateInvitedAuthAccount({
+    email,
     password,
-    options: {
-      data: {
-        role: ROLES.MEMBER,
-        first_name: firstName || "",
-        last_name: lastName || "",
-        account_status: accountStatus,
-        canonical_email: canonicalEmail(mail),
-      },
-    },
-  });
-
-  if (error) {
-    if (/already registered|already been registered/i.test(error.message || "")) {
-      if (role === ROLES.MEMBER) {
-        return {
-          ok: false,
-          error:
-            "هذا البريد لحساب موجود مسبقاً (مشرف أو إدارة). حساب المشرف ليس حساب عضو — استخدم بريداً آخر لإنشاء حساب العضو.",
-        };
-      }
-      // Même rôle : réactivation éventuelle si le mot de passe correspond
-      const signedIn = await signInWithEmailPassword(mail, password);
-      if (!signedIn.ok) {
-        return {
-          ok: false,
-          error:
-            "هذا البريد مسجّل مسبقاً. سجّل الدخول أو استخدم استعادة كلمة المرور",
-        };
-      }
-      const existingRole = signedIn.profile?.role;
-      if (existingRole && existingRole !== role) {
-        await supabase.auth.signOut();
-        return {
-          ok: false,
-          error:
-            "هذا البريد مرتبط بدور آخر. استخدم بريداً مختلفاً لهذا الحساب.",
-        };
-      }
-      const updated = await upsertProfile({
-        id: signedIn.authUser.id,
-        email: mail,
-        role,
-        accountStatus,
-        firstName,
-        lastName,
-      });
-      if (!updated.ok) return updated;
-      await supabase.auth.signOut();
-      return {
-        ok: true,
-        authUser: signedIn.authUser,
-        profile: updated.profile,
-        existing: true,
-      };
-    }
-    return { ok: false, error: mapSupabaseAuthError(error) };
-  }
-
-  if (!data.user) {
-    return { ok: false, error: "تعذر إنشاء الحساب" };
-  }
-
-  // Le trigger SQL crée souvent le profil ; on force un upsert pour le rôle
-  const profileResult = await upsertProfile({
-    id: data.user.id,
-    email: mail,
     role,
-    accountStatus,
     firstName,
     lastName,
+    code,
   });
-
-  // Lier la demande d'inscription (si existante) tant que la session signup est active
-  let linkWarning = null;
-  if (data.session && role === ROLES.MEMBER) {
-    const linked = await markMemberApplicationActivated({
-      email: mail,
-      userId: data.user.id,
-    });
-    if (!linked.ok && !linked.skipped) {
-      linkWarning = linked.error || "تعذر ربط طلب الانضمام";
-    }
-  }
-
-  // Ne pas laisser une session "signup" ouverte : l'utilisateur se connecte ensuite
-  if (data.session) {
-    await supabase.auth.signOut();
-  }
-
-  if (!profileResult.ok) {
-    // Auth créé mais profil KO — on laisse quand même le compte Auth
-    return {
-      ok: true,
-      authUser: data.user,
-      profile: null,
-      warning: profileResult.error || linkWarning,
-      needsEmailConfirmation: !data.session,
-    };
-  }
-
+  if (!invited.functionMissing) return invited;
   return {
-    ok: true,
-    authUser: data.user,
-    profile: profileResult.profile,
-    needsEmailConfirmation: !data.session,
-    warning: linkWarning || undefined,
+    ok: false,
+    error: "دالة activate-invited-account غير منشورة — أعد نشرها من لوحة Supabase",
   };
 }
 

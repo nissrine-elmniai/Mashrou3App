@@ -74,20 +74,29 @@ export default function SupervisorMembersScreen({
           </View>
         ) : null}
 
-        <View style={styles.searchWrapper}>
-          <Ionicons name="search-outline" size={20} color={colors.placeholder} />
-          <TextInput
-            placeholder="ابحث عن عضو..."
-            placeholderTextColor={colors.placeholder}
-            style={styles.searchInput}
-            textAlign={textAlignStart}
-            value={search}
-            onChangeText={setSearch}
-          />
-        </View>
+        {activeGroup && membersWithStatus.length > 0 ? (
+          <View style={styles.searchWrapper}>
+            <Ionicons name="search-outline" size={20} color={colors.placeholder} />
+            <TextInput
+              placeholder="ابحث عن عضو..."
+              placeholderTextColor={colors.placeholder}
+              style={styles.searchInput}
+              textAlign={textAlignStart}
+              value={search}
+              onChangeText={setSearch}
+            />
+          </View>
+        ) : null}
 
-        {filtered.length === 0 ? (
-          <EmptyState text="لا يوجد عضو بهذا الاسم في مجموعاتك" />
+        {!activeGroup ? (
+          <EmptyState text="لم يتم تحديد حصة لك بعد" />
+        ) : membersWithStatus.length === 0 ? (
+          <EmptyState
+            text="لا يوجد أعضاء في حصتك بعد"
+            subtitle="سيظهر الأعضاء هنا بعد قبول تسجيلهم من طرف الإدارة"
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState text="لا يوجد عضو بهذا الاسم" />
         ) : (
           filtered.map((m) => (
             <MemberRow

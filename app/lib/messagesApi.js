@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { resolvePublicAvatarUrl } from "./avatarApi";
+import { displayProfileEmail } from "./authEmail";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -561,7 +562,7 @@ export async function getInboxThreads() {
       supabase
         .from("messages")
         .select(
-          "id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, role, avatar_url), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, role, avatar_url)"
+          "id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, canonical_email, role, avatar_url), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, canonical_email, role, avatar_url)"
         )
         .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
         .order("created_at", { ascending: false })
@@ -592,7 +593,7 @@ export async function getInboxThreads() {
         otherId: other.id,
         firstName: p.first_name || "",
         lastName: p.last_name || "",
-        email: p.email || "",
+        email: displayProfileEmail(p),
         role: p.role || "",
         avatarUrl: resolvePublicAvatarUrl(other.id, p.avatar_url),
         lastMessage: m.contenu || "",

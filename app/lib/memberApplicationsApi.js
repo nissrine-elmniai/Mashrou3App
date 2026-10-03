@@ -301,6 +301,12 @@ export async function insertPendingMemberApplication(reg) {
     const error = await insertApplicationRow(row, "إرسال طلب التسجيل");
     if (error) {
       const msg = error.message || "";
+      const taken = msg.match(
+        /هذا البريد مستعمل من طرف حساب مشرف|هذا البريد مرتبط بدعوة مشرف/
+      );
+      if (taken) {
+        return { ok: false, error: taken[0] };
+      }
       if (/duplicate key|23505/i.test(msg)) {
         const isRenewal =
           getRegistrationKindSafe(reg) === REGISTRATION_KIND.SEASON_RENEWAL;

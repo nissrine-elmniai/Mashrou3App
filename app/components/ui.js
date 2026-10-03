@@ -320,10 +320,11 @@ export function PersonCard({
   );
 }
 
-export function EmptyState({ text }) {
+export function EmptyState({ text, subtitle }) {
   return (
     <View style={styles.empty}>
       <Text style={styles.emptyText}>{text}</Text>
+      {subtitle ? <Text style={styles.emptySubtitle}>{subtitle}</Text> : null}
     </View>
   );
 }
@@ -727,6 +728,14 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: "center",
     fontFamily: fonts.regular,
+    writingDirection: "rtl",
+  },
+  emptySubtitle: {
+    color: colors.muted,
+    textAlign: "center",
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    marginTop: 6,
     writingDirection: "rtl",
   },
 

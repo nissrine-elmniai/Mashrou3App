@@ -3,6 +3,7 @@ import { getAllAcceptedInscriptions } from "./seancesApi";
 import { computeProgressMetrics } from "./progressApi";
 import { getSeancePresenceOverview } from "./presenceApi";
 import { formatGenderLabel } from "./membersApi";
+import { displayProfileEmail } from "./authEmail";
 
 const SUPABASE_TIMEOUT_MS = 20000;
 
@@ -146,7 +147,7 @@ async function fetchProfilesByIds(ids) {
   const { data, error } = await withTimeout(
     supabase
       .from("profiles")
-      .select("id, first_name, last_name, email")
+      .select("id, first_name, last_name, email, canonical_email")
       .in("id", unique),
     SUPABASE_TIMEOUT_MS,
     "قراءة المشرفين"
@@ -155,7 +156,9 @@ async function fetchProfilesByIds(ids) {
   const map = {};
   for (const p of data || []) {
     const name =
-      `${p.first_name || ""} ${p.last_name || ""}`.trim() || p.email || "مشرف";
+      `${p.first_name || ""} ${p.last_name || ""}`.trim() ||
+      displayProfileEmail(p) ||
+      "مشرف";
     map[p.id] = name;
   }
   return map;
