@@ -559,8 +559,7 @@ export function AppProvider({ children }) {
     if (user.accountStatus === ACCOUNT_STATUS.INACTIVE) {
       return {
         ok: false,
-        error:
-          "هذا الحساب معطّل بعد انتهاء الموسم السابق. تواصل مع الإدارة لإعادة تفعيله في الموسم الجديد.",
+        error: "تم تعطيل حسابك، يرجى التواصل مع الإدارة",
       };
     }
     if (user.password !== password) {
@@ -2389,6 +2388,8 @@ export function AppProvider({ children }) {
     if (patch.phone !== undefined) next.phone = patch.phone || null;
     if (patch.gender !== undefined) next.gender = patch.gender || "غير محدد";
     if (patch.birthDate !== undefined) next.birthDate = patch.birthDate || null;
+    if (patch.school !== undefined) next.school = patch.school || null;
+    if (patch.level !== undefined) next.level = patch.level || null;
     if (Object.keys(next).length === 0) return;
     const patchUser = (user) => {
       const isSelf =

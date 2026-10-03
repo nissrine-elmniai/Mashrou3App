@@ -139,7 +139,36 @@ export function navigateFromNotificationPayload(navigation, payload) {
       });
       if (opened) return true;
     }
-    if (dedicated && tryNavigate(navigation, dedicated, dedicatedParams)) {
+    if (dedicated === "MemberProfile") {
+      const memberId = String(
+        dedicatedParams.memberId || payload.memberId || ""
+      ).trim();
+      if (!memberId) {
+        if (
+          tryNavigate(navigation, "AdminRegistrations", {
+            application_id:
+              payload.application_id || dedicatedParams.application_id || null,
+            kind: payload.kind || dedicatedParams.kind || null,
+          })
+        ) {
+          return true;
+        }
+      } else if (
+        tryNavigate(navigation, "MemberProfile", {
+          memberId,
+          viewerRole: "admin",
+          adminTheme: true,
+          canEditSeance: true,
+        })
+      ) {
+        return true;
+      }
+    }
+    if (
+      dedicated &&
+      dedicated !== "MemberProfile" &&
+      tryNavigate(navigation, dedicated, dedicatedParams)
+    ) {
       return true;
     }
     return tryNavigate(navigation, "NotificationDetail", detailParams(payload));

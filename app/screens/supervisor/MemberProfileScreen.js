@@ -12,7 +12,7 @@
  * date_naissance : profiles.date_naissance via getMemberProfileFields.
  * phone, school, level, hifz_amount, genre viennent de profiles.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -29,24 +29,23 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
-import { useApp } from "../../context/AppContext";
 import {
   getMemberProgressEntries,
   computeProgressMetrics,
   computeProgressPace,
   latestProgressionRow,
 } from "../../lib/progressApi";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberObjectif } from "../../lib/objectifsApi";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import {
   getMemberProfileFields,
+  loadCurrentMemberSeance,
   removeMemberFromSeance,
   updateMemberSeance,
   formatGenderLabel,
 } from "../../lib/membersApi";
-import { formatBirthDateLabel } from "../../lib/auth";
-import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
+import { displayProfileEmail } from "../../lib/authEmail";
+import PersonalInfoSection from "../../components/PersonalInfoSection";
 import {
   getAllSeances,
   formatSeanceScheduleLabel,
@@ -197,49 +196,64 @@ function PresenceSectionContent({ presenceState, styles }) {
 }
 
 export default function MemberProfileScreen({ navigation, route }) {
-  const { seasons } = useApp();
   const insets = useSafeAreaInsets();
   const {
     memberId,
-    seanceId: initialSeanceId,
-    saisonId: initialSaisonId,
     firstName,
     lastName,
     avatarUrl,
-    email,
     phone,
     school,
     level,
     hifzAmount,
     gender,
-    groupName: initialGroupName,
-    groupSchedule: initialGroupSchedule,
     registrationDate,
-    supervisorName: initialSupervisorName,
-    seasonName,
-    seasonVersion,
-    canEditSeance = false,
     adminTheme = false,
+    viewerRole = null,
   } = route.params || {};
+
+  const isAdminViewer = viewerRole === "admin";
+  const canRemoveFromSeance = viewerRole === "admin" || viewerRole === "supervisor";
 
   const fullName = `${firstName || ""} ${lastName || ""}`.trim() || "عضو";
   const registrationDateOnly = registrationDate ? String(registrationDate).slice(0, 10) : null;
 
-  const [seanceId, setSeanceId] = useState(initialSeanceId || null);
-  const [saisonId, setSaisonId] = useState(initialSaisonId || null);
-  const [groupName, setGroupName] = useState(initialGroupName || null);
-  const [groupSchedule, setGroupSchedule] = useState(initialGroupSchedule || null);
-  const [supervisorName, setSupervisorName] = useState(initialSupervisorName || null);
+  const [inscriptionId, setInscriptionId] = useState(null);
+  const [activeSeasonId, setActiveSeasonId] = useState(null);
+  const [seasonLabel, setSeasonLabel] = useState(null);
+  const [seanceId, setSeanceId] = useState(null);
+  const [saisonId, setSaisonId] = useState(null);
+  const [groupName, setGroupName] = useState(null);
+  const [groupSchedule, setGroupSchedule] = useState(null);
+  const [supervisorName, setSupervisorName] = useState(null);
   const [avatarUri, setAvatarUri] = useState(avatarUrl || null);
 
-  const seasonLabel = useMemo(() => {
-    const season = seasons?.find((s) => s.id === saisonId) || null;
-    const name = season?.name || seasonName || null;
-    const version = season?.version ?? seasonVersion ?? null;
-    if (!name && version == null) return null;
-    if (version == null) return name;
-    return name ? `${name} — النسخة ${version}` : `النسخة ${version}`;
-  }, [seasons, saisonId, seasonName, seasonVersion]);
+  const applyLoadedSeance = useCallback((season, inscription) => {
+    setActiveSeasonId(season?.id || null);
+    setSeasonLabel(season?.name || null);
+    if (!inscription) {
+      setInscriptionId(null);
+      setSeanceId(null);
+      setSaisonId(season?.id || null);
+      setGroupName(season ? "بدون حصة" : null);
+      setGroupSchedule(null);
+      setSupervisorName(null);
+      return;
+    }
+    const seance = inscription.seance || null;
+    const supervisor = seance?.superviseur;
+    const supervisorLabel = supervisor
+      ? `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim() ||
+        displayProfileEmail(supervisor) ||
+        null
+      : null;
+    setInscriptionId(inscription.id);
+    setSeanceId(inscription.seance_id || seance?.id || null);
+    setSaisonId(season?.id || inscription.saison_id || seance?.saison_id || null);
+    setGroupName(seance?.nom || "—");
+    setGroupSchedule(formatSeanceScheduleLabel(seance) || null);
+    setSupervisorName(supervisorLabel);
+  }, []);
   const [seanceModalVisible, setSeanceModalVisible] = useState(false);
   const [availableSeances, setAvailableSeances] = useState([]);
   const [loadingSeances, setLoadingSeances] = useState(false);
@@ -262,6 +276,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     absentCount: 0,
     records: [],
   });
+  const [memberInfo, setMemberInfo] = useState(null);
   const [contactFields, setContactFields] = useState({
     firstName: firstName || null,
     lastName: lastName || null,
@@ -276,12 +291,14 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   // L'admin affecte toujours dans le musim actif (un membre d'une ancienne
   // version peut ainsi être ajouté à une séance de la version en cours).
-  const pickerSaisonId = adminTheme
-    ? getActiveRegularSeason(seasons)?.id || saisonId || null
-    : saisonId || null;
+  const pickerSaisonId = adminTheme ? activeSeasonId || null : saisonId || null;
 
   const openSeancePicker = async () => {
-    if (!canEditSeance || savingSeance) return;
+    if (!isAdminViewer || savingSeance) return;
+    if (!pickerSaisonId) {
+      Alert.alert("تنبيه", "لا يوجد موسم نشط");
+      return;
+    }
     setSeanceModalVisible(true);
     setLoadingSeances(true);
     const res = await getAllSeances({ saisonId: pickerSaisonId });
@@ -312,7 +329,7 @@ export default function MemberProfileScreen({ navigation, route }) {
       currentSeanceId: seanceId,
       newSeanceId: nextSeance.id,
       saisonId: nextSeance.saison_id || pickerSaisonId,
-      createIfMissing: canEditSeance,
+      createIfMissing: isAdminViewer,
     });
     setSavingSeance(false);
 
@@ -321,17 +338,17 @@ export default function MemberProfileScreen({ navigation, route }) {
       return;
     }
 
-    setSeanceId(nextSeance.id);
-    setSaisonId(res.saisonId || nextSeance.saison_id || saisonId);
-    setGroupName(nextSeance.nom || null);
-    setGroupSchedule(formatSeanceScheduleLabel(nextSeance) || null);
-    const sup = nextSeance.superviseur;
-    setSupervisorName(
-      sup
-        ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() || sup.email || null
-        : null
-    );
     setSeanceModalVisible(false);
+    const loaded = await loadCurrentMemberSeance(memberId);
+    if (loaded.ok) {
+      applyLoadedSeance(loaded.season, loaded.inscription);
+    } else if (res.inscription?.id) {
+      setInscriptionId(res.inscription.id);
+      setSeanceId(nextSeance.id);
+      setSaisonId(res.saisonId || nextSeance.saison_id || saisonId);
+      setGroupName(nextSeance.nom || null);
+      setGroupSchedule(formatSeanceScheduleLabel(nextSeance) || null);
+    }
     Alert.alert(
       "تم",
       res.created
@@ -341,7 +358,7 @@ export default function MemberProfileScreen({ navigation, route }) {
   };
 
   const confirmRemoveFromSeance = () => {
-    if (!memberId || !seanceId || removingFromSeance) return;
+    if (!canRemoveFromSeance || !memberId || removingFromSeance || !inscriptionId) return;
     Alert.alert(
       "إزالة من الحصة",
       `هل تريد إزالة ${fullName} من حصة «${groupName || "—"}»؟\n\nسيتم حذف تسجيل العضو في هذه الحصة فقط. يمكنه التسجيل في حصة أخرى لاحقاً.`,
@@ -353,18 +370,31 @@ export default function MemberProfileScreen({ navigation, route }) {
   };
 
   const handleRemoveFromSeance = async () => {
-    if (!memberId || !seanceId || removingFromSeance) return;
+    if (!memberId || !inscriptionId || removingFromSeance) return;
     setRemovingFromSeance(true);
-    const res = await removeMemberFromSeance(memberId, seanceId);
+    const res = await removeMemberFromSeance(inscriptionId);
     setRemovingFromSeance(false);
     if (!res.ok) {
-      Alert.alert("تنبيه", res.error || "تعذر إزالة العضو من الحصة");
+      Alert.alert("تنبيه", res.error || "تعذّر إزالة العضو من الحصة");
       return;
     }
-    Alert.alert("تم", "تم إزالة العضو من الحصة بنجاح", [
-      { text: "حسناً", onPress: () => navigation.goBack() },
-    ]);
+    const loaded = await loadCurrentMemberSeance(memberId);
+    if (loaded.ok) applyLoadedSeance(loaded.season, loaded.inscription);
+    Alert.alert("تم", "تم إزالة العضو من الحصة بنجاح");
   };
+
+  useEffect(() => {
+    if (!memberId) return undefined;
+    let cancelled = false;
+    (async () => {
+      const res = await loadCurrentMemberSeance(memberId);
+      if (cancelled || !res.ok) return;
+      applyLoadedSeance(res.season, res.inscription);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [memberId, applyLoadedSeance]);
 
   useEffect(() => {
     if (!memberId) return;
@@ -372,7 +402,12 @@ export default function MemberProfileScreen({ navigation, route }) {
     (async () => {
       const res = await getMemberProfileFields(memberId);
       if (cancelled || !res.ok) return;
+      if (res.profileMissing && isAdminViewer) {
+        navigation.replace("AdminRegistrations");
+        return;
+      }
       setAvatarUri(res.avatarUrl || avatarUrl || null);
+      setMemberInfo(res);
       setContactFields({
         firstName: res.firstName || firstName || null,
         lastName: res.lastName || lastName || null,
@@ -387,7 +422,18 @@ export default function MemberProfileScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [memberId, firstName, lastName, phone, school, level, hifzAmount, gender]);
+  }, [
+    memberId,
+    firstName,
+    lastName,
+    phone,
+    school,
+    level,
+    hifzAmount,
+    gender,
+    isAdminViewer,
+    navigation,
+  ]);
 
   useEffect(() => {
     if (!memberId) {
@@ -416,8 +462,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     setPresenceState((s) => ({ ...s, loading: true, error: null }));
 
     (async () => {
-      const objectifSaisonId =
-        getActiveRegularSeason(seasons)?.id || saisonId || null;
+      const objectifSaisonId = activeSeasonId || saisonId || null;
       const [progRes, objRes, presRes] = await Promise.all([
         getMemberProgressEntries(memberId),
         objectifSaisonId
@@ -445,10 +490,7 @@ export default function MemberProfileScreen({ navigation, route }) {
         const entries = progRes.entries || [];
         const latest = latestProgressionRow(entries);
         const metrics = latest ? computeProgressMetrics(latest) : null;
-        const pace = computeProgressPace(
-          entries,
-          getActiveRegularSeason(seasons)?.id ?? null
-        );
+        const pace = computeProgressPace(entries, activeSeasonId ?? null);
         setProgressState({
           loading: false,
           error: null,
@@ -487,7 +529,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [memberId, seanceId, saisonId, seasons]);
+  }, [memberId, seanceId, saisonId, activeSeasonId]);
 
   const headerIconColor = adminTheme ? "#333333" : "white";
   const trashColor = adminTheme ? "#D32F2F" : "white";
@@ -512,7 +554,7 @@ export default function MemberProfileScreen({ navigation, route }) {
         >
           {fullName}
         </Text>
-        {seanceId ? (
+        {canRemoveFromSeance && inscriptionId ? (
           <TouchableOpacity
             style={styles.headerRemoveBtn}
             onPress={confirmRemoveFromSeance}
@@ -545,33 +587,12 @@ export default function MemberProfileScreen({ navigation, route }) {
           <Text style={styles.name}>{fullName}</Text>
         </View>
 
-        <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card]}>
-          <ProfileRow icon="person-outline" label={L.full_name} value={fullName} />
-          <ProfileRow icon="mail-outline" label={L.email} value={email} />
-          <ProfileRow
-            icon="male-female-outline"
-            label={L.genre}
-            value={contactFields.gender || "—"}
-          />
-          <ProfileRow icon="call-outline" label={L.phone} value={contactFields.phone} />
-          <ProfileRow
-            icon="calendar-outline"
-            label={L.date_naissance}
-            value={formatBirthDateLabel(contactFields.birthDate)}
-          />
-          <ProfileRow icon="school-outline" label={L.school} value={contactFields.school} />
-          <ProfileRow
-            icon="bar-chart-outline"
-            label={L.level}
-            value={contactFields.level}
-          />
-          <ProfileRow icon="book-outline" label={L.hifz_amount} value={contactFields.hifzAmount} />
-        </View>
+        <PersonalInfoSection member={memberInfo} adminTheme={adminTheme} />
 
         <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
           <View style={styles.seanceHeader}>
             <Text style={styles.cardTitleInline}>الحصة</Text>
-            {canEditSeance ? (
+            {isAdminViewer ? (
               <TouchableOpacity
                 style={styles.editSeanceBtn}
                 onPress={openSeancePicker}
@@ -585,11 +606,11 @@ export default function MemberProfileScreen({ navigation, route }) {
             ) : null}
           </View>
           <ProfileRow icon="people-outline" label="الحصة" value={groupName || "—"} />
-          {adminTheme ? (
+          {inscriptionId && supervisorName ? (
             <ProfileRow
               icon="person-circle-outline"
               label="المشرف"
-              value={supervisorName || "—"}
+              value={supervisorName}
             />
           ) : null}
           <ProfileRow icon="time-outline" label="التوقيت" value={groupSchedule} />

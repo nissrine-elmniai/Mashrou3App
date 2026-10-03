@@ -15,10 +15,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
 import { colors } from "../../constants/theme";
 import { rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
-import {
-  getMemberProfileFields,
-  formatGenderLabel,
-} from "../../lib/membersApi";
+import { getMemberProfileFields } from "../../lib/membersApi";
 import { getMyCurrentInscription } from "../../lib/messagesApi";
 import {
   getMyProgress,
@@ -29,19 +26,12 @@ import {
 import { getMyObjectif } from "../../lib/objectifsApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import PersonalInfoSection from "../../components/PersonalInfoSection";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfileNotificationsCard from "../../components/profile/ProfileNotificationsCard";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
-
-/** Genre depuis currentUser uniquement — pas de fetch member_applications. */
-function displayGenderFromUser(gender) {
-  const raw = String(gender || "").trim();
-  if (!raw || raw === "غير محدد") return null;
-  return formatGenderLabel(raw) || null;
-}
 
 /**
  * Self-view membre — الملف الشخصي.
@@ -56,6 +46,7 @@ export default function MemberProfileScreen({ navigation }) {
   } = useApp();
   const authId = currentUser?.authId || currentUser?.id || null;
 
+  const [memberInfo, setMemberInfo] = useState(null);
   const [contactFields, setContactFields] = useState({
     phone: currentUser?.phone || null,
     school: currentUser?.school || null,
@@ -106,6 +97,7 @@ export default function MemberProfileScreen({ navigation }) {
 
   const loadProfileData = useCallback(async () => {
     if (!authId) {
+      setMemberInfo(null);
       setSessionState({
         loading: false,
         groupName: null,
@@ -147,6 +139,7 @@ export default function MemberProfileScreen({ navigation }) {
     ]);
 
     if (fieldsRes.ok) {
+      setMemberInfo(fieldsRes);
       setContactFields({
         phone: fieldsRes.telephone || currentUser?.phone || null,
         school: fieldsRes.ecole || currentUser?.school || null,
@@ -299,17 +292,7 @@ export default function MemberProfileScreen({ navigation }) {
         />
 
         <View style={styles.cards}>
-          <ProfileInfoCard
-            firstName={currentUser?.firstName}
-            lastName={currentUser?.lastName}
-            email={currentUser?.email || null}
-            gender={displayGenderFromUser(currentUser?.gender)}
-            phone={contactFields.phone}
-            birthDate={currentUser?.birthDate}
-            school={contactFields.school}
-            level={contactFields.level}
-            hifzAmount={contactFields.hifzAmount}
-          />
+          <PersonalInfoSection member={memberInfo} />
 
           <SessionCard
             groupName={sessionState.groupName}

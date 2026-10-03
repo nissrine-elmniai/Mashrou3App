@@ -6,15 +6,16 @@ function seasonTypeOf(season) {
     .toLowerCase();
 }
 
-/** Musim ordinaire actif (ou le premier musim ordinaire en secours). */
+/**
+ * Saison active uniquement (active = true).
+ * Le type regular est prioritaire. Aucune saison active → null.
+ * Jamais de repli sur un musim inactif.
+ */
 export function getActiveRegularSeason(seasons = []) {
-  const list = seasons || [];
+  const active = (seasons || []).filter((season) => season?.active);
   return (
-    list.find(
-      (s) => s.active && seasonTypeOf(s) === SEASON_TYPES.REGULAR
-    ) ||
-    list.find((s) => seasonTypeOf(s) === SEASON_TYPES.REGULAR) ||
-    list.find((s) => s.active) ||
+    active.find((season) => seasonTypeOf(season) === SEASON_TYPES.REGULAR) ||
+    active[0] ||
     null
   );
 }
