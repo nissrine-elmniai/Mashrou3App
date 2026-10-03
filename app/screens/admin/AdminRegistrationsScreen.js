@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -6,7 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Menu, Bell, Check, X, Mail } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
@@ -47,6 +50,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     registrations,
     seasons,
     getUserById,
+    refreshRegistrations,
     reviewRegistration,
     currentUser,
     stats,
@@ -56,6 +60,31 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   const [filter, setFilter] = useState("pending");
   const [kindFilter, setKindFilter] = useState("all");
   const [sendingId, setSendingId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+
+  const reloadRegistrations = useCallback(
+    async (mode) => {
+      if (mode === "refresh") setRefreshing(true);
+      else setLoading(true);
+      const res = await refreshRegistrations();
+      if (!res?.ok && !res?.skipped) {
+        setLoadError("تعذّر تحميل الطلبات");
+      } else {
+        setLoadError(null);
+      }
+      setLoading(false);
+      setRefreshing(false);
+    },
+    [refreshRegistrations]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      reloadRegistrations("initial");
+    }, [reloadRegistrations])
+  );
   const activeSeason = getActiveRegularSeason(seasons);
 
   const matchesKind = (reg) => {
@@ -271,6 +300,14 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           { paddingBottom: 24 + bottomGap },
         ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => reloadRegistrations("refresh")}
+            colors={[palette.primary]}
+            tintColor={palette.primary}
+          />
+        }
       >
         {!isSummer ? (
           <View style={styles.filterRow}>
@@ -318,7 +355,21 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           ))}
         </View>
 
-        {list.length === 0 ? (
+        {loading && !refreshing ? (
+          <ActivityIndicator color={palette.primary} style={styles.loader} />
+        ) : loadError ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.emptyText}>{loadError}</Text>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => reloadRegistrations("initial")}
+              accessibilityRole="button"
+              accessibilityLabel="إعادة المحاولة"
+            >
+              <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
+            </TouchableOpacity>
+          </View>
+        ) : list.length === 0 ? (
           <Text style={styles.emptyText}>لا توجد طلبات في هذا التصنيف</Text>
         ) : (
           list.map((reg) => {
@@ -326,8 +377,9 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
             const season = seasons.find((s) => s.id === reg.seasonId);
             const kind = getRegistrationKind(reg);
             const title =
-              reg.fullName ||
-              (user ? `${user.firstName} ${user.lastName}` : "مترشح");
+              String(reg.fullName || "").trim() ||
+              `${reg.firstName || ""} ${reg.lastName || ""}`.trim() ||
+              "مترشح";
             const sending = sendingId === reg.id;
             const statusColor =
               reg.status === REGISTRATION_STATUS.REJECTED
@@ -586,6 +638,24 @@ const styles = StyleSheet.create({
     marginTop: 40,
     fontSize: 14,
     ...rtlText,
+  },
+  loader: {
+    marginTop: 40,
+  },
+  errorBox: {
+    alignItems: "center",
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: palette.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  retryBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 15,
   },
   card: {
     backgroundColor: "#fff",

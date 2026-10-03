@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   ActivityIndicator,
   TextInput,
+  RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Menu, Bell, Search, UserCheck } from "lucide-react-native";
@@ -107,37 +108,63 @@ export default function AdminMembersScreen({ navigation }) {
   const activeSeason = getActiveRegularSeason(seasons);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [profilesError, setProfilesError] = useState(false);
+  const [inscriptionsOk, setInscriptionsOk] = useState(true);
+  const [progressOk, setProgressOk] = useState(true);
   const [profiles, setProfiles] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
   const [progressions, setProgressions] = useState([]);
   const [search, setSearch] = useState("");
   const [versionFilter, setVersionFilter] = useState(ALL_FILTER);
   const [avatarNonce, setAvatarNonce] = useState(() => Date.now());
+  const loadSeq = useRef(0);
+
+  const loadMembers = useCallback(async (mode) => {
+    const seq = ++loadSeq.current;
+    if (mode === "refresh") setRefreshing(true);
+    else setLoading(true);
+    try {
+      const [profRes, inscRes, progRes] = await Promise.all([
+        getMemberProfiles(),
+        getAllAcceptedInscriptions(),
+        getAllProgressionAdmin(),
+      ]);
+      if (seq !== loadSeq.current) return;
+      if (profRes.ok) {
+        setProfiles(profRes.members);
+        setProfilesError(false);
+      } else {
+        console.warn("[AdminMembers] getMemberProfiles failed:", profRes.error);
+        setProfilesError(true);
+      }
+      if (inscRes.ok) {
+        setInscriptions(inscRes.inscriptions);
+        setInscriptionsOk(true);
+      } else {
+        setInscriptions([]);
+        setInscriptionsOk(false);
+      }
+      if (progRes.ok) {
+        setProgressions(progRes.entries);
+        setProgressOk(true);
+      } else {
+        setProgressions([]);
+        setProgressOk(false);
+      }
+    } finally {
+      if (seq === loadSeq.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      let cancelled = false;
       setAvatarNonce(Date.now());
-      (async () => {
-        const [profRes, inscRes, progRes] = await Promise.all([
-          getMemberProfiles(),
-          getAllAcceptedInscriptions(),
-          getAllProgressionAdmin(),
-        ]);
-        if (cancelled) return;
-        if (profRes.ok) {
-          setProfiles(profRes.members);
-        } else {
-          console.warn("[AdminMembers] getMemberProfiles failed:", profRes.error);
-        }
-        if (inscRes.ok) setInscriptions(inscRes.inscriptions);
-        if (progRes.ok) setProgressions(progRes.entries);
-        setLoading(false);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [])
+      loadMembers("initial");
+    }, [loadMembers])
   );
 
   const seasonsById = useMemo(() => {
@@ -188,8 +215,9 @@ export default function AdminMembersScreen({ navigation }) {
             return tb - ta;
           });
         const latest = entries[0];
-        const pct = computeProgressMetrics(latest)?.globalPct ?? 0;
-        const level = deriveLevel(pct);
+        const metrics = progressOk ? computeProgressMetrics(latest) : null;
+        const pct = progressOk ? (metrics?.globalPct ?? 0) : null;
+        const level = pct == null ? null : deriveLevel(pct);
         const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
         const seance = inscription?.seance || null;
         const currentSeason = seasonsById.get(seasonIdOf(inscription)) || null;
@@ -206,7 +234,7 @@ export default function AdminMembersScreen({ navigation }) {
           hifzAmount: p.hifz_amount || null,
           level,
           pct,
-          session: seance?.nom || "بدون حصة",
+          session: inscriptionsOk ? seance?.nom || "بدون حصة" : "—",
           seanceId: inscription?.seance_id || seance?.id || null,
           saisonId: seasonIdOf(inscription) || activeSeason?.id || null,
           seasonName: currentSeason?.name || null,
@@ -230,7 +258,15 @@ export default function AdminMembersScreen({ navigation }) {
           ),
         };
       });
-  }, [profiles, inscriptions, progressions, seasonsById, activeSeason?.id]);
+  }, [
+    profiles,
+    inscriptions,
+    progressions,
+    seasonsById,
+    activeSeason?.id,
+    inscriptionsOk,
+    progressOk,
+  ]);
 
   // Filtre unique : la version du musim actif (les anciennes versions restent visibles via « الكل »).
   const currentVersionOption = useMemo(() => {
@@ -278,7 +314,10 @@ export default function AdminMembersScreen({ navigation }) {
       school: member.school,
       level: member.levelLabel,
       hifzAmount: member.hifzAmount,
-      groupName: member.session !== "بدون حصة" ? member.session : null,
+      groupName:
+        member.session && member.session !== "بدون حصة" && member.session !== "—"
+          ? member.session
+          : null,
       groupSchedule: member.groupSchedule || null,
       registrationDate: member.registrationDate,
       supervisorName: member.supervisorName,
@@ -295,6 +334,15 @@ export default function AdminMembersScreen({ navigation }) {
     if (versionFilter === NO_SEASON_FILTER) return "كل الأعضاء مسجّلون في موسم";
     return "لا يوجد أعضاء مسجّلون في هذا الموسم";
   })();
+
+  const partialWarning =
+    !inscriptionsOk && !progressOk
+      ? "تعذّر تحميل الحصص ونسب التقدم"
+      : !inscriptionsOk
+        ? "تعذّر تحميل الحصص"
+        : !progressOk
+          ? "تعذّر تحميل نسب التقدم"
+          : null;
 
   return (
     <SafeAreaView
@@ -329,12 +377,20 @@ export default function AdminMembersScreen({ navigation }) {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => loadMembers("refresh")}
+            colors={[palette.primary]}
+            tintColor={palette.primary}
+          />
+        }
       >
         <View style={styles.searchContainer}>
           <Search size={20} color={palette.placeholder} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="بحث بالاسم أو البريد أو المشرف..."
+            placeholder="ابحث بالاسم أو البريد أو المشرف..."
             placeholderTextColor={palette.placeholder}
             value={search}
             onChangeText={setSearch}
@@ -342,7 +398,6 @@ export default function AdminMembersScreen({ navigation }) {
           />
         </View>
 
-        <Text style={styles.filterLabel}>تصفية حسب الموسم</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -374,21 +429,42 @@ export default function AdminMembersScreen({ navigation }) {
             : `الأعضاء (${filteredMembers.length})`}
         </Text>
 
-        {loading ? (
+        {loading && !refreshing ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
-        ) : filteredMembers.length === 0 ? (
-          <Text style={styles.emptyText}>{emptyMessage}</Text>
+        ) : profilesError ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>تعذّر تحميل الأعضاء</Text>
+            <TouchableOpacity
+              style={styles.retryBtn}
+              onPress={() => loadMembers("initial")}
+              accessibilityRole="button"
+              accessibilityLabel="إعادة المحاولة"
+            >
+              <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
-          filteredMembers.map((member) => (
+          <>
+            {partialWarning ? (
+              <View style={styles.warningBanner}>
+                <Text style={styles.warningText}>{partialWarning}</Text>
+              </View>
+            ) : null}
+            {filteredMembers.length === 0 ? (
+              <Text style={styles.emptyText}>{emptyMessage}</Text>
+            ) : (
+              filteredMembers.map((member) => (
             <MemberCard
               key={member.id}
               member={member}
               avatarNonce={avatarNonce}
               onPress={() => openMemberProfile(member)}
             />
-          ))
+              ))
+            )}
+          </>
         )}
       </ScrollView>
       {messagesFab}
@@ -438,7 +514,7 @@ function MemberCard({ member, onPress, avatarNonce }) {
           <View style={styles.cardMeta}>
             <View style={[styles.levelPill, { backgroundColor: `${color}22` }]}>
               <Text style={[styles.levelPillText, { color }]}>
-                {member.level}
+                {member.level || "—"}
               </Text>
             </View>
             <Text style={styles.sessionText}>{member.session}</Text>
@@ -484,10 +560,15 @@ function MemberCard({ member, onPress, avatarNonce }) {
       <View style={styles.progressRow}>
         <View style={styles.progressTrack}>
           <View
-            style={[styles.progressFill, { width: `${member.pct}%` }]}
+            style={[
+              styles.progressFill,
+              { width: member.pct == null ? "0%" : `${member.pct}%` },
+            ]}
           />
         </View>
-        <Text style={styles.progressPct}>{member.pct}%</Text>
+        <Text style={styles.progressPct}>
+          {member.pct == null ? "—" : `${member.pct}%`}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -628,6 +709,32 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: palette.border,
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: palette.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+  },
+  retryBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  warningBanner: {
+    backgroundColor: "#FFF8E1",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#FFE082",
+  },
+  warningText: {
+    color: "#8D6E00",
+    fontSize: 14,
+    ...rtlText,
   },
   card: {
     backgroundColor: "#fff",

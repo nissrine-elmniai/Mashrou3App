@@ -113,7 +113,7 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
     setError(null);
     const res = await getSeancePresenceOverview(seance.id);
     if (!res.ok) {
-      setError(res.error || "تعذر تحميل بيانات الحضور");
+      setError("تعذّر تحميل بيانات الحضور");
       setLoading(false);
       return;
     }
