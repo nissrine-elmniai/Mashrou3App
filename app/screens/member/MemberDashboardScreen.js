@@ -56,7 +56,7 @@ import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { getMyTestInvitations, getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
 import MemberTestsPanel from "../../components/member/MemberTestsPanel";
 import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tumun";
-import ProfileInfoCard from "../../components/profile/ProfileInfoCard";
+import PersonalInfoSection from "../../components/PersonalInfoSection";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
 import ProfileNotificationsCard from "../../components/profile/ProfileNotificationsCard";
@@ -64,7 +64,7 @@ import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
-import EditProfileInfoModal from "../../components/profile/EditProfileInfoModal";
+import EditPersonalInfoModal from "../../components/profile/EditPersonalInfoModal";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { useUnreadNotifications } from "../../hooks/useUnreadNotifications";
 import MemberProgramsPanel from "./MemberProgramsPanel";
@@ -307,6 +307,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
   const [passwordModal, setPasswordModal] = useState(false);
   const [editInfoModal, setEditInfoModal] = useState(false);
   const [seasonObjectif, setSeasonObjectif] = useState(null);
+  const [memberInfo, setMemberInfo] = useState(null);
   const [contactFields, setContactFields] = useState({
     phone: currentUser?.phone || null,
     school: currentUser?.school || null,
@@ -497,6 +498,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
 
   const loadProfileData = useCallback(async () => {
     if (!authId) {
+      setMemberInfo(null);
       setSessionState({
         loading: false,
         groupName: null,
@@ -536,6 +538,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
     ]);
 
     if (fieldsRes.ok) {
+      setMemberInfo(fieldsRes);
       setContactFields({
         phone: fieldsRes.telephone || currentUser?.phone || null,
         school: fieldsRes.ecole || currentUser?.school || null,
@@ -611,18 +614,9 @@ export default function MemberDashboardScreen({ navigation, route }) {
     currentUser?.hifzAmount,
   ]);
 
-  const handleProfileInfoSaved = useCallback(
-    (saved) => {
-      setContactFields((prev) => ({
-        ...prev,
-        phone: saved?.phone ?? prev.phone,
-        school: saved?.school ?? prev.school,
-        level: saved?.level ?? prev.level,
-      }));
-      loadProfileData();
-    },
-    [loadProfileData]
-  );
+  const handleProfileInfoSaved = useCallback(async () => {
+    await loadProfileData();
+  }, [loadProfileData]);
 
   // Profil : chargement uniquement quand le tab "ملفي" est actif (pas au montage dashboard).
   useEffect(() => {
@@ -1262,17 +1256,9 @@ export default function MemberDashboardScreen({ navigation, route }) {
             />
 
             <View style={styles.profileCards}>
-              <ProfileInfoCard
-                firstName={currentUser?.firstName}
-                lastName={currentUser?.lastName}
-                email={currentUser?.email || null}
-                gender={displayGenderFromUser(currentUser?.gender)}
-                phone={contactFields.phone}
-                birthDate={currentUser?.birthDate}
-                school={contactFields.school}
-                level={contactFields.level}
-                hifzAmount={contactFields.hifzAmount}
-                onEdit={() => setEditInfoModal(true)}
+              <PersonalInfoSection
+                member={memberInfo}
+                editAction={() => setEditInfoModal(true)}
               />
 
               <SessionCard
@@ -1341,20 +1327,12 @@ export default function MemberDashboardScreen({ navigation, route }) {
         bottomInset={Math.max(insets.bottom, 16)}
       />
 
-      <EditProfileInfoModal
+      <EditPersonalInfoModal
         visible={editInfoModal}
         onClose={() => setEditInfoModal(false)}
         onSaved={handleProfileInfoSaved}
         authId={authId}
-        email={currentUser?.email || null}
-        gender={displayGenderFromUser(currentUser?.gender)}
-        birthDate={currentUser?.birthDate}
-        hifzAmount={contactFields.hifzAmount}
-        firstName={currentUser?.firstName}
-        lastName={currentUser?.lastName}
-        phone={contactFields.phone}
-        school={contactFields.school}
-        level={contactFields.level}
+        member={memberInfo}
         bottomInset={Math.max(insets.bottom, 16)}
       />
     </SafeAreaView>

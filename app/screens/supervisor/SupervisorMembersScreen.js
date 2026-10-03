@@ -45,6 +45,7 @@ export default function SupervisorMembersScreen({
       groupName: m.group?.name,
       groupSchedule: m.group?.schedule,
       registrationDate: m.registrationDate,
+      viewerRole: "supervisor",
     });
   };
 

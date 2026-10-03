@@ -306,8 +306,7 @@ export async function signInWithEmailPassword(email, password) {
     await supabase.auth.signOut();
     return {
       ok: false,
-      error:
-        "هذا الحساب معطّل بعد انتهاء الموسم السابق. تواصل مع الإدارة لإعادة تفعيله في الموسم الجديد.",
+      error: "تم تعطيل حسابك، يرجى التواصل مع الإدارة",
     };
   }
   return {

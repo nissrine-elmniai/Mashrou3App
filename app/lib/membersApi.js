@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { resolvePublicAvatarUrl } from "./avatarApi";
 import { sortSeancesByJour } from "./seancesApi";
+import { fetchSeasonDirectory } from "./saisonsApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -406,21 +407,21 @@ export async function getMemberProfileFields(membreId) {
 
     // Colonnes profiles : identité + contact (genre 0052, date_naissance 0056).
     let profileRes = await readProfile(
-      "first_name, last_name, date_naissance, phone, school, level, hifz_amount, genre, avatar_url"
+      "first_name, last_name, email, date_naissance, phone, school, level, hifz_amount, genre, avatar_url"
     );
     if (
       profileRes.error &&
       /column.*does not exist/i.test(profileRes.error?.message || "")
     ) {
       profileRes = await readProfile(
-        "first_name, last_name, phone, school, level, hifz_amount, genre, avatar_url"
+        "first_name, last_name, email, phone, school, level, hifz_amount, genre, avatar_url"
       );
     }
     if (
       profileRes.error &&
       /column.*does not exist/i.test(profileRes.error?.message || "")
     ) {
-      profileRes = await readProfile("phone, school, level, hifz_amount");
+      profileRes = await readProfile("email, phone, school, level, hifz_amount");
     }
 
     if (!profileRes.error && profileRes.data) {
@@ -445,12 +446,14 @@ export async function getMemberProfileFields(membreId) {
       ok: true,
       firstName: pickProfileText(profileData?.first_name),
       lastName: pickProfileText(profileData?.last_name),
+      email: pickProfileText(profileData?.email),
       dateNaissance: profileData?.date_naissance || null,
       telephone: merged.telephone,
       ecole: merged.ecole,
       niveau: merged.niveau,
       quantiteHifz: merged.quantiteHifz,
       genre,
+      profileMissing: !profileRes.error && !profileRes.data,
       avatarUrl: resolvePublicAvatarUrl(membreId, profileData?.avatar_url),
     };
   } catch (e) {
@@ -473,6 +476,70 @@ function buildEditableProfilePayload(fields = {}) {
     payload.hifz_amount = pickProfileText(fields.hifzAmount);
   }
   return payload;
+}
+
+/**
+ * Mise à jour des infos personnelles par le membre connecté.
+ * Un seul UPDATE : first_name, last_name, phone, genre, date_naissance, school, level.
+ * Jamais email, canonical_email, hifz_amount, role, roles, account_status.
+ */
+export async function updatePersonalInfo(userId, fields = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "تعذّر حفظ المعلومات" };
+  }
+  if (!userId) {
+    return { ok: false, error: "تعذّر حفظ المعلومات" };
+  }
+
+  const firstName = pickProfileText(fields.firstName);
+  const lastName = pickProfileText(fields.lastName);
+  const phone = pickProfileText(fields.phone);
+  const genre = fields.genre === "ذكر" || fields.genre === "أنثى" ? fields.genre : null;
+  const dateNaissance = pickProfileText(fields.dateNaissance);
+  if (!firstName || !lastName || !phone || !genre || !dateNaissance) {
+    return { ok: false, error: "تعذّر حفظ المعلومات" };
+  }
+
+  const payload = {
+    first_name: firstName,
+    last_name: lastName,
+    phone,
+    genre,
+    date_naissance: dateNaissance,
+    school: pickProfileText(fields.school),
+    level: pickProfileText(fields.level),
+  };
+
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("profiles")
+        .update(payload)
+        .eq("id", userId)
+        .select("first_name, last_name, phone, genre, date_naissance, school, level")
+        .maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "تحديث المعلومات الشخصية"
+    );
+
+    if (error || !data) {
+      if (error) logSupabaseError("updatePersonalInfo", error);
+      return { ok: false, error: "تعذّر حفظ المعلومات" };
+    }
+
+    return {
+      ok: true,
+      firstName: pickProfileText(data.first_name),
+      lastName: pickProfileText(data.last_name),
+      phone: pickProfileText(data.phone),
+      genre: formatGenderLabel(data.genre),
+      dateNaissance: data.date_naissance || null,
+      school: pickProfileText(data.school),
+      level: pickProfileText(data.level),
+    };
+  } catch {
+    return { ok: false, error: "تعذّر حفظ المعلومات" };
+  }
 }
 
 /**
@@ -662,29 +729,127 @@ export async function updateMemberSeance({
   }
 }
 
+const REMOVE_NONE = "تعذّر إزالة العضو من الحصة";
+
 /**
- * Retire un membre de sa séance : supprime la ligne inscriptions (RG3).
- * Ne touche pas profiles, presences ni progression.
- * Sécurité serveur : inscriptions_delete_superviseur (migration 0027).
+ * Inscription de la saison active sur une séance non archivée.
+ * saison_id est comparé en texte.
  */
-export async function removeMemberFromSeance(memberId, seanceId) {
+export function isCurrentSeanceInscription(row, seasonId) {
+  if (!row || seasonId == null || String(seasonId) === "") return false;
+  const sid = String(row.saison_id || row.seance?.saison_id || "");
+  if (sid !== String(seasonId)) return false;
+  const statut = row.seance?.statut;
+  return !!statut && statut !== "archivee";
+}
+
+const CURRENT_INSCRIPTION_SELECT =
+  "id, membre_id, seance_id, saison_id, date_inscription, statut, seance:seances!inscriptions_seance_id_fkey(id, nom, statut, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, canonical_email))";
+
+/**
+ * Séance actuelle du membre : saison active en base, inscription acceptée,
+ * séance non archivée. Une seule requête d'inscriptions pour ce membre.
+ */
+export async function loadCurrentMemberSeance(memberId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!memberId || !seanceId) {
-    return { ok: false, error: "معرّف العضو أو الحصة مفقود" };
+  if (!memberId) {
+    return { ok: false, error: "معرّف العضو مفقود" };
+  }
+  try {
+    const seasonRes = await fetchSeasonDirectory();
+    if (!seasonRes.ok) return { ok: false, error: seasonRes.error };
+    const season = seasonRes.activeSeason;
+    if (!season) return { ok: true, season: null, inscription: null };
+
+    const { data, error } = await withTimeout(
+      supabase
+        .from("inscriptions")
+        .select(CURRENT_INSCRIPTION_SELECT)
+        .eq("membre_id", memberId)
+        .eq("statut", "accepte"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة حصة العضو"
+    );
+    if (error) {
+      logSupabaseError("loadCurrentMemberSeance", error);
+      return { ok: false, error: mapTableError(error, "inscriptions") };
+    }
+
+    const inscription =
+      (data || [])
+        .filter((row) => isCurrentSeanceInscription(row, season.id))
+        .sort(
+          (a, b) =>
+            new Date(b.date_inscription || 0).getTime() -
+            new Date(a.date_inscription || 0).getTime()
+        )[0] || null;
+
+    return { ok: true, season, inscription };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Demandes activées de la saison active (une requête, filtre season_id en texte).
+ */
+export async function fetchActivatedMemberIdsForSeason(seasonId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", ids: [] };
+  }
+  if (seasonId == null || String(seasonId) === "") {
+    return { ok: true, ids: [] };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("user_id, season_id, status")
+        .eq("status", "activated"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الطلبات المفعّلة"
+    );
+    if (error) {
+      logSupabaseError("fetchActivatedMemberIdsForSeason", error);
+      return {
+        ok: false,
+        error: mapTableError(error, "member_applications"),
+        ids: [],
+      };
+    }
+    const wanted = String(seasonId);
+    const seen = new Set();
+    const ids = [];
+    for (const row of data || []) {
+      if (String(row.season_id ?? "") !== wanted || !row.user_id) continue;
+      if (seen.has(row.user_id)) continue;
+      seen.add(row.user_id);
+      ids.push(row.user_id);
+    }
+    return { ok: true, ids };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", ids: [] };
+  }
+}
+
+/**
+ * Retire un membre de sa séance en supprimant la ligne inscriptions par son id.
+ * 0 ligne supprimée (RLS ou id inconnu) → erreur explicite.
+ * Ne touche pas profiles, presences ni progression.
+ */
+export async function removeMemberFromSeance(inscriptionId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!inscriptionId) {
+    return { ok: false, error: REMOVE_NONE };
   }
 
   try {
     const { data, error } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .delete()
-        .eq("membre_id", memberId)
-        .eq("seance_id", seanceId)
-        .eq("statut", "accepte")
-        .select("id")
-        .maybeSingle(),
+      supabase.from("inscriptions").delete().eq("id", inscriptionId).select("id"),
       SUPABASE_TIMEOUT_MS,
       "إزالة العضو من الحصة"
     );
@@ -694,11 +859,9 @@ export async function removeMemberFromSeance(memberId, seanceId) {
       return { ok: false, error: mapTableError(error, "inscriptions") };
     }
 
-    if (!data?.id) {
-      return {
-        ok: false,
-        error: "لم يتم العثور على تسجيل مقبول لهذا العضو في هذه الحصة",
-      };
+    const rows = Array.isArray(data) ? data : [];
+    if (rows.length === 0) {
+      return { ok: false, error: REMOVE_NONE };
     }
 
     return { ok: true };

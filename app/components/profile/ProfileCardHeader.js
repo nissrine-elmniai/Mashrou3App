@@ -12,6 +12,7 @@ export default function ProfileCardHeader({
   titleIcon,
   actionIcon = "create-outline",
   onAction,
+  action = null,
   accessibilityLabel,
 }) {
   return (
@@ -22,7 +23,8 @@ export default function ProfileCardHeader({
         </View>
       ) : null}
       <Text style={styles.title}>{title}</Text>
-      {onAction ? (
+      {action || null}
+      {onAction && !action ? (
         <TouchableOpacity
           style={styles.iconBtn}
           onPress={onAction}

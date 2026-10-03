@@ -11,22 +11,22 @@ import {
   RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Menu, Bell, Search, UserCheck } from "lucide-react-native";
+import { Menu, Bell, Search, Clock, User } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { rtlText, row } from "../../constants/rtl";
+import { shadows } from "../../constants/theme";
+import { fetchSeasonDirectory } from "../../lib/saisonsApi";
 import {
   getMemberProfiles,
   getAllAcceptedInscriptions,
-  formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
-import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
 import {
-  LEVEL_COLORS,
-  deriveLevel,
-  initials,
-} from "../supervisor/supervisorHelpers";
+  fetchActivatedMemberIdsForSeason,
+  isCurrentSeanceInscription,
+} from "../../lib/membersApi";
+import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
+import { initials } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { displayProfileEmail } from "../../lib/authEmail";
@@ -35,22 +35,19 @@ const palette = {
   primary: "#2E7D32",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
-  softBlue: "#E3F2FD",
-  blue: "#1565C0",
   background: "#F5F5F5",
   textSecondary: "#666666",
   textPrimary: "#333333",
   placeholder: "#999999",
   border: "#E0E0E0",
   inactive: "#9E9E9E",
+  softAmber: "#FFF8E1",
+  amber: "#8D6E00",
 };
 
-const ALL_FILTER = "all";
-const NO_SEASON_FILTER = "none";
-
-function levelColor(level) {
-  return LEVEL_COLORS[level] || palette.primary;
-}
+const CATEGORY_REGISTERED = "registered";
+const CATEGORY_WAITING = "waiting";
+const CATEGORY_OTHER = "other";
 
 function supervisorName(profile) {
   if (!profile) return null;
@@ -58,65 +55,48 @@ function supervisorName(profile) {
   return name || displayProfileEmail(profile) || null;
 }
 
-const ARABIC_ORDINALS = {
-  1: "الأول",
-  2: "الثاني",
-  3: "الثالث",
-  4: "الرابع",
-  5: "الخامس",
-  6: "السادس",
-  7: "السابع",
-  8: "الثامن",
-  9: "التاسع",
-  10: "العاشر",
-  11: "الحادي عشر",
-  12: "الثاني عشر",
-  13: "الثالث عشر",
-  14: "الرابع عشر",
-  15: "الخامس عشر",
-  16: "السادس عشر",
-  17: "السابع عشر",
-  18: "الثامن عشر",
-  19: "التاسع عشر",
-  20: "العشرون",
-};
-
-/** Libellé court d'un musim : « الموسم السابع » si la version est connue, sinon son nom. */
-function seasonVersionLabel(season) {
-  if (!season) return null;
-  if (season.version != null) {
-    const ordinal = ARABIC_ORDINALS[Number(season.version)];
-    return ordinal ? `الموسم ${ordinal}` : `الموسم ${season.version}`;
-  }
-  return season.name || null;
-}
-
-/** Clé de regroupement du filtre : par numéro de version, sinon par musim. */
-function seasonFilterKey(season) {
-  if (!season) return null;
-  if (season.version != null) return `v:${season.version}`;
-  return `s:${season.id}`;
-}
-
 function inscriptionTime(inscription) {
   return new Date(inscription?.date_inscription || 0).getTime() || 0;
 }
 
+function latestInscription(rows) {
+  if (!rows?.length) return null;
+  return [...rows].sort((a, b) => inscriptionTime(b) - inscriptionTime(a))[0];
+}
+
+function categoryForMember(current, isActivated) {
+  if (current) return CATEGORY_REGISTERED;
+  if (isActivated) return CATEGORY_WAITING;
+  return CATEGORY_OTHER;
+}
+
+function formatLastSeance(inscription, seasonNames) {
+  const seanceName = inscription?.seance?.nom || null;
+  if (!seanceName) return null;
+  const seasonId = String(inscription.saison_id || inscription.seance?.saison_id || "");
+  const seasonName = seasonNames[seasonId] || "";
+  if (!seasonName) return `آخر حصة: ${seanceName}`;
+  return `آخر حصة: ${seanceName} (${seasonName})`;
+}
+
 export default function AdminMembersScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "members");
-  const { currentUser, seasons } = useApp();
-  const activeSeason = getActiveRegularSeason(seasons);
+  const { currentUser } = useApp();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [profilesError, setProfilesError] = useState(false);
   const [inscriptionsOk, setInscriptionsOk] = useState(true);
   const [progressOk, setProgressOk] = useState(true);
+  const [applicationsOk, setApplicationsOk] = useState(true);
+  const [activeSeason, setActiveSeason] = useState(null);
+  const [seasonNames, setSeasonNames] = useState({});
   const [profiles, setProfiles] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
+  const [activatedIds, setActivatedIds] = useState([]);
   const [progressions, setProgressions] = useState([]);
   const [search, setSearch] = useState("");
-  const [versionFilter, setVersionFilter] = useState(ALL_FILTER);
+  const [category, setCategory] = useState(CATEGORY_REGISTERED);
   const [avatarNonce, setAvatarNonce] = useState(() => Date.now());
   const loadSeq = useRef(0);
 
@@ -125,10 +105,37 @@ export default function AdminMembersScreen({ navigation }) {
     if (mode === "refresh") setRefreshing(true);
     else setLoading(true);
     try {
-      const [profRes, inscRes, progRes] = await Promise.all([
+      const seasonRes = await fetchSeasonDirectory();
+      if (seq !== loadSeq.current) return;
+      if (!seasonRes.ok) {
+        console.warn("[AdminMembers] fetchSeasonDirectory failed:", seasonRes.error);
+        setProfilesError(true);
+        return;
+      }
+      const names = {};
+      (seasonRes.seasons || []).forEach((season) => {
+        names[String(season.id)] = season.name || "";
+      });
+      setSeasonNames(names);
+      setActiveSeason(seasonRes.activeSeason);
+      if (!seasonRes.activeSeason) {
+        setProfiles([]);
+        setInscriptions([]);
+        setActivatedIds([]);
+        setProgressions([]);
+        setProfilesError(false);
+        setInscriptionsOk(true);
+        setProgressOk(true);
+        setApplicationsOk(true);
+        return;
+      }
+
+      const seasonId = seasonRes.activeSeason.id;
+      const [profRes, inscRes, progRes, appsRes] = await Promise.all([
         getMemberProfiles(),
         getAllAcceptedInscriptions(),
         getAllProgressionAdmin(),
+        fetchActivatedMemberIdsForSeason(seasonId),
       ]);
       if (seq !== loadSeq.current) return;
       if (profRes.ok) {
@@ -152,6 +159,13 @@ export default function AdminMembersScreen({ navigation }) {
         setProgressions([]);
         setProgressOk(false);
       }
+      if (appsRes.ok) {
+        setActivatedIds(appsRes.ids);
+        setApplicationsOk(true);
+      } else {
+        setActivatedIds([]);
+        setApplicationsOk(false);
+      }
     } finally {
       if (seq === loadSeq.current) {
         setLoading(false);
@@ -167,139 +181,102 @@ export default function AdminMembersScreen({ navigation }) {
     }, [loadMembers])
   );
 
-  const seasonsById = useMemo(() => {
-    const map = new Map();
-    (seasons || []).forEach((s) => map.set(s.id, s));
-    return map;
-  }, [seasons]);
+  const activatedSet = useMemo(() => new Set(activatedIds), [activatedIds]);
 
   const members = useMemo(() => {
     const byMember = new Map();
-    inscriptions.forEach((i) => {
-      if (!i.membre_id) return;
-      if (!byMember.has(i.membre_id)) byMember.set(i.membre_id, []);
-      byMember.get(i.membre_id).push(i);
+    inscriptions.forEach((inscription) => {
+      if (!inscription.membre_id) return;
+      if (!byMember.has(inscription.membre_id)) byMember.set(inscription.membre_id, []);
+      byMember.get(inscription.membre_id).push(inscription);
     });
 
     return profiles
-      .filter((p) => p.account_status !== "invited")
-      .map((p) => {
-        const memberInscriptions = (byMember.get(p.id) || []).sort(
-          (a, b) => inscriptionTime(b) - inscriptionTime(a)
-        );
-        const seasonIdOf = (i) => i?.saison_id || i?.seance?.saison_id || null;
-        // Inscription de référence : celle du musim actif, sinon la plus récente.
-        const inscription =
-          memberInscriptions.find(
-            (i) => activeSeason?.id && seasonIdOf(i) === activeSeason.id
-          ) ||
-          memberInscriptions[0] ||
-          null;
-
-        const memberSeasons = [];
-        const filterKeys = new Set();
-        memberInscriptions.forEach((i) => {
-          const season = seasonsById.get(seasonIdOf(i));
-          if (!season) return;
-          const key = seasonFilterKey(season);
-          if (filterKeys.has(key)) return;
-          filterKeys.add(key);
-          memberSeasons.push(season);
-        });
+      .filter((profile) => profile.account_status !== "invited")
+      .map((profile) => {
+        const memberInscriptions = byMember.get(profile.id) || [];
+        const current = activeSeason
+          ? latestInscription(
+              memberInscriptions.filter((row) =>
+                isCurrentSeanceInscription(row, activeSeason.id)
+              )
+            )
+          : null;
+        const categoryKey = categoryForMember(current, activatedSet.has(profile.id));
 
         const entries = progressions
-          .filter((e) => e.membre_id === p.id)
-          .sort((a, b) => {
-            const ta = new Date(a.date || 0).getTime();
-            const tb = new Date(b.date || 0).getTime();
-            return tb - ta;
-          });
+          .filter((entry) => entry.membre_id === profile.id)
+          .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
         const latest = entries[0];
-        const metrics = progressOk ? computeProgressMetrics(latest) : null;
-        const pct = progressOk ? (metrics?.globalPct ?? 0) : null;
-        const level = pct == null ? null : deriveLevel(pct);
-        const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
-        const seance = inscription?.seance || null;
-        const currentSeason = seasonsById.get(seasonIdOf(inscription)) || null;
+        const metrics = progressOk && latest ? computeProgressMetrics(latest) : null;
+        const pct = metrics?.globalPct ?? null;
+        const name = `${profile.first_name || ""} ${profile.last_name || ""}`.trim();
+        const seance = current?.seance || null;
+
+        const lastSeanceLabel =
+          categoryKey === CATEGORY_OTHER
+            ? formatLastSeance(latestInscription(memberInscriptions), seasonNames)
+            : null;
+
         return {
-          id: p.id,
+          id: profile.id,
           name,
-          firstName: p.first_name || "",
-          lastName: p.last_name || "",
-          avatarUrl: p.avatar_url || null,
-          email: p.email || "",
-          phone: p.phone || null,
-          school: p.school || null,
-          levelLabel: p.level || null,
-          hifzAmount: p.hifz_amount || null,
-          level,
+          firstName: profile.first_name || "",
+          lastName: profile.last_name || "",
+          avatarUrl: profile.avatar_url || null,
+          email: profile.email || "",
+          phone: profile.phone || null,
+          school: profile.school || null,
+          levelLabel: profile.level || null,
+          hifzAmount: profile.hifz_amount || null,
           pct,
-          session: inscriptionsOk ? seance?.nom || "بدون حصة" : "—",
-          seanceId: inscription?.seance_id || seance?.id || null,
-          saisonId: seasonIdOf(inscription) || activeSeason?.id || null,
-          seasonName: currentSeason?.name || null,
-          seasonVersion: currentSeason?.version ?? null,
-          supervisorId: seance?.superviseur_id || null,
-          supervisorName: supervisorName(seance?.superviseur),
-          versionPills: memberSeasons
-            .map((season, index) => ({
-              id: season.id,
-              label: seasonVersionLabel(season),
-              index,
-            }))
-            .filter((pill) => pill.label),
-          filterKeys,
-          groupSchedule: formatSeanceScheduleLabel(seance),
-          registrationDate:
-            inscription?.date_inscription || p.created_at || null,
-          active: !!(
-            activeSeason?.id &&
-            memberInscriptions.some((i) => seasonIdOf(i) === activeSeason.id)
-          ),
+          category: categoryKey,
+          session: !inscriptionsOk ? "—" : seance?.nom || null,
+          seanceId: current?.seance_id || seance?.id || null,
+          inscriptionId: current?.id || null,
+          saisonId: activeSeason?.id || null,
+          seasonName: activeSeason?.name || null,
+          supervisorName: current ? supervisorName(seance?.superviseur) : null,
+          lastSeanceLabel,
+          registrationDate: current?.date_inscription || profile.created_at || null,
         };
-      });
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
   }, [
     profiles,
     inscriptions,
     progressions,
-    seasonsById,
-    activeSeason?.id,
+    activatedSet,
+    seasonNames,
+    activeSeason,
     inscriptionsOk,
     progressOk,
   ]);
 
-  // Filtre unique : la version du musim actif (les anciennes versions restent visibles via « الكل »).
-  const currentVersionOption = useMemo(() => {
-    const key = seasonFilterKey(activeSeason);
-    if (!key) return null;
-    return {
-      key,
-      label: seasonVersionLabel(activeSeason),
-      count: members.filter((m) => m.filterKeys.has(key)).length,
+  const categoryCounts = useMemo(() => {
+    const counts = {
+      [CATEGORY_REGISTERED]: 0,
+      [CATEGORY_WAITING]: 0,
+      [CATEGORY_OTHER]: 0,
     };
-  }, [activeSeason, members]);
-
-  const unregisteredCount = useMemo(
-    () => members.filter((m) => m.filterKeys.size === 0).length,
-    [members]
-  );
+    members.forEach((member) => {
+      counts[member.category] += 1;
+    });
+    return counts;
+  }, [members]);
 
   const q = search.trim().toLowerCase();
   const filteredMembers = useMemo(() => {
-    return members.filter((m) => {
-      if (versionFilter === NO_SEASON_FILTER) {
-        if (m.filterKeys.size > 0) return false;
-      } else if (versionFilter !== ALL_FILTER && !m.filterKeys.has(versionFilter)) {
-        return false;
-      }
+    return members.filter((member) => {
+      if (member.category !== category) return false;
       if (!q) return true;
       return (
-        m.name.toLowerCase().includes(q) ||
-        m.email.toLowerCase().includes(q) ||
-        (m.supervisorName || "").toLowerCase().includes(q)
+        member.name.toLowerCase().includes(q) ||
+        member.email.toLowerCase().includes(q) ||
+        (member.supervisorName || "").toLowerCase().includes(q)
       );
     });
-  }, [members, versionFilter, q]);
+  }, [members, category, q]);
 
   const openMemberProfile = (member) => {
     navigation.navigate("MemberProfile", {
@@ -314,35 +291,32 @@ export default function AdminMembersScreen({ navigation }) {
       school: member.school,
       level: member.levelLabel,
       hifzAmount: member.hifzAmount,
-      groupName:
-        member.session && member.session !== "بدون حصة" && member.session !== "—"
-          ? member.session
-          : null,
-      groupSchedule: member.groupSchedule || null,
+      groupName: member.session && member.session !== "—" ? member.session : null,
       registrationDate: member.registrationDate,
       supervisorName: member.supervisorName,
       seasonName: member.seasonName,
-      seasonVersion: member.seasonVersion,
       canEditSeance: true,
       adminTheme: true,
+      viewerRole: "admin",
     });
   };
 
   const emptyMessage = (() => {
     if (members.length === 0) return "لا يوجد أعضاء في التطبيق بعد";
     if (q) return "لا توجد نتائج مطابقة للبحث";
-    if (versionFilter === NO_SEASON_FILTER) return "كل الأعضاء مسجّلون في موسم";
+    if (category === CATEGORY_WAITING) return "لا يوجد أعضاء بانتظار حصة";
+    if (category === CATEGORY_OTHER) return "لا يوجد أعضاء غير مسجّلين";
     return "لا يوجد أعضاء مسجّلون في هذا الموسم";
   })();
 
-  const partialWarning =
-    !inscriptionsOk && !progressOk
-      ? "تعذّر تحميل الحصص ونسب التقدم"
-      : !inscriptionsOk
-        ? "تعذّر تحميل الحصص"
-        : !progressOk
-          ? "تعذّر تحميل نسب التقدم"
-          : null;
+  const partialWarning = (() => {
+    const parts = [];
+    if (!inscriptionsOk) parts.push("الحصص");
+    if (!applicationsOk) parts.push("الطلبات المفعّلة");
+    if (!progressOk) parts.push("نسب التقدم");
+    if (parts.length === 0) return null;
+    return `تعذّر تحميل ${parts.join(" و")}`;
+  })();
 
   return (
     <SafeAreaView
@@ -398,6 +372,16 @@ export default function AdminMembersScreen({ navigation }) {
           />
         </View>
 
+        {activeSeason?.name ? (
+          <Text style={styles.currentSeasonLabel}>الموسم الحالي: {activeSeason.name}</Text>
+        ) : null}
+
+        {!loading && !profilesError && !activeSeason ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyText}>لا يوجد موسم نشط</Text>
+          </View>
+        ) : (
+          <>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -405,29 +389,21 @@ export default function AdminMembersScreen({ navigation }) {
           contentContainerStyle={styles.filterRow}
         >
           <FilterChip
-            label={`الكل (${members.length})`}
-            active={versionFilter === ALL_FILTER}
-            onPress={() => setVersionFilter(ALL_FILTER)}
+            label={`المسجّلون (${categoryCounts[CATEGORY_REGISTERED]})`}
+            active={category === CATEGORY_REGISTERED}
+            onPress={() => setCategory(CATEGORY_REGISTERED)}
           />
-          {currentVersionOption ? (
-            <FilterChip
-              label={`${currentVersionOption.label} (${currentVersionOption.count})`}
-              active={versionFilter === currentVersionOption.key}
-              onPress={() => setVersionFilter(currentVersionOption.key)}
-            />
-          ) : null}
           <FilterChip
-            label={`بدون تسجيل (${unregisteredCount})`}
-            active={versionFilter === NO_SEASON_FILTER}
-            onPress={() => setVersionFilter(NO_SEASON_FILTER)}
+            label={`مسجّلون بدون حصة (${categoryCounts[CATEGORY_WAITING]})`}
+            active={category === CATEGORY_WAITING}
+            onPress={() => setCategory(CATEGORY_WAITING)}
+          />
+          <FilterChip
+            label={`غير مسجّلين (${categoryCounts[CATEGORY_OTHER]})`}
+            active={category === CATEGORY_OTHER}
+            onPress={() => setCategory(CATEGORY_OTHER)}
           />
         </ScrollView>
-
-        <Text style={styles.sectionTitle}>
-          {versionFilter === ALL_FILTER
-            ? `جميع الأعضاء (${filteredMembers.length})`
-            : `الأعضاء (${filteredMembers.length})`}
-        </Text>
 
         {loading && !refreshing ? (
           <View style={styles.emptyCard}>
@@ -466,6 +442,8 @@ export default function AdminMembersScreen({ navigation }) {
             )}
           </>
         )}
+          </>
+        )}
       </ScrollView>
       {messagesFab}
       {sidebar}
@@ -490,7 +468,6 @@ function FilterChip({ label, active, onPress }) {
 }
 
 function MemberCard({ member, onPress, avatarNonce }) {
-  const color = levelColor(member.level);
   return (
     <TouchableOpacity
       style={styles.card}
@@ -499,7 +476,7 @@ function MemberCard({ member, onPress, avatarNonce }) {
       accessibilityRole="button"
       accessibilityLabel={`عرض ملف ${member.name || "عضو"}`}
     >
-      <View style={styles.cardTop}>
+      <View style={styles.identityRow}>
         <ProfileAvatar
           userId={member.id}
           avatarUrl={member.avatarUrl}
@@ -509,67 +486,70 @@ function MemberCard({ member, onPress, avatarNonce }) {
           softBackgroundColor={palette.softGreen}
           letterColor={palette.primary}
         />
-        <View style={styles.cardInfo}>
-          <Text style={styles.cardName}>{member.name || "عضو"}</Text>
-          <View style={styles.cardMeta}>
-            <View style={[styles.levelPill, { backgroundColor: `${color}22` }]}>
-              <Text style={[styles.levelPillText, { color }]}>
-                {member.level || "—"}
-              </Text>
-            </View>
-            <Text style={styles.sessionText}>{member.session}</Text>
-            {member.versionPills.map((pill) => (
-              <View
-                key={pill.id ?? `${pill.label}-${pill.index}`}
-                style={styles.versionPill}
-              >
-                <Text style={styles.versionPillText}>{pill.label}</Text>
-              </View>
-            ))}
-          </View>
-          <View style={styles.supervisorRow}>
-            <UserCheck size={13} color={palette.textSecondary} pointerEvents="none" />
-            <Text style={styles.supervisorText} numberOfLines={1}>
-              المشرف: {member.supervisorName || "—"}
+        <Text style={styles.cardName} numberOfLines={1}>
+          {member.name || "عضو"}
+        </Text>
+      </View>
+
+      {member.category === CATEGORY_REGISTERED ? (
+        <View style={styles.chipRow}>
+          <View style={styles.sessionChip}>
+            <Clock size={13} color={palette.textSecondary} pointerEvents="none" />
+            <Text style={styles.sessionChipText} numberOfLines={1}>
+              {member.session || "—"}
             </Text>
           </View>
         </View>
-        <View
-          style={[
-            styles.statusPill,
-            {
-              backgroundColor: member.active
-                ? palette.softGreen
-                : "#EEEEEE",
-            },
-          ]}
-        >
-          <Text
-            style={[
-              styles.statusText,
-              {
-                color: member.active ? palette.primary : palette.inactive,
-              },
-            ]}
-          >
-            {member.active ? "نشط" : "غير نشط"}
+      ) : null}
+
+      {member.category === CATEGORY_WAITING ? (
+        <View style={styles.chipRow}>
+          <View style={styles.waitingChip}>
+            <Text style={styles.waitingChipText}>بدون حصة</Text>
+          </View>
+        </View>
+      ) : null}
+
+      {member.category === CATEGORY_OTHER ? (
+        <View style={styles.chipRow}>
+          <View style={[styles.sessionChip, styles.sessionChipEmpty]}>
+            <Text style={styles.sessionChipTextEmpty}>غير مسجّل هذا الموسم</Text>
+          </View>
+        </View>
+      ) : null}
+
+      {member.category === CATEGORY_REGISTERED ? (
+        <View style={styles.supervisorRow}>
+          <User size={13} color={palette.textSecondary} pointerEvents="none" />
+          <Text style={styles.supervisorText} numberOfLines={1}>
+            المشرف: {member.supervisorName || "—"}
           </Text>
         </View>
-      </View>
+      ) : null}
 
-      <View style={styles.progressRow}>
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              { width: member.pct == null ? "0%" : `${member.pct}%` },
-            ]}
-          />
+      {member.category === CATEGORY_WAITING ? (
+        <Text style={styles.assignHint}>يجب تعيين حصة</Text>
+      ) : null}
+
+      {member.category === CATEGORY_OTHER && member.lastSeanceLabel ? (
+        <Text style={styles.lastSeanceText}>{member.lastSeanceLabel}</Text>
+      ) : null}
+
+      {member.category === CATEGORY_REGISTERED ? (
+        <View style={styles.progressRow}>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: member.pct == null ? "0%" : `${Math.max(0, Math.min(100, member.pct))}%` },
+              ]}
+            />
+          </View>
+          <Text style={styles.progressPct}>
+            {member.pct == null ? "—" : `${member.pct}%`}
+          </Text>
         </View>
-        <Text style={styles.progressPct}>
-          {member.pct == null ? "—" : `${member.pct}%`}
-        </Text>
-      </View>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -632,7 +612,13 @@ const styles = StyleSheet.create({
   },
   searchContainer: {
     position: "relative",
+    marginBottom: 8,
+  },
+  currentSeasonLabel: {
+    fontSize: 12,
+    color: palette.textSecondary,
     marginBottom: 12,
+    ...rtlText,
   },
   searchIcon: {
     position: "absolute",
@@ -688,13 +674,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
   },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: palette.textPrimary,
-    marginBottom: 12,
-    ...rtlText,
-  },
   emptyText: {
     textAlign: "center",
     color: palette.textSecondary,
@@ -743,71 +722,77 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: palette.border,
+    gap: 10,
+    ...shadows.card,
   },
-  cardTop: {
+  identityRow: {
     flexDirection: row,
     alignItems: "center",
     gap: 10,
   },
-  cardAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: palette.softGreen,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardAvatarText: {
-    color: palette.primary,
-    fontWeight: "bold",
-    fontSize: 18,
-  },
-  cardInfo: {
-    flex: 1,
-  },
   cardName: {
+    flex: 1,
     fontSize: 15,
     fontWeight: "700",
     color: palette.textPrimary,
-    marginBottom: 6,
     ...rtlText,
   },
-  cardMeta: {
+  chipRow: {
     flexDirection: row,
     alignItems: "center",
     gap: 8,
     flexWrap: "wrap",
   },
-  levelPill: {
+  sessionChip: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 4,
+    maxWidth: "70%",
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 4,
     borderRadius: 999,
+    backgroundColor: "#F5F5F5",
   },
-  levelPillText: {
-    fontSize: 11,
-    fontWeight: "600",
+  sessionChipEmpty: {
+    backgroundColor: "#EEEEEE",
   },
-  sessionText: {
+  sessionChipText: {
+    flexShrink: 1,
     fontSize: 12,
     color: palette.textSecondary,
     ...rtlText,
   },
-  versionPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-    backgroundColor: palette.softBlue,
-  },
-  versionPillText: {
-    fontSize: 11,
+  sessionChipTextEmpty: {
+    color: palette.inactive,
     fontWeight: "600",
-    color: palette.blue,
+    ...rtlText,
+  },
+  waitingChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: palette.softAmber,
+  },
+  waitingChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: palette.amber,
+    ...rtlText,
+  },
+  assignHint: {
+    fontSize: 13,
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  lastSeanceText: {
+    fontSize: 12,
+    color: palette.inactive,
+    ...rtlText,
   },
   supervisorRow: {
     flexDirection: row,
     alignItems: "center",
     gap: 4,
-    marginTop: 6,
   },
   supervisorText: {
     flex: 1,
@@ -815,20 +800,10 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...rtlText,
   },
-  statusPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: "700",
-  },
   progressRow: {
     flexDirection: row,
     alignItems: "center",
     gap: 10,
-    marginTop: 12,
   },
   progressTrack: {
     flex: 1,

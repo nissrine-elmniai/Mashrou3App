@@ -88,6 +88,40 @@ export async function fetchSaisons() {
   }
 }
 
+/**
+ * Annuaire des musims lu dans Supabase (pas le cache AppContext).
+ * La saison active est une ligne active = true. S'il y en a plusieurs,
+ * le type regular est retenu. Aucun repli sur un musim inactif.
+ */
+export async function fetchSeasonDirectory() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from("saisons").select("id, name, type, active"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة الموسم النشط"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "saisons") };
+    }
+    const seasons = (data || []).map((row) => ({
+      id: row.id == null ? "" : String(row.id),
+      name: row.name || "",
+      type: String(row.type || "regular").trim().toLowerCase() || "regular",
+      active: !!row.active,
+    }));
+    const activeSeason =
+      seasons.find((season) => season.active && season.type === "regular") ||
+      seasons.find((season) => season.active) ||
+      null;
+    return { ok: true, seasons, activeSeason };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
 /** (Admin) Création ou mise à jour d'un musim. */
 export async function upsertSaison(season) {
   if (!isSupabaseConfigured()) {

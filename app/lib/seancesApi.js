@@ -969,7 +969,7 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
       supabase
         .from("inscriptions")
         .select(
-          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, canonical_email, avatar_url))"
+          "id, membre_id, seance_id, saison_id, date_inscription, seance:seances!inscriptions_seance_id_fkey(id, nom, statut, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, canonical_email, avatar_url))"
         )
         .eq("statut", "accepte"),
       SUPABASE_TIMEOUT_MS,
@@ -979,10 +979,12 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
       return { ok: false, error: mapTableError(error, "inscriptions") };
     }
     let rows = data || [];
-    if (saisonId) {
+    if (saisonId != null && String(saisonId) !== "") {
+      const wanted = String(saisonId);
       rows = rows.filter(
         (row) =>
-          row.saison_id === saisonId || row.seance?.saison_id === saisonId
+          String(row.saison_id || "") === wanted ||
+          String(row.seance?.saison_id || "") === wanted
       );
     }
     return { ok: true, inscriptions: rows };

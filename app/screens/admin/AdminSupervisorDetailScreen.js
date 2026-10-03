@@ -18,12 +18,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { rtlText, row, arrowBack } from "../../constants/rtl";
-import { useApp } from "../../context/AppContext";
 import { formatAccountStatusLabel } from "../../constants/roles";
 import { fetchProfile, formatBirthDateLabel } from "../../lib/auth";
-import { formatGenderLabel } from "../../lib/membersApi";
+import { formatGenderLabel, isCurrentSeanceInscription } from "../../lib/membersApi";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { fetchSeasonDirectory } from "../../lib/saisonsApi";
 import {
   getAllSeances,
   getAllAcceptedInscriptions,
@@ -97,9 +96,8 @@ function seanceSupervisorName(seance) {
 export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const params = route.params || {};
   const supervisorId = params.supervisorId || null;
-  const { seasons } = useApp();
-  const activeSeason = getActiveRegularSeason(seasons);
 
+  const [activeSeason, setActiveSeason] = useState(null);
   const [tab, setTab] = useState("profile");
   const [loading, setLoading] = useState(true);
   const [profileRow, setProfileRow] = useState(null);
@@ -111,11 +109,16 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
 
   const reloadDetail = useCallback(async () => {
     if (!supervisorId) return { ok: false };
-    const saisonId = activeSeason?.id || null;
+    const seasonRes = await fetchSeasonDirectory();
+    const season = seasonRes.ok ? seasonRes.activeSeason : null;
+    setActiveSeason(season);
+    const saisonId = season?.id || null;
     const [profRes, seaRes, inscRes, memRes] = await Promise.all([
       fetchProfile(supervisorId),
-      getAllSeances({ saisonId }),
-      getAllAcceptedInscriptions({ saisonId }),
+      saisonId ? getAllSeances({ saisonId }) : Promise.resolve({ ok: true, seances: [] }),
+      saisonId
+        ? getAllAcceptedInscriptions({ saisonId })
+        : Promise.resolve({ ok: true, inscriptions: [] }),
       getMemberProfiles(),
     ]);
     if (profRes.ok) setProfileRow(profRes.profile);
@@ -123,7 +126,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
     if (inscRes.ok) setInscriptions(inscRes.inscriptions);
     if (memRes.ok) setProfiles(memRes.members);
     return seaRes;
-  }, [supervisorId, activeSeason?.id]);
+  }, [supervisorId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -205,7 +208,12 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
     const seen = new Set();
 
     return inscriptions
-      .filter((i) => i.membre_id && seanceIds.has(i.seance_id))
+      .filter(
+        (i) =>
+          i.membre_id &&
+          seanceIds.has(i.seance_id) &&
+          isCurrentSeanceInscription(i, activeSeason?.id)
+      )
       .filter((i) => {
         if (seen.has(i.membre_id)) return false;
         seen.add(i.membre_id);
@@ -214,6 +222,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       .map((i) => {
         const profile = profileById.get(i.membre_id);
         const seance = seanceById.get(i.seance_id) || i.seance || null;
+        const hasCurrentSeance = !!seance?.nom && seance?.statut !== "archivee";
         const name = `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim();
         return {
           id: i.membre_id,
@@ -226,10 +235,13 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
           school: profile?.school || null,
           levelLabel: profile?.level || null,
           hifzAmount: profile?.hifz_amount || null,
-          seanceId: i.seance_id,
-          saisonId: i.saison_id || seance?.saison_id || activeSeason?.id || null,
-          session: seance?.nom || "بدون حصة",
-          groupSchedule: formatSeanceScheduleLabel(seance),
+          inscriptionId: i.id,
+          seanceId: hasCurrentSeance ? i.seance_id : null,
+          saisonId: activeSeason?.id || null,
+          hasCurrentSeance,
+          session: hasCurrentSeance ? seance.nom : "بدون حصة",
+          supervisorName: hasCurrentSeance ? fullName || email : null,
+          groupSchedule: hasCurrentSeance ? formatSeanceScheduleLabel(seance) : null,
           registrationDate: i.date_inscription || profile?.created_at || null,
         };
       })
@@ -239,6 +251,8 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
     profiles,
     supervisorSeances,
     activeSeason?.id,
+    fullName,
+    email,
   ]);
 
   const openMemberProfile = (member) => {
@@ -254,14 +268,14 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       school: member.school,
       level: member.levelLabel,
       hifzAmount: member.hifzAmount,
-      groupName: member.session !== "بدون حصة" ? member.session : null,
+      groupName: member.hasCurrentSeance ? member.session : null,
       groupSchedule: member.groupSchedule || null,
       registrationDate: member.registrationDate,
-      supervisorName: fullName || email,
+      supervisorName: member.hasCurrentSeance ? fullName || email : null,
       seasonName: activeSeason?.name || null,
-      seasonVersion: activeSeason?.version ?? null,
       canEditSeance: true,
       adminTheme: true,
+      viewerRole: "admin",
     });
   };
 
@@ -435,6 +449,8 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               )}
             </SectionCard>
           </>
+        ) : !activeSeason ? (
+          <Text style={styles.emptyText}>لا يوجد موسم نشط</Text>
         ) : members.length === 0 ? (
           <Text style={styles.emptyText}>
             لا يوجد أعضاء مسجّلون في حصص هذا المشرف
@@ -459,6 +475,9 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               />
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>{member.name || "عضو"}</Text>
+                <Text style={member.hasCurrentSeance ? styles.memberSeance : styles.memberSeanceMuted}>
+                  {member.hasCurrentSeance ? member.session : "بدون حصة"}
+                </Text>
               </View>
             </TouchableOpacity>
           ))
@@ -643,6 +662,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: palette.textPrimary,
+    ...rtlText,
+  },
+  memberSeance: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    marginTop: 2,
+    ...rtlText,
+  },
+  memberSeanceMuted: {
+    fontSize: 12,
+    color: "#9E9E9E",
+    marginTop: 2,
     ...rtlText,
   },
 });
