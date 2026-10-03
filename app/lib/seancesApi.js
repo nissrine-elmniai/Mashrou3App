@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
-import { supervisorIdsForSeason } from "./seasonScope";
+import { filterSeancesForSeason, supervisorIdsForSeason } from "./seasonScope";
 import { canonicalEmail, isSupervisorAuthEmail } from "./authEmail";
 
 const SUPABASE_TIMEOUT_MS = 15000;
@@ -208,21 +208,24 @@ async function currentAuthId() {
 }
 
 /**
- * (Admin) Toutes les séances, avec le profil du superviseur et les
- * inscriptions jointes (comptage des membres 'accepte' côté client).
+ * (Admin) Toutes les séances.
+ * Par défaut : profil superviseur + inscriptions (comptage membres).
+ * `lite` : id, nom, statut, superviseur_id, saison_id — liste des superviseurs.
  * RLS : seances_admin_all / inscriptions_admin_all / profiles_select_admin.
  * @returns { ok, seances }
  */
-export async function getAllSeances({ saisonId = null } = {}) {
+const SEANCES_SELECT_FULL =
+  "*, superviseur:profiles!seances_superviseur_id_fkey(first_name, last_name, email), inscriptions:inscriptions!inscriptions_seance_id_fkey(id, statut)";
+const SEANCES_SELECT_LITE = "id, nom, statut, superviseur_id, saison_id";
+
+export async function getAllSeances({ saisonId = null, lite = false } = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
     let query = supabase
       .from("seances")
-      .select(
-        "*, superviseur:profiles!seances_superviseur_id_fkey(first_name, last_name, email), inscriptions:inscriptions!inscriptions_seance_id_fkey(id, statut)"
-      );
+      .select(lite ? SEANCES_SELECT_LITE : SEANCES_SELECT_FULL);
     if (saisonId) {
       query = query.or(`saison_id.eq.${saisonId},saison_id.is.null`);
     }
@@ -235,45 +238,6 @@ export async function getAllSeances({ saisonId = null } = {}) {
       return { ok: false, error: mapTableError(error, "seances") };
     }
     return { ok: true, seances: data || [] };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
-/**
- * (Admin) Recherche une séance active par nom (comparaison insensible à la casse).
- * @returns {{ ok, seance? }}
- */
-export async function findActiveSeanceByName(nom, saisonId = null) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  const cleanNom = String(nom || "").trim();
-  if (!cleanNom) {
-    return { ok: true, seance: null };
-  }
-  try {
-    let query = supabase
-      .from("seances")
-      .select("id, nom, statut, superviseur_id, saison_id")
-      .eq("statut", "active");
-    if (saisonId) {
-      query = query.eq("saison_id", saisonId);
-    }
-    const { data, error } = await withTimeout(
-      query,
-      SUPABASE_TIMEOUT_MS,
-      "البحث عن الحصة"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "seances") };
-    }
-    const seance =
-      (data || []).find(
-        (row) =>
-          row.nom && row.nom.trim().toLowerCase() === cleanNom.toLowerCase()
-      ) || null;
-    return { ok: true, seance };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
@@ -920,6 +884,57 @@ export async function getActiveSupervisors({ saisonId = null } = {}) {
       ok: true,
       supervisors: eligible.filter((s) => ids.has(s.id)),
     };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Superviseurs activés (account_status active, ou vide) pour affecter une séance.
+ * Chaque ligne porte la séance non archivée de la saison, ou null si libre.
+ * N'inclut pas les comptes inactive / invited.
+ * @param {{ saisonId?: string|null }} options
+ * @returns { ok, supervisors: Array<{ id, first_name, last_name, email, account_status, avatar_url, seanceId, seanceNom }> }
+ */
+export async function getAssignableSupervisors({ saisonId = null } = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!saisonId) {
+    return { ok: true, supervisors: [] };
+  }
+  try {
+    const [profilesRes, seancesRes] = await Promise.all([
+      getSupervisorProfiles(),
+      getAllSeances({ saisonId, lite: true }),
+    ]);
+    if (!profilesRes.ok) return profilesRes;
+    if (!seancesRes.ok) return { ok: false, error: seancesRes.error };
+
+    const seanceBySupervisor = new Map();
+    for (const seance of filterSeancesForSeason(seancesRes.seances, saisonId)) {
+      if (!seance?.superviseur_id || seanceBySupervisor.has(seance.superviseur_id)) continue;
+      seanceBySupervisor.set(seance.superviseur_id, {
+        id: seance.id,
+        nom: seance.nom || "",
+      });
+    }
+
+    const supervisors = (profilesRes.supervisors || [])
+      .filter((profile) => {
+        const status = profile?.account_status || "active";
+        return status === "active";
+      })
+      .map((profile) => {
+        const seance = seanceBySupervisor.get(profile.id) || null;
+        return {
+          ...profile,
+          seanceId: seance?.id || null,
+          seanceNom: seance?.nom || null,
+        };
+      });
+
+    return { ok: true, supervisors };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }

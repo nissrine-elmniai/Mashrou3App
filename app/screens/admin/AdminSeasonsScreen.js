@@ -32,7 +32,7 @@ import {
   updateSeance,
   archiveSeance,
   findOccupiedSeanceForSuperviseur,
-  getSupervisorProfiles,
+  getAssignableSupervisors,
   excludeDuplicateSupervisorAccounts,
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
@@ -91,6 +91,24 @@ function seasonDateToStorage(value) {
   return String(value).trim().replace(/\//g, "-").slice(0, 10);
 }
 
+function confirmSuperviseurSwap({ nomB, seanceAHasSuperviseur }) {
+  let message = `هذا المشرف مكلف حالياً بحصة «${nomB}». هل تريد تبديل المشرفين بين الحصتين؟`;
+  if (!seanceAHasSuperviseur) {
+    message += ` ستبقى حصة «${nomB}» بدون مشرف.`;
+  }
+  return new Promise((resolve) => {
+    Alert.alert(
+      "تبديل المشرفين",
+      message,
+      [
+        { text: "إلغاء", style: "cancel", onPress: () => resolve(false) },
+        { text: "تبديل", onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) }
+    );
+  });
+}
+
 function cardSupervisor(profile) {
   if (!profile) return null;
   const first = profile.first_name || "";
@@ -130,7 +148,7 @@ export default function AdminSeasonsScreen({ navigation }) {
     if (!silent) setLoading(true);
     const [seancesRes, supervisorsRes] = await Promise.all([
       getAllSeances(),
-      getSupervisorProfiles(),
+      getAssignableSupervisors({ saisonId: activeSeason?.id || null }),
     ]);
     if (seancesRes.ok) {
       const scoped = activeSeason?.id
@@ -251,8 +269,9 @@ export default function AdminSeasonsScreen({ navigation }) {
     );
     const saisonId = current?.saison_id || activeSeason.id;
     let swapPartner = null;
+    const assigningSupervisor = !editingId || supervisorChanged;
 
-    if (supervisorChanged) {
+    if (assigningSupervisor) {
       const occupiedRes = await findOccupiedSeanceForSuperviseur(form.superviseurId, {
         excludeSeanceId: editingId,
         saisonId,
@@ -262,6 +281,19 @@ export default function AdminSeasonsScreen({ navigation }) {
         return;
       }
       if (occupiedRes.conflict === "swap") {
+        const nomB = String(occupiedRes.seance?.nom || "").trim() || "الحصة";
+        if (!editingId) {
+          Alert.alert(
+            "تنبيه",
+            `هذا المشرف مكلف حالياً بحصة «${nomB}». لإنشاء حصة جديدة اختر مشرفاً بدون حصة. لتبديله، عدّل حصة موجودة.`
+          );
+          return;
+        }
+        const accepted = await confirmSuperviseurSwap({
+          nomB,
+          seanceAHasSuperviseur: Boolean(current?.superviseur_id),
+        });
+        if (!accepted) return;
         swapPartner = occupiedRes.seance;
       }
     }
@@ -696,15 +728,23 @@ export default function AdminSeasonsScreen({ navigation }) {
             <View style={styles.supervisorChips}>
               {pickerSupervisors.map((s) => {
                 const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
-                const active = form.superviseurId === s.id;
+                const takenOnCreate = !editingId && !!s.seanceId;
+                const active = !takenOnCreate && form.superviseurId === s.id;
                 return (
                   <TouchableOpacity
                     key={s.id}
                     style={[
                       styles.supervisorChip,
                       active && styles.supervisorChipActive,
+                      takenOnCreate && styles.supervisorChipDisabled,
                     ]}
-                    onPress={() => setField("superviseurId", s.id)}
+                    onPress={
+                      takenOnCreate
+                        ? undefined
+                        : () => setField("superviseurId", s.id)
+                    }
+                    disabled={takenOnCreate}
+                    accessibilityState={{ disabled: takenOnCreate }}
                   >
                     <Text
                       style={[
@@ -714,13 +754,21 @@ export default function AdminSeasonsScreen({ navigation }) {
                     >
                       {name || s.email}
                     </Text>
+                    <Text
+                      style={[
+                        styles.supervisorChipMeta,
+                        active && styles.supervisorChipMetaActive,
+                      ]}
+                    >
+                      {s.seanceNom || "بدون حصة"}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
             {pickerSupervisors.length === 0 ? (
               <Text style={styles.supervisorHint}>
-                لا يوجد مشرفون بعد — عيّن مشرفاً أولاً من شاشة «المشرفون»
+                لا يوجد مشرفون مفعّلون — فعّل مشرفاً أولاً من شاشة «المشرفون»
               </Text>
             ) : null}
 
@@ -1042,6 +1090,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
     borderColor: palette.primary,
   },
+  supervisorChipDisabled: {
+    opacity: 0.45,
+  },
   supervisorChipText: {
     fontSize: 13,
     color: palette.textSecondary,
@@ -1050,6 +1101,15 @@ const styles = StyleSheet.create({
   supervisorChipTextActive: {
     color: "#fff",
     fontWeight: "600",
+  },
+  supervisorChipMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    color: palette.placeholder,
+    ...rtlText,
+  },
+  supervisorChipMetaActive: {
+    color: "rgba(255,255,255,0.9)",
   },
   supervisorHint: {
     color: palette.placeholder,

@@ -11,6 +11,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -28,16 +29,9 @@ import {
   getAllAcceptedInscriptions,
   getMemberProfiles,
   formatSeanceScheduleLabel,
+  assignOrSwapSeanceSuperviseur,
 } from "../../lib/seancesApi";
-import {
-  getAllProgressionAdmin,
-  computeProgressMetrics,
-} from "../../lib/progressApi";
-import {
-  LEVEL_COLORS,
-  deriveLevel,
-  initials,
-} from "../supervisor/supervisorHelpers";
+import { initials } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
 
 const palette = {
@@ -93,6 +87,12 @@ function SectionCard({ title, children }) {
   );
 }
 
+function seanceSupervisorName(seance) {
+  const sup = seance?.superviseur;
+  const name = `${sup?.first_name || ""} ${sup?.last_name || ""}`.trim();
+  return name || sup?.email || "مشرف";
+}
+
 export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const params = route.params || {};
   const supervisorId = params.supervisorId || null;
@@ -105,7 +105,24 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const [seances, setSeances] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
   const [profiles, setProfiles] = useState([]);
-  const [progressions, setProgressions] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [assigningSeanceId, setAssigningSeanceId] = useState(null);
+
+  const reloadDetail = useCallback(async () => {
+    if (!supervisorId) return { ok: false };
+    const saisonId = activeSeason?.id || null;
+    const [profRes, seaRes, inscRes, memRes] = await Promise.all([
+      fetchProfile(supervisorId),
+      getAllSeances({ saisonId }),
+      getAllAcceptedInscriptions({ saisonId }),
+      getMemberProfiles(),
+    ]);
+    if (profRes.ok) setProfileRow(profRes.profile);
+    if (seaRes.ok) setSeances(seaRes.seances);
+    if (inscRes.ok) setInscriptions(inscRes.inscriptions);
+    if (memRes.ok) setProfiles(memRes.members);
+    return seaRes;
+  }, [supervisorId, activeSeason?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -114,28 +131,15 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
         return undefined;
       }
       let cancelled = false;
-      const saisonId = activeSeason?.id || null;
       (async () => {
-        const [profRes, seaRes, inscRes, memRes, progRes] =
-          await Promise.all([
-            fetchProfile(supervisorId),
-            getAllSeances({ saisonId }),
-            getAllAcceptedInscriptions({ saisonId }),
-            getMemberProfiles(),
-            getAllProgressionAdmin(),
-          ]);
-        if (cancelled) return;
-        if (profRes.ok) setProfileRow(profRes.profile);
-        if (seaRes.ok) setSeances(seaRes.seances);
-        if (inscRes.ok) setInscriptions(inscRes.inscriptions);
-        if (memRes.ok) setProfiles(memRes.members);
-        if (progRes.ok) setProgressions(progRes.entries);
-        setLoading(false);
+        setLoading(true);
+        await reloadDetail();
+        if (!cancelled) setLoading(false);
       })();
       return () => {
         cancelled = true;
       };
-    }, [supervisorId, activeSeason?.id])
+    }, [supervisorId, reloadDetail])
   );
 
   const firstName = profileRow?.first_name || params.firstName || "";
@@ -151,6 +155,45 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       ),
     [seances, supervisorId]
   );
+
+  const assignableSeances = useMemo(
+    () => seances.filter((s) => s.statut !== "archivee"),
+    [seances]
+  );
+
+  const accountStatus = profileRow?.account_status || "active";
+  const canAssignSeance =
+    accountStatus === "active" && supervisorSeances.length === 0;
+
+  const assignSeance = async (seanceId) => {
+    if (!supervisorId || assigningSeanceId) return;
+    setAssigningSeanceId(seanceId);
+    const res = await assignOrSwapSeanceSuperviseur(seanceId, supervisorId);
+    setAssigningSeanceId(null);
+    if (!res.ok) {
+      Alert.alert("تنبيه", res.error || "تعذر تعيين الحصة");
+      return;
+    }
+    setPickerOpen(false);
+    await reloadDetail();
+  };
+
+  const confirmAssignSeance = (seance) => {
+    if (assigningSeanceId) return;
+    if (!seance?.superviseur_id) {
+      assignSeance(seance.id);
+      return;
+    }
+    const currentName = seanceSupervisorName(seance);
+    Alert.alert(
+      "تعيين حصة",
+      `هذه الحصة مسندة إلى ${currentName}، سيصبح بدون حصة. متابعة؟`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        { text: "متابعة", onPress: () => assignSeance(seance.id) },
+      ]
+    );
+  };
 
   const members = useMemo(() => {
     const seanceIds = new Set(supervisorSeances.map((s) => s.id));
@@ -170,13 +213,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
       .map((i) => {
         const profile = profileById.get(i.membre_id);
         const seance = seanceById.get(i.seance_id) || i.seance || null;
-        const entries = progressions
-          .filter((e) => e.membre_id === i.membre_id)
-          .sort(
-            (a, b) =>
-              new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
-          );
-        const pct = computeProgressMetrics(entries[0])?.globalPct ?? 0;
         const name = `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim();
         return {
           id: i.membre_id,
@@ -189,8 +225,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
           school: profile?.school || null,
           levelLabel: profile?.level || null,
           hifzAmount: profile?.hifz_amount || null,
-          level: deriveLevel(pct),
-          pct,
           seanceId: i.seance_id,
           saisonId: i.saison_id || seance?.saison_id || activeSeason?.id || null,
           session: seance?.nom || "بدون حصة",
@@ -202,7 +236,6 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   }, [
     inscriptions,
     profiles,
-    progressions,
     supervisorSeances,
     activeSeason?.id,
   ]);
@@ -337,29 +370,67 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               />
             </SectionCard>
 
-            <SectionCard title={`الحصص (${supervisorSeances.length})`}>
-              {supervisorSeances.length === 0 ? (
-                <Text style={styles.emptyText}>
-                  لا توجد حصص مسندة لهذا المشرف
-                </Text>
-              ) : (
-                supervisorSeances.map((seance) => (
-                  <View key={seance.id} style={styles.seanceRow}>
-                    <View style={styles.infoIcon}>
-                      <Ionicons
-                        name="people-outline"
-                        size={18}
-                        color={palette.primary}
-                      />
-                    </View>
-                    <View style={styles.infoTextWrap}>
-                      <Text style={styles.infoValue}>{seance.nom}</Text>
-                      <Text style={styles.infoLabel}>
-                        {formatSeanceScheduleLabel(seance) || "—"}
-                      </Text>
-                    </View>
+            <SectionCard title="الحصة">
+              {supervisorSeances[0] ? (
+                <View style={styles.seanceRow}>
+                  <View style={styles.infoIcon}>
+                    <Ionicons
+                      name="people-outline"
+                      size={18}
+                      color={palette.primary}
+                    />
                   </View>
-                ))
+                  <View style={styles.infoTextWrap}>
+                    <Text style={styles.infoValue}>{supervisorSeances[0].nom}</Text>
+                    <Text style={styles.infoLabel}>
+                      {formatSeanceScheduleLabel(supervisorSeances[0]) || "—"}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.emptyText}>لم يتم تعيين حصة بعد</Text>
+                  {canAssignSeance ? (
+                    <>
+                      <TouchableOpacity
+                        style={styles.assignBtn}
+                        onPress={() => setPickerOpen((open) => !open)}
+                        disabled={!!assigningSeanceId}
+                        accessibilityRole="button"
+                        accessibilityLabel="تعيين حصة"
+                      >
+                        <Text style={styles.assignBtnText}>تعيين حصة</Text>
+                      </TouchableOpacity>
+                      {pickerOpen
+                        ? assignableSeances.length === 0
+                          ? (
+                            <Text style={styles.emptyText}>
+                              لا توجد حصص في هذا الموسم
+                            </Text>
+                          )
+                          : assignableSeances.map((seance) => (
+                            <TouchableOpacity
+                              key={seance.id}
+                              style={styles.seanceChoice}
+                              onPress={() => confirmAssignSeance(seance)}
+                              disabled={!!assigningSeanceId}
+                              accessibilityRole="button"
+                            >
+                              <View style={styles.infoTextWrap}>
+                                <Text style={styles.infoValue}>{seance.nom}</Text>
+                                <Text style={styles.infoLabel}>
+                                  {seanceSupervisorName(seance)}
+                                </Text>
+                              </View>
+                              {assigningSeanceId === seance.id ? (
+                                <ActivityIndicator color={palette.primary} />
+                              ) : null}
+                            </TouchableOpacity>
+                          ))
+                        : null}
+                    </>
+                  ) : null}
+                </>
               )}
             </SectionCard>
           </>
@@ -387,30 +458,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               />
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>{member.name || "عضو"}</Text>
-                <View style={styles.memberMeta}>
-                  <View
-                    style={[
-                      styles.levelPill,
-                      {
-                        backgroundColor: `${
-                          LEVEL_COLORS[member.level] || palette.primary
-                        }22`,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.levelPillText,
-                        { color: LEVEL_COLORS[member.level] || palette.primary },
-                      ]}
-                    >
-                      {member.level}
-                    </Text>
-                  </View>
-                  <Text style={styles.memberSession}>{member.session}</Text>
-                </View>
               </View>
-              <Text style={styles.memberPct}>{member.pct}%</Text>
             </TouchableOpacity>
           ))
         )}
@@ -556,6 +604,28 @@ const styles = StyleSheet.create({
     marginTop: 20,
     ...rtlText,
   },
+  assignBtn: {
+    marginTop: 16,
+    alignSelf: "stretch",
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  assignBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    ...rtlText,
+  },
+  seanceChoice: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+  },
   memberCard: {
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -572,32 +642,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: palette.textPrimary,
-    marginBottom: 6,
     ...rtlText,
-  },
-  memberMeta: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  levelPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
-  },
-  levelPillText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  memberSession: {
-    fontSize: 12,
-    color: palette.textSecondary,
-    ...rtlText,
-  },
-  memberPct: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: palette.textSecondary,
   },
 });

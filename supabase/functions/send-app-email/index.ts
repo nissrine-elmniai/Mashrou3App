@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
     const subject = String(body.subject || "").trim();
     const message = String(body.message || "").trim();
     const toName = String(body.toName || "").trim();
+    const html = String(body.html || "").trim();
 
     if (!toEmail || !subject || !message) {
       return json(
@@ -79,7 +80,7 @@ Deno.serve(async (req) => {
       to: toEmail,
       subject,
       text: message,
-      html: htmlFromText(message),
+      html: html || htmlFromText(message),
     });
 
     if (!sent.ok) {

@@ -13,6 +13,7 @@ import {
   Platform,
   Pressable,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Search, Trash2, Plus, X, Menu, Bell, Ban } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
@@ -24,21 +25,21 @@ import {
   getAllSeances,
   excludeDuplicateSupervisorAccounts,
 } from "../../lib/seancesApi";
-import { getActiveRegularSeason, supervisorIdsForSeason } from "../../lib/seasonScope";
+import {
+  getActiveRegularSeason,
+  supervisorIdsForSeason,
+} from "../../lib/seasonScope";
 import ProfileAvatar from "../../components/ProfileAvatar";
-import { canonicalEmail } from "../../lib/authEmail";
 import {
   createSupervisorInvitation,
   listSupervisorInvitations,
   revokeSupervisorInvitation,
   reassignAndRemoveSupervisor,
-  syncSupervisorSeanceLinks,
 } from "../../lib/supervisorInvitationsApi";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 
 const palette = {
   primary: "#2E7D32",
-  gold: "#FBC02D",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
   blue: "#1976D2",
@@ -49,40 +50,47 @@ const palette = {
   border: "#E0E0E0",
 };
 
-function invitationForSupervisor(supervisor, invitations) {
-  const mail = canonicalEmail(supervisor.email);
-  return invitations.find(
-    (inv) => inv.status !== "revoked" && canonicalEmail(inv.email) === mail
-  );
+function supervisorFullName(row) {
+  return `${row?.first_name || ""} ${row?.last_name || ""}`.trim();
 }
 
-function supervisorSessionLabel(supervisor, seances, invitations) {
-  const linked = seances.filter(
+function compareArabicName(a, b) {
+  return supervisorFullName(a).localeCompare(supervisorFullName(b), "ar");
+}
+
+/**
+ * « الكل » : comptes activés, avec ou sans séance.
+ * Inactifs : seulement s'ils ont déjà une séance cette saison (comportement précédent).
+ */
+function supervisorsForAllFilter(profiles, seances, saisonId) {
+  if (!saisonId) return [];
+  const assignedIds = supervisorIdsForSeason(seances, saisonId);
+  return (profiles || []).filter((profile) => {
+    const status = profile?.account_status || "active";
+    if (status === "inactive") return assignedIds.has(profile.id);
+    return status === "active";
+  });
+}
+
+function supervisorSessionLabel(supervisor, seances) {
+  const linked = seances.find(
     (s) => s.superviseur_id === supervisor.id && s.statut !== "archivee"
   );
-  if (linked.length === 1) return linked[0].nom;
-  if (linked.length > 1) return `${linked.length} حصص`;
-
-  const invitation = invitationForSupervisor(supervisor, invitations);
-  if (invitation?.seance_id) {
-    const byId = seances.find((s) => s.id === invitation.seance_id);
-    if (byId) return byId.nom;
-  }
-  if (invitation?.group_name) return invitation.group_name;
-  return "بدون حصة";
+  return linked?.nom || "بدون حصة";
 }
 
 export default function AdminSupervisorsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "supervisors");
-  const { currentUser, stats, seasons } = useApp();
+  const { currentUser, seasons } = useApp();
   const activeSeason = getActiveRegularSeason(seasons);
   const insets = useSafeAreaInsets();
-  const fabBottom = Math.max(insets.bottom, 16) + 16;
+  const listBottom = Math.max(insets.bottom, 16) + 76;
 
   const [supervisors, setSupervisors] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [seances, setSeances] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -94,48 +102,44 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const [groupName, setGroupName] = useState("");
-  const [selectedSeanceId, setSelectedSeanceId] = useState(null);
   const [sending, setSending] = useState(false);
-
-  const pendingCount = stats?.pendingRegs ?? 0;
 
   const loadAll = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     const saisonId = activeSeason?.id || null;
     const [supRes, invRes, seaRes] = await Promise.all([
       getSupervisorProfiles(),
       listSupervisorInvitations({ saisonId }),
-      getAllSeances({ saisonId }),
+      getAllSeances({ saisonId, lite: true }),
     ]);
-    if (supRes.ok) {
-      await syncSupervisorSeanceLinks(supRes.supervisors);
-      const refreshedSeances = await getAllSeances({ saisonId });
-      const seanceRows = refreshedSeances.ok
-        ? refreshedSeances.seances
-        : seaRes.ok
-          ? seaRes.seances
-          : [];
-      const ids = supervisorIdsForSeason(seanceRows, saisonId);
-      const visible = excludeDuplicateSupervisorAccounts(
-        supRes.supervisors,
-        ids
-      ).filter((s) => s.account_status === "active" || ids.has(s.id));
-      setSupervisors(visible);
-      setRoster(visible);
-      setSeances(seanceRows);
-    } else if (seaRes.ok) {
-      setSeances(seaRes.seances);
-      setSupervisors([]);
-      setRoster([]);
+    if (!supRes.ok || !invRes.ok || !seaRes.ok) {
+      setLoadError(
+        (!supRes.ok && supRes.error) ||
+          (!invRes.ok && invRes.error) ||
+          (!seaRes.ok && seaRes.error) ||
+          "تعذر تحميل المشرفين"
+      );
+      setLoading(false);
+      return;
     }
-    if (invRes.ok) setInvitations(invRes.invitations);
+    const ids = supervisorIdsForSeason(seaRes.seances, saisonId);
+    const visible = excludeDuplicateSupervisorAccounts(
+      supervisorsForAllFilter(supRes.supervisors, seaRes.seances, saisonId),
+      ids
+    );
+    setSupervisors(visible);
+    setRoster(visible);
+    setSeances(seaRes.seances);
+    setInvitations(invRes.invitations);
     setLoading(false);
   }, [activeSeason?.id]);
 
-  useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+  useFocusEffect(
+    useCallback(() => {
+      loadAll();
+    }, [loadAll])
+  );
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
@@ -155,11 +159,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
     };
   }, [showAdd]);
 
-  const activeSeances = useMemo(
-    () => seances.filter((s) => s.statut !== "archivee"),
-    [seances]
-  );
-
   const pendingInvitations = useMemo(
     () =>
       invitations.filter(
@@ -172,30 +171,32 @@ export default function AdminSupervisorsScreen({ navigation }) {
 
   const q = search.trim().toLowerCase();
   const filteredSupervisors = useMemo(() => {
-    return supervisors.filter((s) => {
-      if (!q) return true;
-      const fullName = `${s.first_name || ""} ${s.last_name || ""}`.toLowerCase();
-      const mail = (s.email || "").toLowerCase();
-      return fullName.includes(q) || mail.includes(q);
-    });
+    return supervisors
+      .filter((s) => {
+        if (!q) return true;
+        const fullName = supervisorFullName(s).toLowerCase();
+        const mail = (s.email || "").toLowerCase();
+        return fullName.includes(q) || mail.includes(q);
+      })
+      .sort(compareArabicName);
   }, [supervisors, q]);
 
   const filteredInvitations = useMemo(() => {
     if (filter !== "pending") return [];
-    return pendingInvitations.filter((i) => {
-      if (!q) return true;
-      const fullName = `${i.first_name || ""} ${i.last_name || ""}`.toLowerCase();
-      const mail = (i.email || "").toLowerCase();
-      return fullName.includes(q) || mail.includes(q);
-    });
+    return pendingInvitations
+      .filter((i) => {
+        if (!q) return true;
+        const fullName = supervisorFullName(i).toLowerCase();
+        const mail = (i.email || "").toLowerCase();
+        return fullName.includes(q) || mail.includes(q);
+      })
+      .sort(compareArabicName);
   }, [pendingInvitations, filter, q]);
 
   const resetForm = () => {
     setFirstName("");
     setLastName("");
     setEmail("");
-    setGroupName("");
-    setSelectedSeanceId(null);
   };
 
   const handleAdd = async () => {
@@ -208,8 +209,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
       email,
       firstName,
       lastName,
-      groupName,
-      seanceId: selectedSeanceId,
       saisonId: activeSeason?.id || null,
     });
     if (!result.ok) {
@@ -222,7 +221,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
     const mail = await sendSupervisorInviteEmail({
       toEmail: email.trim(),
       fullName,
-      groupName: groupName.trim(),
     });
     setSending(false);
 
@@ -387,7 +385,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: fabBottom + 72 },
+          { paddingBottom: listBottom },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -404,6 +402,17 @@ export default function AdminSupervisorsScreen({ navigation }) {
         </View>
 
         <View style={styles.filterRow}>
+          <TouchableOpacity
+            style={styles.addBtn}
+            onPress={() => {
+              resetForm();
+              setShowAdd(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="إضافة مشرف"
+          >
+            <Plus size={20} color={palette.primary} />
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.filterChip, filter === "all" && styles.filterChipActive]}
             onPress={() => setFilter("all")}
@@ -439,6 +448,13 @@ export default function AdminSupervisorsScreen({ navigation }) {
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
+        ) : loadError ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.errorText}>{loadError}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={loadAll}>
+              <Text style={styles.retryBtnText}>إعادة المحاولة</Text>
+            </TouchableOpacity>
+          </View>
         ) : filter === "pending" ? (
           filteredInvitations.length === 0 ? (
             <Text style={styles.emptyText}>لا توجد دعوات معلّقة</Text>
@@ -456,11 +472,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
                   <View style={styles.cardInfo}>
                     <Text style={styles.cardName}>{name || "دعوة مشرف"}</Text>
                     <Text style={styles.cardEmail}>{invitation.email}</Text>
-                    {invitation.group_name ? (
-                      <Text style={styles.cardGroup}>
-                        المجموعة: {invitation.group_name}
-                      </Text>
-                    ) : null}
                     <View style={styles.sessionBadge}>
                       <Text style={styles.sessionBadgeText}>
                         بانتظار التفعيل
@@ -482,7 +493,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
           <Text style={styles.emptyText}>
             {!activeSeason
               ? "أنشئ موسماً جديداً أولاً"
-              : "لا يوجد مشرفون معيّنون لحصص هذا الموسم بعد"}
+              : "لا يوجد مشرفون مفعّلون"}
           </Text>
         ) : (
           filteredSupervisors.map((supervisor) => {
@@ -513,7 +524,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
                   ) : null}
                   <View style={styles.sessionBadge}>
                     <Text style={styles.sessionBadgeText}>
-                      {supervisorSessionLabel(supervisor, seances, invitations)}
+                      {supervisorSessionLabel(supervisor, seances)}
                     </Text>
                   </View>
                 </View>
@@ -531,16 +542,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
           })
         )}
       </ScrollView>
-
-      <TouchableOpacity
-        style={[styles.fab, { bottom: fabBottom }]}
-        onPress={() => {
-          resetForm();
-          setShowAdd(true);
-        }}
-      >
-        <Plus size={24} color={palette.textPrimary} />
-      </TouchableOpacity>
 
       <Modal
         visible={showAdd}
@@ -607,55 +608,6 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 onChangeText={setEmail}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                textAlign={textAlignStart}
-              />
-              <Text style={styles.modalFieldLabel}>الحصة / المجموعة</Text>
-              {activeSeances.length === 0 ? (
-                <Text style={styles.modalHint}>
-                  لا توجد حصص نشطة — أنشئ حصة أولاً من شاشة «الحصص»
-                </Text>
-              ) : (
-                <View style={styles.seancePicker}>
-                  {activeSeances.map((seance) => {
-                    const selected = selectedSeanceId === seance.id;
-                    return (
-                      <TouchableOpacity
-                        key={seance.id}
-                        style={[
-                          styles.seanceChip,
-                          selected && styles.seanceChipActive,
-                        ]}
-                        onPress={() => {
-                          setSelectedSeanceId(seance.id);
-                          setGroupName(seance.nom);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.seanceChipText,
-                            selected && styles.seanceChipTextActive,
-                          ]}
-                        >
-                          {seance.nom}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-              <TextInput
-                style={styles.modalInput}
-                placeholder="أو اكتب اسم المجموعة يدوياً"
-                placeholderTextColor={palette.placeholder}
-                value={groupName}
-                onChangeText={(value) => {
-                  setGroupName(value);
-                  const match = activeSeances.find(
-                    (s) =>
-                      s.nom.trim().toLowerCase() === value.trim().toLowerCase()
-                  );
-                  setSelectedSeanceId(match?.id || null);
-                }}
                 textAlign={textAlignStart}
               />
               <TouchableOpacity
@@ -797,23 +749,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 14,
   },
-  bellBadge: {
-    position: "absolute",
-    top: -4,
-    end: -6,
-    backgroundColor: palette.red,
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 3,
-  },
-  bellBadgeText: {
-    color: "#fff",
-    fontSize: 9,
-    fontWeight: "bold",
-  },
   scroll: {
     flex: 1,
   },
@@ -845,8 +780,17 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: row,
+    alignItems: "center",
     gap: 8,
     marginBottom: 16,
+  },
+  addBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.softGreen,
   },
   filterChip: {
     paddingHorizontal: 12,
@@ -878,7 +822,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     paddingVertical: 48,
+    paddingHorizontal: 16,
     alignItems: "center",
+  },
+  errorText: {
+    ...rtlText,
+    color: palette.textSecondary,
+    textAlign: "center",
+    fontSize: 14,
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: palette.primary,
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  retryBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
   },
   card: {
     backgroundColor: "#fff",
@@ -916,12 +879,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     ...rtlText,
   },
-  cardGroup: {
-    color: palette.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-    ...rtlText,
-  },
   sessionBadge: {
     alignSelf: "flex-start",
     marginTop: 6,
@@ -945,21 +902,6 @@ const styles = StyleSheet.create({
   },
   deleteBtn: {
     backgroundColor: "#FFEBEE",
-  },
-  fab: {
-    position: "absolute",
-    left: 16,
-    width: 56,
-    height: 56,
-    backgroundColor: palette.gold,
-    borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 6,
   },
   modalOverlay: {
     flex: 1,
@@ -1000,46 +942,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: palette.textPrimary,
     backgroundColor: palette.background,
-  },
-  modalFieldLabel: {
-    ...rtlText,
-    color: palette.textPrimary,
-    fontWeight: "600",
-    marginBottom: 8,
-    fontSize: 14,
-  },
-  modalHint: {
-    ...rtlText,
-    color: palette.textSecondary,
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  seancePicker: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 10,
-  },
-  seanceChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: "#fff",
-  },
-  seanceChipActive: {
-    backgroundColor: palette.softGreen,
-    borderColor: palette.primary,
-  },
-  seanceChipText: {
-    ...rtlText,
-    color: palette.textSecondary,
-    fontSize: 13,
-  },
-  seanceChipTextActive: {
-    color: palette.primary,
-    fontWeight: "700",
   },
   modalSubmit: {
     marginTop: 8,
