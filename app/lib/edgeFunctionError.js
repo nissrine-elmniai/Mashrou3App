@@ -20,6 +20,7 @@ export async function parseEdgeFunctionError(
   }
 
   const msg = String(error.message || "");
+  if (isGenericEdgeMessage(serverError)) serverError = "";
 
   if (
     /invalid jwt|unauthorized/i.test(serverError) ||
@@ -58,28 +59,63 @@ export async function parseEdgeFunctionError(
   return msg || fallback;
 }
 
+function isGenericEdgeMessage(value) {
+  return /edge function returned a non-2xx status code/i.test(String(value || ""));
+}
+
+function asErrorBody(value) {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text || isGenericEdgeMessage(text)) return null;
+    try {
+      return asErrorBody(JSON.parse(text));
+    } catch {
+      return { message: text.slice(0, 500) };
+    }
+  }
+  if (typeof value === "object") {
+    const raw = value.error || value.message || value.msg || "";
+    if (raw && !isGenericEdgeMessage(raw)) return value;
+  }
+  return null;
+}
+
 async function readInvokeErrorBody(error) {
   const ctx = error?.context;
   if (!ctx) return null;
-  if (typeof ctx === "object" && (ctx.error || ctx.message || ctx.msg) && typeof ctx.json !== "function") {
-    return ctx;
-  }
-  if (typeof ctx.clone === "function" && typeof ctx.json === "function") {
-    try {
-      return await ctx.clone().json();
-    } catch {
-      /* le corps peut déjà être consommé */
-    }
-  }
-  if (typeof ctx.json === "function") {
-    return await ctx.json();
+  if (typeof ctx === "string") return asErrorBody(ctx);
+
+  const plain =
+    typeof ctx === "object" &&
+    (ctx.error || ctx.message || ctx.msg || ctx._bodyText || ctx._bodyInit) &&
+    typeof ctx.json !== "function"
+      ? asErrorBody(ctx._bodyText || ctx._bodyInit || ctx)
+      : null;
+  if (plain) return plain;
+
+  const readers = [];
+  if (typeof ctx.clone === "function") {
+    readers.push(async () => {
+      const copy = ctx.clone();
+      if (typeof copy.text === "function") return asErrorBody(await copy.text());
+      if (typeof copy.json === "function") return asErrorBody(await copy.json());
+      return null;
+    });
   }
   if (typeof ctx.text === "function") {
-    const text = await ctx.text();
+    readers.push(async () => asErrorBody(await ctx.text()));
+  }
+  if (typeof ctx.json === "function") {
+    readers.push(async () => asErrorBody(await ctx.json()));
+  }
+
+  for (const read of readers) {
     try {
-      return JSON.parse(text);
+      const body = await read();
+      if (body) return body;
     } catch {
-      return text?.trim() ? { message: text.trim() } : null;
+      /* corps déjà consommé, ou pas du JSON */
     }
   }
   return null;

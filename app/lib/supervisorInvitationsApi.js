@@ -330,11 +330,17 @@ const SEANCE_REASSIGN_HINT =
 
 function mapDeleteAccountError(raw) {
   const msg = String(raw || "");
+  if (/edge function returned a non-2xx status code/i.test(msg)) {
+    return "فشل حذف الحساب. أعد تسجيل الدخول بحساب الأدمن ثم أعد المحاولة.";
+  }
   if (
     /superviseur_id/i.test(msg) &&
     /not-null|null value|foreign key|23502|23503/i.test(msg)
   ) {
     return `لا يمكن حذف هذا المشرف لأنه مرتبط بحصة. ${SEANCE_REASSIGN_HINT}`;
+  }
+  if (/objects_owner|storage\.objects/i.test(msg)) {
+    return "تعذر حذف الحساب لأن صورة الملف ما زالت مرتبطة به. أعد المحاولة.";
   }
   return msg || "فشل حذف الحساب";
 }
@@ -438,8 +444,16 @@ export async function deleteSupervisorAccount({ userId }) {
   }
 
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    let accessToken = sessionData?.session?.access_token || "";
+    const expiresAt = sessionData?.session?.expires_at;
+    if (!accessToken || (expiresAt && expiresAt * 1000 < Date.now() + 60_000)) {
+      const refreshed = await supabase.auth.refreshSession();
+      accessToken = refreshed.data?.session?.access_token || accessToken;
+    }
     const invokePromise = supabase.functions.invoke("delete-user", {
       body: { userId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     });
     const { data, error } = await withTimeout(
       invokePromise,

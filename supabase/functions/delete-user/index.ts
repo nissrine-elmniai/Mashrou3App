@@ -108,24 +108,29 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Purgé des FK NO ACTION (messages / tests.created_by) avant
-    // la cascade auth -> profiles. test_resultats n'existe plus (0090).
-    const { error: msgError } = await admin
-      .from("messages")
-      .delete()
-      .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`);
+    // Purgé des FK NO ACTION avant la cascade auth -> profiles.
+    // storage.objects.owner référence auth.users sans ON DELETE : une photo
+    // de profil bloque deleteUser. Les colonnes legacy from_user_id /
+    // to_user_id aussi, si elles existent encore.
+    const storageError = await removeUserStorage(admin, userId);
+    if (storageError) {
+      return json({ ok: false, error: `فشل حذف ملفات الحساب: ${storageError}` }, 502);
+    }
+    const msgError = await purgeMessages(admin, userId);
     if (msgError) {
-      console.error("delete messages:", msgError.message);
+      return json({ ok: false, error: `فشل حذف الرسائل: ${msgError}` }, 502);
     }
-    const { error: testError } = await admin
-      .from("tests")
-      .delete()
-      .eq("created_by", userId);
+    const testError = await purgeCreatedTests(admin, userId);
     if (testError) {
-      console.error("delete tests:", testError.message);
+      return json({ ok: false, error: `فشل حذف الاختبارات: ${testError}` }, 502);
     }
+    await admin.from("test_resultats").delete().eq("noted_by", userId);
 
-    const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
+    let { error: deleteError } = await admin.auth.admin.deleteUser(userId);
+    if (deleteError && /objects_owner|storage\.objects|owner_id/i.test(deleteError.message || "")) {
+      await removeUserStorage(admin, userId);
+      ({ error: deleteError } = await admin.auth.admin.deleteUser(userId));
+    }
     if (deleteError) {
       const detail = deleteError.message || "";
       if (
@@ -155,6 +160,105 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+function ignorableMissingColumn(message: string) {
+  return /does not exist|schema cache|Could not find the|column .* does not exist/i.test(
+    message
+  );
+}
+
+async function purgeMessages(
+  admin: ReturnType<typeof createClient>,
+  userId: string
+): Promise<string | null> {
+  const filters = [
+    `sender_id.eq.${userId},recipient_id.eq.${userId}`,
+    `from_user_id.eq.${userId},to_user_id.eq.${userId}`,
+  ];
+  for (const filter of filters) {
+    const { error } = await admin.from("messages").delete().or(filter);
+    if (!error) continue;
+    const message = error.message || "";
+    if (ignorableMissingColumn(message)) continue;
+    console.error("delete messages:", message);
+    return message;
+  }
+  return null;
+}
+
+async function purgeCreatedTests(
+  admin: ReturnType<typeof createClient>,
+  userId: string
+): Promise<string | null> {
+  const { data: tests, error: lookupError } = await admin
+    .from("tests")
+    .select("id")
+    .eq("created_by", userId);
+  if (lookupError) {
+    const message = lookupError.message || "";
+    if (ignorableMissingColumn(message)) return null;
+    return message;
+  }
+  const ids = (tests || []).map((row) => row.id).filter(Boolean);
+  if (!ids.length) return null;
+
+  const { error: dateError } = await admin
+    .from("test_invitations")
+    .update({ date_choisie: null })
+    .in("test_id", ids);
+  if (dateError && !ignorableMissingColumn(dateError.message || "")) {
+    console.error("clear test dates:", dateError.message);
+  }
+
+  const { error: deleteError } = await admin.from("tests").delete().in("id", ids);
+  if (!deleteError) return null;
+  const message = deleteError.message || "";
+  if (ignorableMissingColumn(message)) return null;
+  console.error("delete tests:", message);
+  return message;
+}
+
+async function removeUserStorage(
+  admin: ReturnType<typeof createClient>,
+  userId: string
+): Promise<string | null> {
+  const { error: avatarError } = await admin.storage.from("avatars").remove([
+    `${userId}.jpg`,
+    `${userId}.jpeg`,
+    `${userId}.png`,
+  ]);
+  if (avatarError) {
+    console.error("remove avatar:", avatarError.message);
+  }
+
+  const { data: buckets, error: bucketError } = await admin.storage.listBuckets();
+  if (bucketError) {
+    console.error("listBuckets:", bucketError.message);
+    return null;
+  }
+
+  for (const bucket of buckets || []) {
+    const bucketId = bucket.id || bucket.name;
+    if (!bucketId) continue;
+    const { data: files, error: listError } = await admin.storage
+      .from(bucketId)
+      .list("", { limit: 1000, search: userId });
+    if (listError) {
+      console.error("list storage", bucketId, listError.message);
+      continue;
+    }
+    const names = (files || [])
+      .map((file) => file.name)
+      .filter((name) => !!name && name.includes(userId));
+    if (!names.length) continue;
+    const { error: removeError } = await admin.storage.from(bucketId).remove(names);
+    if (removeError) {
+      console.error("remove storage", bucketId, removeError.message);
+      return removeError.message;
+    }
+  }
+  return null;
+}
 
 function json(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
