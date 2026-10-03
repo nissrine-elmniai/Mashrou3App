@@ -301,7 +301,9 @@ export async function listSupervisorInvitations({ saisonId = null } = {}) {
   try {
     let query = supabase
       .from("supervisor_invitations")
-      .select("*")
+      .select(
+        "id, email, first_name, last_name, group_name, seance_id, saison_id, status"
+      )
       .order("created_at", { ascending: false });
     if (saisonId) {
       query = query.or(`saison_id.is.null,saison_id.eq.${saisonId}`);

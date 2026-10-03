@@ -28,7 +28,7 @@ import {
   updateSeance,
   findOccupiedSeanceForSuperviseur,
   assignOrSwapSeanceSuperviseur,
-  getActiveSupervisors,
+  getAssignableSupervisors,
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
   normalizePgTime,
@@ -127,7 +127,7 @@ export default function AdminSeasonsScreen({ navigation }) {
     setLoading(true);
     const [seancesRes, supervisorsRes] = await Promise.all([
       getAllSeances(),
-      getActiveSupervisors({ saisonId: activeSeason?.id || null }),
+      getAssignableSupervisors({ saisonId: activeSeason?.id || null }),
     ]);
     if (seancesRes.ok) {
       const scoped = activeSeason?.id
@@ -235,8 +235,9 @@ export default function AdminSeasonsScreen({ navigation }) {
       editingId && current && form.superviseurId !== current.superviseur_id
     );
     const saisonId = current?.saison_id || activeSeason.id;
+    const assigningSupervisor = !editingId || supervisorChanged;
 
-    if (supervisorChanged) {
+    if (assigningSupervisor) {
       const occupiedRes = await findOccupiedSeanceForSuperviseur(form.superviseurId, {
         excludeSeanceId: editingId,
         saisonId,
@@ -262,6 +263,13 @@ export default function AdminSeasonsScreen({ navigation }) {
       }
       if (occupiedRes.conflict === "swap") {
         const nomB = String(occupiedRes.seance?.nom || "").trim() || "الحصة";
+        if (!editingId) {
+          Alert.alert(
+            "تنبيه",
+            `هذا المشرف مكلف حالياً بحصة «${nomB}». لإنشاء حصة جديدة اختر مشرفاً بدون حصة. لتبديله، عدّل حصة موجودة.`
+          );
+          return;
+        }
         const accepted = await confirmSuperviseurSwap({
           nomB,
           seanceAHasSuperviseur: Boolean(current?.superviseur_id),
@@ -643,15 +651,23 @@ export default function AdminSeasonsScreen({ navigation }) {
             <View style={styles.supervisorChips}>
               {supervisors.map((s) => {
                 const name = `${s.first_name || ""} ${s.last_name || ""}`.trim();
-                const active = form.superviseurId === s.id;
+                const takenOnCreate = !editingId && !!s.seanceId;
+                const active = !takenOnCreate && form.superviseurId === s.id;
                 return (
                   <TouchableOpacity
                     key={s.id}
                     style={[
                       styles.supervisorChip,
                       active && styles.supervisorChipActive,
+                      takenOnCreate && styles.supervisorChipDisabled,
                     ]}
-                    onPress={() => setField("superviseurId", s.id)}
+                    onPress={
+                      takenOnCreate
+                        ? undefined
+                        : () => setField("superviseurId", s.id)
+                    }
+                    disabled={takenOnCreate}
+                    accessibilityState={{ disabled: takenOnCreate }}
                   >
                     <Text
                       style={[
@@ -661,13 +677,21 @@ export default function AdminSeasonsScreen({ navigation }) {
                     >
                       {name || s.email}
                     </Text>
+                    <Text
+                      style={[
+                        styles.supervisorChipMeta,
+                        active && styles.supervisorChipMetaActive,
+                      ]}
+                    >
+                      {s.seanceNom || "بدون حصة"}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
             {supervisors.length === 0 ? (
               <Text style={styles.supervisorHint}>
-                لا يوجد مشرفون بعد — عيّن مشرفاً أولاً من شاشة «المشرفون»
+                لا يوجد مشرفون مفعّلون — فعّل مشرفاً أولاً من شاشة «المشرفون»
               </Text>
             ) : null}
 
@@ -986,6 +1010,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
     borderColor: palette.primary,
   },
+  supervisorChipDisabled: {
+    opacity: 0.45,
+  },
   supervisorChipText: {
     fontSize: 13,
     color: palette.textSecondary,
@@ -994,6 +1021,15 @@ const styles = StyleSheet.create({
   supervisorChipTextActive: {
     color: "#fff",
     fontWeight: "600",
+  },
+  supervisorChipMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    color: palette.placeholder,
+    ...rtlText,
+  },
+  supervisorChipMetaActive: {
+    color: "rgba(255,255,255,0.9)",
   },
   supervisorHint: {
     color: palette.placeholder,
