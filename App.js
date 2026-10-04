@@ -11,6 +11,7 @@ import {
 } from "@expo-google-fonts/cairo";
 
 import { AppProvider } from "./app/context/AppContext";
+import { UnreadNotificationsProvider } from "./app/context/UnreadNotificationsContext";
 import BlockingAlertGate from "./app/components/BlockingAlertGate";
 import ErrorBoundary from "./app/components/ErrorBoundary";
 import RootNavigator from "./app/navigation/RootNavigator";
@@ -47,10 +48,12 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AppProvider>
-          <ErrorBoundary>
-            <RootNavigator />
-            <BlockingAlertGate />
-          </ErrorBoundary>
+          <UnreadNotificationsProvider>
+            <ErrorBoundary>
+              <RootNavigator />
+              <BlockingAlertGate />
+            </ErrorBoundary>
+          </UnreadNotificationsProvider>
         </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

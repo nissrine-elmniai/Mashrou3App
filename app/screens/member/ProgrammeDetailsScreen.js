@@ -1,5 +1,5 @@
 // app/screens/member/ProgrammeDetailScreen.js
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -14,8 +14,10 @@ import { useApp } from "../../context/AppContext";
 import {
   flushMemberProgressDelta,
   scheduleMemberProgressDelta,
+  PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getActiveSeason } from "../../lib/seasonScope";
+import { getMyActiveEnrollment } from "../../lib/membersApi";
 import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
 import { isHifzProgram } from "../../lib/memberProgramsApi";
 import { row as rtlRow, rtlText } from "../../constants/rtl";
@@ -31,7 +33,18 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   } = useApp();
 
   const activeSeasonIdRef = useRef(null);
-  activeSeasonIdRef.current = getActiveRegularSeason(seasons)?.id ?? null;
+  activeSeasonIdRef.current = getActiveSeason(seasons)?.id ?? null;
+  const [progressLocked, setProgressLocked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyActiveEnrollment().then((res) => {
+      if (!cancelled && res.ok) setProgressLocked(!res.enrolled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const programFromContext = useMemo(() => {
     if (!routeProgram?.id) return null;
@@ -85,6 +98,10 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
   const handleAdjustTumuns = async (delta) => {
     if (!programData.id) return;
+    if (progressLocked && isHifzProgram(programData)) {
+      Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
+      return;
+    }
     const result = await adjustMemberProgramTumuns(programData.id, delta);
     if (!result.ok) {
       Alert.alert("خطأ", result.error || "تعذر تحديث التقدم");
@@ -158,6 +175,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
   const atMin = programData.completedTumuns <= 0;
   const atMax = programData.completedTumuns >= programData.totalTumuns;
+  const hifzWriteLocked = progressLocked && isHifzProgram(programData);
 
   const handleDeleteProgramme = () => {
     Alert.alert(
@@ -313,12 +331,18 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               {programData.completedTumuns} / {programData.totalTumuns} ثمن
             </Text>
             <Text style={styles.percentageText}>{programData.progression}%</Text>
+            {hifzWriteLocked ? (
+              <Text style={styles.subTitle}>{PROGRESS_LOCKED_MESSAGE}</Text>
+            ) : null}
 
             <View style={styles.stepperRow}>
               <TouchableOpacity
-                style={[styles.stepperBtn, atMin && styles.stepperBtnDisabled]}
+                style={[
+                  styles.stepperBtn,
+                  (hifzWriteLocked || atMin) && styles.stepperBtnDisabled,
+                ]}
                 onPress={() => handleAdjustTumuns(-1)}
-                disabled={atMin}
+                disabled={hifzWriteLocked || atMin}
                 activeOpacity={0.85}
               >
                 <Text style={styles.stepperBtnText}>−</Text>
@@ -332,9 +356,12 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               </View>
 
               <TouchableOpacity
-                style={[styles.stepperBtn, atMax && styles.stepperBtnDisabled]}
+                style={[
+                  styles.stepperBtn,
+                  (hifzWriteLocked || atMax) && styles.stepperBtnDisabled,
+                ]}
                 onPress={() => handleAdjustTumuns(1)}
-                disabled={atMax}
+                disabled={hifzWriteLocked || atMax}
                 activeOpacity={0.85}
               >
                 <Text style={styles.stepperBtnText}>+</Text>

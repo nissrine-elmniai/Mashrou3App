@@ -6,6 +6,11 @@ function seasonTypeOf(season) {
     .toLowerCase();
 }
 
+/** Première saison active, quel que soit le type. Pour l'écriture de progression. */
+export function getActiveSeason(seasons = []) {
+  return (seasons || []).find((season) => season?.active) || null;
+}
+
 /**
  * Saison active uniquement (active = true).
  * Le type regular est prioritaire. Aucune saison active → null.

@@ -24,6 +24,7 @@ export default function SupervisorHomeScreen({
   isMarkingWindowOpen = false,
   showPresenceReminder = false,
   onChangeTab,
+  onOpenAlerts,
   threads = [],
   dataSource = "mock",
 }) {
@@ -136,7 +137,11 @@ export default function SupervisorHomeScreen({
       </View>
 
       {recentAlerts.length > 0 ? (
-        <SectionCard title="التنبيهات" borderColor={colors.card}>
+        <SectionCard
+          title="التنبيهات"
+          borderColor={colors.card}
+          onTitlePress={onOpenAlerts}
+        >
           {recentAlerts.map((alert) => (
             <View key={alert.id} style={styles.activityRow}>
               <View style={styles.activityIconWrap}>

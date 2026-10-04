@@ -71,7 +71,6 @@ function RegistrationBlock({
   const [submitting, setSubmitting] = useState(false);
 
   const primarySeasonId = seasons[0]?.id || null;
-  const seasonName = seasons[0]?.name || "";
 
   const setField = (key, value) => {
     setAnswers((prev) => ({ ...prev, [key]: value }));
@@ -105,15 +104,12 @@ function RegistrationBlock({
   );
 
   const emptySeancesMessage = (() => {
-    if (seancesReason === "wrong_season") {
-      return seasonName
-        ? `لا توجد حصص نشطة لموسم «${seasonName}» حسب جنسك — أُرشفت حصص الموسم السابق عند الانطلاق. يضيفها المشرف العام من شاشة الحصص.`
-        : "لا توجد حصص لهذا الموسم حسب جنسك — يضيفها المشرف العام من شاشة الحصص بعد انطلاق الموسم.";
-    }
-    if (seancesReason === "invalid_genre") {
+    if (seancesReason === "invalid_genre" || !gender) {
       return "حدّث الجنس في ملفك الشخصي لعرض الحصص المتاحة";
     }
-    return "لا توجد حصص نشطة حسب جنسك في هذا الموسم — يضيفها المشرف العام فقط من شاشة الحصص";
+    if (gender === "أنثى") return "لا توجد حصص للإناث في هذا الموسم بعد";
+    if (gender === "ذكر") return "لا توجد حصص للذكور في هذا الموسم بعد";
+    return "حدّث الجنس في ملفك الشخصي لعرض الحصص المتاحة";
   })();
 
   const handleSubmit = async (seasonId) => {
@@ -159,9 +155,6 @@ function RegistrationBlock({
     <View>
       <View style={styles.inputGroup}>
         <FieldLabel required>الحصة</FieldLabel>
-        <Text style={styles.hint}>
-          الحصص المعروضة حسب جنسك — يضيفها المشرف العام فقط
-        </Text>
         {seancesLoading ? (
           <ActivityIndicator color={buttonColor} style={{ marginVertical: 12 }} />
         ) : availableSeances.length === 0 ? (
@@ -251,6 +244,8 @@ export default function MemberRegistrationPanel({
   gender,
   onSubmit,
 }) {
+  // Inscription été ouverte sans saison regular : ne pas dire que le registre est fermé.
+  const summerOnly = openRegular.length === 0 && openSummer.length > 0;
   return (
     <View>
       <SectionCard
@@ -258,16 +253,24 @@ export default function MemberRegistrationPanel({
         subtitle={
           openRegular.length > 0
             ? `الموسم النشط: ${openRegular[0].name}`
-            : "مرتبط بانطلاق موسم جديد من الإدارة"
+            : summerOnly
+              ? "لا يوجد موسم عادي مفتوح"
+              : "مرتبط بانطلاق موسم جديد من الإدارة"
         }
       >
         {openRegular.length === 0 ? (
-          <EmptyState text="باب التسجيل مغلق — يُفتح تلقائياً عند انطلاق موسم جديد من المشرف العام" />
+          <EmptyState
+            text={
+              summerOnly
+                ? "التسجيل متاح في المدرسة الصيفية أدناه"
+                : "باب التسجيل مغلق — يُفتح تلقائياً عند انطلاق موسم جديد من المشرف العام"
+            }
+          />
         ) : (
           <RegistrationBlock
             seasons={openRegular}
             gender={gender}
-            buttonLabel="إرسال استمارة الموسم"
+            buttonLabel="إرسال استمارة التسجيل"
             buttonColor={colors.primary}
             onSubmit={onSubmit}
           />
@@ -286,7 +289,7 @@ export default function MemberRegistrationPanel({
           <RegistrationBlock
             seasons={openSummer}
             gender={gender}
-            buttonLabel="إرسال استمارة الصيف"
+            buttonLabel="إرسال استمارة التسجيل"
             buttonColor={colors.orange}
             onSubmit={onSubmit}
           />

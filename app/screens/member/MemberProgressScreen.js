@@ -28,7 +28,8 @@ import {
   textAlignStart,
   isRTL,
 } from "../../constants/rtl";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getActiveRegularSeason, getActiveSeason } from "../../lib/seasonScope";
+import { getMyActiveEnrollment } from "../../lib/membersApi";
 import {
   addProgressEntry,
   computeProgressMetrics,
@@ -37,13 +38,15 @@ import {
   getMemberHizbCompletesBeforeDate,
   getMemberSeasonObjectif,
   getMyProgress,
-  latestProgressionRow,
+  getMyCurrentProgressPosition,
+  PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
 import {
   getMyObjectif,
   parseObjectifInput,
   setMyObjectif,
+  OBJECTIF_LOCKED_MESSAGE,
 } from "../../lib/objectifsApi";
 import {
   TOTAL_HIZB,
@@ -116,6 +119,8 @@ export default function MemberProgressScreen({ navigation }) {
   const [savingObjectif, setSavingObjectif] = useState(false);
   const [entries, setEntries] = useState([]);
   const [loadError, setLoadError] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
+  const [progressLocked, setProgressLocked] = useState(false);
   /** Ligne objectifs déjà persistée (départ figé). Null = pas encore créée. */
   const [objectifRow, setObjectifRow] = useState(null);
   /** Position au début de saison ; null = repli sur la position du jour. */
@@ -137,23 +142,26 @@ export default function MemberProgressScreen({ navigation }) {
         ? await resolveMemberSeasonAlertCutoff(authId, activeSaisonId)
         : { ok: true, sinceIso: null };
     const sinceIso = cutoffRes.sinceIso || startIso || null;
-    const [res, objRes, departRes] = await Promise.all([
+    const [res, posRes, objRes, departRes, enrollRes] = await Promise.all([
       getMyProgress({
         since: sinceIso || undefined,
         saisonId: activeSaisonId,
       }),
+      getMyCurrentProgressPosition(),
       activeSaisonId
         ? getMyObjectif(activeSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
       authId && startIso
         ? getMemberHizbCompletesBeforeDate(authId, startIso)
         : Promise.resolve(null),
+      getMyActiveEnrollment(),
     ]);
     if (departRes && departRes.ok) {
       setSeasonStartDepart(departRes.nbHizbCompletes);
     } else {
       setSeasonStartDepart(null);
     }
+    if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
     setLoading(false);
     // Ligne objectifs existante prioritaire ; sinon suggestion d'inscription, sans écriture
     if (!objRes.ok) {
@@ -183,13 +191,19 @@ export default function MemberProgressScreen({ navigation }) {
       setObjectifRow(null);
     }
     if (!res.ok) {
-      setLoadError(res.error);
+      setEntries([]);
+      setHistoryError(res.error);
+    } else {
+      setEntries(res.entries || []);
+      setHistoryError(null);
+    }
+    if (!posRes.ok) {
+      setLoadError(posRes.error);
       setHizbSuggestedFromInscription(false);
       return;
     }
-    const list = res.entries || [];
-    setEntries(list);
-    const latest = latestProgressionRow(list);
+    setLoadError(null);
+    const latest = posRes.hasData ? posRes.entry : null;
     if (latest) {
       // Position réelle : jamais de suggestion inférieure à la progression
       const metrics = computeProgressMetrics(latest);
@@ -235,6 +249,10 @@ export default function MemberProgressScreen({ navigation }) {
   );
 
   const handleSave = async () => {
+    if (progressLocked) {
+      Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
+      return;
+    }
     const hizbRes = parseHizbInput(hizb);
     if (!hizbRes.ok) {
       Alert.alert("تنبيه", hizbRes.error);
@@ -254,7 +272,7 @@ export default function MemberProgressScreen({ navigation }) {
     const result = await addProgressEntry({
       nbHizbCompletes: hizbRes.value,
       tumunCourant: tumunUiToStored(tumunRes.value),
-      saisonId: getActiveRegularSeason(seasons)?.id ?? null,
+      saisonId: getActiveSeason(seasons)?.id ?? null,
       notes: String(notes || "").trim() || null,
     });
     setSaving(false);
@@ -269,6 +287,10 @@ export default function MemberProgressScreen({ navigation }) {
   };
 
   const handleSaveObjectif = async () => {
+    if (progressLocked) {
+      Alert.alert("تنبيه", OBJECTIF_LOCKED_MESSAGE);
+      return;
+    }
     if (!saisonId) return;
     const parsed = parseObjectifInput(goalHizb);
     if (!parsed.ok) {
@@ -404,10 +426,18 @@ export default function MemberProgressScreen({ navigation }) {
                 multiline
               />
 
+              {progressLocked ? (
+                <Text style={styles.hizbSuggestHint}>{PROGRESS_LOCKED_MESSAGE}</Text>
+              ) : null}
+
               <TouchableOpacity
-                style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-                onPress={saving ? undefined : handleSave}
+                style={[
+                  styles.saveBtn,
+                  (saving || progressLocked) && styles.saveBtnDisabled,
+                ]}
+                onPress={saving || progressLocked ? undefined : handleSave}
                 activeOpacity={0.85}
+                disabled={saving || progressLocked}
               >
                 {saving ? (
                   <ActivityIndicator color="white" />
@@ -430,6 +460,11 @@ export default function MemberProgressScreen({ navigation }) {
                   للموسم.
                 </Text>
               ) : null}
+              {progressLocked ? (
+                <Text style={styles.objectifSuggestHint}>
+                  {OBJECTIF_LOCKED_MESSAGE}
+                </Text>
+              ) : null}
               <TextInput
                 style={styles.input}
                 value={goalHizb}
@@ -438,6 +473,7 @@ export default function MemberProgressScreen({ navigation }) {
                 placeholder="مثال : 2"
                 placeholderTextColor={colors.placeholder}
                 textAlign={textAlignStart}
+                editable={!progressLocked}
               />
               {objectifMeaning ? (
                 <Text style={styles.objectifMeaning}>{objectifMeaning}</Text>
@@ -445,10 +481,13 @@ export default function MemberProgressScreen({ navigation }) {
               <TouchableOpacity
                 style={[
                   styles.saveBtn,
-                  savingObjectif && styles.saveBtnDisabled,
+                  (savingObjectif || progressLocked) && styles.saveBtnDisabled,
                 ]}
-                onPress={savingObjectif ? undefined : handleSaveObjectif}
+                onPress={
+                  savingObjectif || progressLocked ? undefined : handleSaveObjectif
+                }
                 activeOpacity={0.85}
+                disabled={savingObjectif || progressLocked}
               >
                 {savingObjectif ? (
                   <ActivityIndicator color="white" />
@@ -457,6 +496,10 @@ export default function MemberProgressScreen({ navigation }) {
                 )}
               </TouchableOpacity>
             </View>
+          ) : null}
+
+          {!loading && historyError ? (
+            <Text style={styles.errorText}>{historyError}</Text>
           ) : null}
 
           {!loading && entries.length > 0 ? (

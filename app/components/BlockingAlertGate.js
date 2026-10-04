@@ -119,7 +119,6 @@ export default function BlockingAlertGate() {
             fallbackLetter={active.senderInitial || "إ"}
             senderName={active.senderName}
             size={80}
-            subtitle="تنبيه إداري عاجل"
           />
           <Text style={styles.message}>{active.message}</Text>
           <TouchableOpacity

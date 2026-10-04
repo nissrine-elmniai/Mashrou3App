@@ -37,6 +37,8 @@ import {
   reassignAndRemoveSupervisor,
 } from "../../lib/supervisorInvitationsApi";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
+import { colors } from "../../constants/theme";
 import { displayProfileEmail } from "../../lib/authEmail";
 
 const palette = {
@@ -386,6 +388,12 @@ export default function AdminSupervisorsScreen({ navigation }) {
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
+        />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
         />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}

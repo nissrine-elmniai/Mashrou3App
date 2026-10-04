@@ -90,39 +90,31 @@ async function fetchAlertsWithSender(queryBuilder) {
   return res;
 }
 
-/** Saison régulière active côté DB (secours si le client n'a pas encore hydraté seasons). */
+/**
+ * Saison active côté DB (secours si le client n'a pas encore hydraté seasons).
+ * Uniquement active = true : regular en priorité, sinon l'autre saison active.
+ * Jamais une saison inactive. Null s'il n'y en a aucune.
+ */
 async function resolveActiveRegularSaisonIdFromDb() {
   try {
-    let res = await withTimeout(
+    const res = await withTimeout(
       supabase
         .from("saisons")
-        .select("id")
-        .eq("type", "regular")
+        .select("id, type")
         .eq("active", true)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+        .order("created_at", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
       "قراءة الموسم النشط"
     );
-    if (!res.error && res.data?.id) return String(res.data.id);
-
-    res = await withTimeout(
-      supabase
-        .from("saisons")
-        .select("id")
-        .eq("type", "regular")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة الموسم"
+    if (res.error || !res.data?.length) return null;
+    const regular = res.data.find(
+      (row) => String(row.type || "").trim().toLowerCase() === "regular"
     );
-    if (!res.error && res.data?.id) return String(res.data.id);
+    const chosen = regular || res.data[0];
+    return chosen?.id ? String(chosen.id) : null;
   } catch {
-    /* ignore */
+    return null;
   }
-  return null;
 }
 
 function mapAlertRow(a) {

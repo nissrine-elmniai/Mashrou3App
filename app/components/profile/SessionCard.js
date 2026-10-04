@@ -29,7 +29,7 @@ export default function SessionCard({
   heureDebut,
   groupSchedule,
   registrationDate,
-  emptyText = "لم يتم تعيينك في حصة لهذا الموسم",
+  emptyText = "لم يتم تعيينك في حصة بعد",
 }) {
   const scheduleLabel = useMemo(() => {
     if (jour || heureDebut) return formatSessionSchedule(jour, heureDebut);

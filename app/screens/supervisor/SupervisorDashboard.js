@@ -275,6 +275,7 @@ export default function SupervisorDashboard({ navigation }) {
                 isMarkingWindowOpen={isMarkingWindowOpen}
                 showPresenceReminder={showPresenceReminder}
                 onChangeTab={changeTab}
+                onOpenAlerts={openInbox}
                 threads={threads}
                 dataSource={dataSource}
               />

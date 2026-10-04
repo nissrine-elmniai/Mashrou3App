@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
@@ -15,7 +15,8 @@ import { Menu, Bell, Search, Clock, User } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row } from "../../constants/rtl";
-import { shadows } from "../../constants/theme";
+import { colors, shadows } from "../../constants/theme";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { fetchSeasonDirectory } from "../../lib/saisonsApi";
 import {
   getMemberProfiles,
@@ -97,6 +98,8 @@ export default function AdminMembersScreen({ navigation }) {
   const [progressions, setProgressions] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(CATEGORY_REGISTERED);
+  const categoryTouchedRef = useRef(false);
+  const categoryDefaultedRef = useRef(false);
   const [avatarNonce, setAvatarNonce] = useState(() => Date.now());
   const loadSeq = useRef(0);
 
@@ -206,7 +209,12 @@ export default function AdminMembersScreen({ navigation }) {
 
         const entries = progressions
           .filter((entry) => entry.membre_id === profile.id)
-          .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+          .sort((a, b) => {
+            const byDate =
+              new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
+            if (byDate !== 0) return byDate;
+            return String(b.id || "").localeCompare(String(a.id || ""));
+          });
         const latest = entries[0];
         const metrics = progressOk && latest ? computeProgressMetrics(latest) : null;
         const pct = metrics?.globalPct ?? null;
@@ -238,7 +246,7 @@ export default function AdminMembersScreen({ navigation }) {
           seasonName: activeSeason?.name || null,
           supervisorName: current ? supervisorName(seance?.superviseur) : null,
           lastSeanceLabel,
-          registrationDate: current?.date_inscription || profile.created_at || null,
+          registrationDate: current?.date_inscription || null,
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, "ar"));
@@ -264,6 +272,22 @@ export default function AdminMembersScreen({ navigation }) {
     });
     return counts;
   }, [members]);
+
+  // Premier onglet non vide, une fois les comptes connus. Un appui explicite reste prioritaire.
+  useEffect(() => {
+    if (categoryTouchedRef.current || categoryDefaultedRef.current || loading) return;
+    if (profilesError) return;
+    const order = [CATEGORY_REGISTERED, CATEGORY_WAITING, CATEGORY_OTHER];
+    const first = order.find((key) => (categoryCounts[key] || 0) > 0);
+    if (!first) return;
+    categoryDefaultedRef.current = true;
+    setCategory(first);
+  }, [categoryCounts, loading, profilesError]);
+
+  const chooseCategory = (next) => {
+    categoryTouchedRef.current = true;
+    setCategory(next);
+  };
 
   const q = search.trim().toLowerCase();
   const filteredMembers = useMemo(() => {
@@ -337,6 +361,12 @@ export default function AdminMembersScreen({ navigation }) {
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
         />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
@@ -391,17 +421,17 @@ export default function AdminMembersScreen({ navigation }) {
           <FilterChip
             label={`المسجّلون (${categoryCounts[CATEGORY_REGISTERED]})`}
             active={category === CATEGORY_REGISTERED}
-            onPress={() => setCategory(CATEGORY_REGISTERED)}
+            onPress={() => chooseCategory(CATEGORY_REGISTERED)}
           />
           <FilterChip
             label={`مسجّلون بدون حصة (${categoryCounts[CATEGORY_WAITING]})`}
             active={category === CATEGORY_WAITING}
-            onPress={() => setCategory(CATEGORY_WAITING)}
+            onPress={() => chooseCategory(CATEGORY_WAITING)}
           />
           <FilterChip
             label={`غير مسجّلين (${categoryCounts[CATEGORY_OTHER]})`}
             active={category === CATEGORY_OTHER}
-            onPress={() => setCategory(CATEGORY_OTHER)}
+            onPress={() => chooseCategory(CATEGORY_OTHER)}
           />
         </ScrollView>
 

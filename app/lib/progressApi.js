@@ -1,3 +1,4 @@
+import { Alert } from "react-native";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import {
   TUMUNS_PER_HIZB,
@@ -22,8 +23,18 @@ function withTimeout(promise, ms, label) {
 }
 
 /** Traduit une erreur de table Supabase (table absente / RLS / doublon / autre). */
+export const PROGRESS_LOCKED_MESSAGE =
+  "لا يمكن تسجيل التقدم قبل التسجيل في الموسم الحالي";
+
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
+  const details = `${error?.details || ""} ${error?.hint || ""}`;
+  if (
+    msg.includes(PROGRESS_LOCKED_MESSAGE) ||
+    details.includes(PROGRESS_LOCKED_MESSAGE)
+  ) {
+    return PROGRESS_LOCKED_MESSAGE;
+  }
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }
@@ -382,7 +393,11 @@ export async function flushMemberProgressDelta() {
   })();
 
   try {
-    return await flushInFlight;
+    const result = await flushInFlight;
+    if (result?.ok === false && result.error) {
+      Alert.alert("تنبيه", result.error);
+    }
+    return result;
   } finally {
     flushInFlight = null;
   }
@@ -602,10 +617,11 @@ export function computeProgressPace(entries, saisonId, now = new Date()) {
 }
 
 /**
- * Dernière saisie de progression d'un membre (superviseur / admin via RLS).
+ * Position actuelle : dernière ligne du membre, toutes saisons.
+ * Tri `date` desc puis `id` desc. `date_saisie` n'entre pas dans le tri.
  * @returns {{ ok, hasData?, entry?, metrics?, error? }}
  */
-export async function getMemberProgressionSummary(membreId) {
+export async function getCurrentProgressPosition(membreId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -635,6 +651,18 @@ export async function getMemberProgressionSummary(membreId) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
+
+/** Même lecture que getCurrentProgressPosition, pour le membre connecté. */
+export async function getMyCurrentProgressPosition() {
+  const userId = await currentAuthId();
+  if (!userId) {
+    return { ok: false, error: "يجب تسجيل الدخول" };
+  }
+  return getCurrentProgressPosition(userId);
+}
+
+/** Ancien nom : la position actuelle, pas un résumé filtré par saison. */
+export const getMemberProgressionSummary = getCurrentProgressPosition;
 
 /**
  * Demande d'inscription (membre, saison) : form_answers + hifz_amount.
@@ -677,46 +705,27 @@ async function fetchMemberApplicationFormAnswers(membreId, saisonId) {
 }
 
 /**
- * Objectif de saison : form_answers.seasonGoal (سؤال المقدار المطموح)
- * puis hifz_amount, puis profiles.hifz_amount.
+ * Suggestion d'objectif : demande de la saison active seulement.
+ * form_answers.seasonGoal, puis hifz_amount de la demande.
+ * Pas de repli sur profiles.hifz_amount (quantité déjà mémorisée).
  */
 export async function getMemberSeasonObjectif(membreId, saisonId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!membreId) {
+  if (!membreId || !saisonId) {
     return { ok: true, objectif: null };
   }
 
   try {
-    if (saisonId) {
-      const fetched = await fetchMemberApplicationFormAnswers(
-        membreId,
-        saisonId
-      );
-      if (fetched.ok) {
-        const fromAnswers = String(fetched.answers.seasonGoal || "").trim();
-        const fromHifz = String(fetched.hifzAmount || "").trim();
-        const objectif = fromAnswers || fromHifz || null;
-        if (objectif) {
-          return { ok: true, objectif };
-        }
-      } else {
-        return fetched;
-      }
-    }
-
-    const { data: profile } = await withTimeout(
-      supabase
-        .from("profiles")
-        .select("hifz_amount")
-        .eq("id", membreId)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة هدف الملف"
+    const fetched = await fetchMemberApplicationFormAnswers(
+      membreId,
+      saisonId
     );
-    const fromProfile = String(profile?.hifz_amount || "").trim();
-    return { ok: true, objectif: fromProfile || null };
+    if (!fetched.ok) return fetched;
+    const fromAnswers = String(fetched.answers?.seasonGoal || "").trim();
+    const fromHifz = String(fetched.hifzAmount || "").trim();
+    return { ok: true, objectif: fromAnswers || fromHifz || null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }

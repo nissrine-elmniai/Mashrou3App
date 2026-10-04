@@ -27,6 +27,8 @@ import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { SEASON_TYPES } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
+import { colors } from "../../constants/theme";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 import {
   getSeasonStats,
   computeSeasonStats,
@@ -127,6 +129,9 @@ export default function AdminStatsScreen({ navigation }) {
     if (!res.ok) {
       setError(res.error || "تعذر تحميل الإحصائيات");
       setRawStats(res.stats || null);
+    } else if (res.missing || !res.stats) {
+      setRawStats(null);
+      setError("لا توجد إحصائيات محفوظة لهذا الموسم");
     } else {
       setRawStats(res.stats);
     }
@@ -251,6 +256,12 @@ export default function AdminStatsScreen({ navigation }) {
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
         />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
+        />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
@@ -312,7 +323,7 @@ export default function AdminStatsScreen({ navigation }) {
                 ? "موسم جاري — بيانات مباشرة"
                 : rawStats?.source === "snapshot"
                   ? "موسم مغلق — ملخص محفوظ"
-                  : "موسم مغلق — بيانات محسوبة من السجلات"}
+                  : "لا توجد إحصائيات محفوظة لهذا الموسم"}
             </Text>
             {rawStats?.snapshotAt ? (
               <Text style={styles.sourceBannerMeta}>
@@ -375,6 +386,27 @@ export default function AdminStatsScreen({ navigation }) {
                 value={`${s?.avgPresencePct ?? 0}%`}
               />
             </View>
+
+            <SectionCard title="الاختبارات والأهداف" subtitle="ضمن ملخص هذا الموسم">
+              <Text style={styles.kpiHint}>
+                {`الاختبارات: ${s?.details?.tests?.count ?? 0} — المقيَّمة: ${
+                  s?.details?.tests?.gradedCount ?? 0
+                } — المعدل: ${
+                  s?.details?.tests?.averageNote == null
+                    ? "—"
+                    : s.details.tests.averageNote
+                }`}
+              </Text>
+              <Text style={styles.kpiHint}>
+                {`الأهداف: ${s?.details?.objectifs?.fixedCount ?? 0} — المحققة: ${
+                  s?.details?.objectifs?.achievedCount ?? 0
+                } — النسبة: ${
+                  s?.details?.objectifs?.achievementRate == null
+                    ? "—"
+                    : `${s.details.objectifs.achievementRate}%`
+                }`}
+              </Text>
+            </SectionCard>
 
             <SectionCard
               title="التقدم والحضور"
