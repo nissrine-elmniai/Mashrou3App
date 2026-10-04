@@ -39,6 +39,34 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+/**
+ * Date de début de saison : YYYY-MM-DD, ou YYYY/M/D converti.
+ * Toute autre forme (JJ/MM/AAAA compris) est refusée.
+ */
+export function parseSeasonStartDate(value) {
+  const raw = String(value || "").trim();
+  let iso = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    iso = raw;
+  } else {
+    const slash = raw.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+    if (slash) {
+      iso = `${slash[1]}-${slash[2].padStart(2, "0")}-${slash[3].padStart(2, "0")}`;
+    }
+  }
+  if (!iso) return null;
+  const [year, month, day] = iso.split("-").map((part) => Number(part));
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return iso;
+}
+
 function rowToSeason(row) {
   return {
     id: row.id,
@@ -235,6 +263,37 @@ export async function getSeasonDashboardStats(saisonId) {
       supervisors: supervisorIds.size,
       seances: seances.length,
     };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+const RESET_TIMEOUT_MS = 120000;
+
+/**
+ * (Admin) Reset transactionnel de fin de saison.
+ * Ne supprime pas les comptes Auth : le client enchaîne delete-user.
+ * @returns {{ ok, result?: { saison_id, supervisor_ids, chat_group_ids, counts }, error? }}
+ */
+export async function startNewSeasonRpc({ name, startDate, version, type }) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase.rpc("start_new_season", {
+        p_name: name,
+        p_start_date: startDate,
+        p_version: version,
+        p_type: type || "regular",
+      }),
+      RESET_TIMEOUT_MS,
+      "انطلاق موسم جديد"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "saisons") };
+    }
+    return { ok: true, result: data || {} };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }

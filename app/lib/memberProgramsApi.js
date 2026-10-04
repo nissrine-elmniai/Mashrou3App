@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { parseSeasonStartDate } from "./saisonsApi";
 import { clampTumuns } from "./tumun";
 
 const SUPABASE_TIMEOUT_MS = 15000;
@@ -17,6 +18,8 @@ function withTimeout(promise, ms, label) {
 
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
+  // Message du trigger (arabe) : le renvoyer tel quel à l'UI.
+  if (/[\u0600-\u06FF]/.test(msg)) return msg;
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }
@@ -53,15 +56,17 @@ function rowToProgram(row) {
   };
 }
 
-function programToRow(program, membreId) {
+function programToRow(program, membreId, saisonId) {
   const nbHizb = Number(program.nbHizb) || 0;
+  // YYYY/MM/DD (repli todayStr d'AppContext) → YYYY-MM-DD pour la colonne date.
   return {
     id: program.id,
     membre_id: membreId,
+    saison_id: saisonId,
     title: program.title,
     nb_hizb: nbHizb,
     duration_days: Number(program.durationDays) || 0,
-    start_date: program.startDate || null,
+    start_date: parseSeasonStartDate(program.startDate),
     completed_tumuns: clampTumuns(program.completedTumuns ?? 0, nbHizb),
     type: normalizeProgramType(program.type),
     updated_at: new Date().toISOString(),
@@ -73,8 +78,11 @@ async function currentAuthId() {
   return data?.user?.id || null;
 }
 
-/** Liste des programmes du membre connecté. */
-export async function fetchMyMemberPrograms() {
+/** Programmes du membre pour la saison active. Sans saison → liste vide. */
+export async function fetchMyMemberPrograms(saisonId) {
+  if (!saisonId) {
+    return { ok: true, programs: [] };
+  }
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -88,6 +96,7 @@ export async function fetchMyMemberPrograms() {
         .from("member_programs")
         .select("*")
         .eq("membre_id", userId)
+        .eq("saison_id", saisonId)
         .order("updated_at", { ascending: false }),
       SUPABASE_TIMEOUT_MS,
       "قراءة البرامج"
@@ -102,7 +111,10 @@ export async function fetchMyMemberPrograms() {
 }
 
 /** Création ou mise à jour d'un programme (sans progress_percentage). */
-export async function upsertMemberProgram(program) {
+export async function upsertMemberProgram(program, saisonId) {
+  if (!saisonId) {
+    return { ok: false, error: "لا يوجد موسم نشط حالياً" };
+  }
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -117,7 +129,7 @@ export async function upsertMemberProgram(program) {
     const { data, error } = await withTimeout(
       supabase
         .from("member_programs")
-        .upsert(programToRow(program, userId))
+        .upsert(programToRow(program, userId, saisonId))
         .select("*")
         .single(),
       SUPABASE_TIMEOUT_MS,
@@ -161,41 +173,21 @@ export async function deleteMemberProgramRemote(programId) {
 }
 
 /**
- * Hydrate les programmes : priorité Supabase ; si vide, pousse le cache local.
+ * Hydrate les programmes depuis Supabase seul.
+ * Distant vide → liste vide. Ne pousse jamais le cache local (seed compris).
  * @returns {{ ok, programs, source? }}
  */
-export async function syncMemberProgramsWithSupabase(localPrograms = [], memberId) {
-  if (!isSupabaseConfigured() || !memberId) {
-    return { ok: true, programs: localPrograms, source: "local" };
+export async function syncMemberProgramsWithSupabase(memberId, saisonId) {
+  if (!isSupabaseConfigured() || !memberId || !saisonId) {
+    return { ok: true, programs: [], source: "empty" };
   }
-  const remote = await fetchMyMemberPrograms();
+  const remote = await fetchMyMemberPrograms(saisonId);
   if (!remote.ok) {
-    return { ok: false, programs: localPrograms, error: remote.error };
+    return { ok: false, programs: [], error: remote.error };
   }
-  if (remote.programs.length > 0) {
-    return { ok: true, programs: remote.programs, source: "remote" };
-  }
-  const mine = (localPrograms || []).filter(
-    (p) => p.userId === memberId || !p.userId
-  );
-  if (mine.length > 0) {
-    const results = await Promise.all(
-      mine.map((p) => upsertMemberProgram({ ...p, userId: memberId }))
-    );
-    const failed = results.find((r) => !r.ok);
-    if (failed) {
-      return {
-        ok: false,
-        programs: localPrograms,
-        error: failed.error || "تعذر مزامنة البرامج المحلية",
-        source: "push_failed",
-      };
-    }
-    return {
-      ok: true,
-      programs: mine.map((p) => ({ ...p, userId: memberId })),
-      source: "pushed",
-    };
-  }
-  return { ok: true, programs: [], source: "empty" };
+  return {
+    ok: true,
+    programs: remote.programs || [],
+    source: remote.programs?.length ? "remote" : "empty",
+  };
 }

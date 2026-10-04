@@ -1,3 +1,5 @@
+// OBSOLÈTE : la création d'une école d'été passe par AdminNewSeasonScreen
+// (start_new_season, reset global). Ne pas rebrancher cet écran.
 import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, Alert } from "react-native";
 import { useApp } from "../../context/AppContext";

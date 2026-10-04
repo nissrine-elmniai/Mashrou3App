@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, row as rtlRow } from "../../constants/rtl";
 import { formatHizbCount, formatHizbTumunDelta, TUMUNS_PER_HIZB } from "../../lib/tumun";
@@ -150,14 +150,20 @@ function ProgressSectionContent({ progressState }) {
 }
 
 /** Carte التقدم — empty state ou métriques existantes. */
-export default function ProgressCard({ progressState, onUpdate }) {
+export default function ProgressCard({ progressState, onUpdate, lockedMessage }) {
+  const handleAction = lockedMessage
+    ? () => Alert.alert("تنبيه", lockedMessage)
+    : onUpdate;
   return (
     <View style={[styles.card, shadows.card]}>
       <ProfileCardHeader
         title="التقدم"
-        onAction={onUpdate}
+        onAction={handleAction}
         accessibilityLabel="تسجيل التقدم"
       />
+      {lockedMessage ? (
+        <Text style={styles.lockedText}>{lockedMessage}</Text>
+      ) : null}
       <ProgressSectionContent progressState={progressState} />
     </View>
   );
@@ -247,6 +253,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     paddingVertical: radii.lg,
     textAlign: "center",
+    ...rtlText,
+  },
+  lockedText: {
+    fontSize: radii.md,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    paddingBottom: radii.sm,
     ...rtlText,
   },
   errorText: {

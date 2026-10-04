@@ -35,6 +35,7 @@ import { colors } from "../constants/theme";
 import {
   isSupabaseConfigured,
   signInWithEmailPassword,
+  verifyCurrentPassword,
   signUpWithProfile,
   signOutAuth,
   requestPasswordReset,
@@ -52,15 +53,16 @@ import {
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
 import { sendAlert as sendRemoteAlert } from "../lib/alertsApi";
-import { archiveSeancesForSaisonIds } from "../lib/seancesApi";
 import {
-  closeRegularSaisons,
+  fetchSaisons,
+  parseSeasonStartDate,
+  startNewSeasonRpc,
   syncSeasonsWithSupabase,
   upsertSaison,
 } from "../lib/saisonsApi";
-import { snapshotSeasonsBeforeClose } from "../lib/seasonStatsApi";
+import { snapshotBeforeNewSeason } from "../lib/seasonStatsApi";
 import { getActiveRegularSeason, isSeasonRegistrationAvailable } from "../lib/seasonScope";
-import { getPendingSupervisorInvitation, deactivateSupervisorsForSaisons } from "../lib/supervisorInvitationsApi";
+import { getPendingSupervisorInvitation, deleteSupervisorAccount } from "../lib/supervisorInvitationsApi";
 import { canonicalEmail } from "../lib/authEmail";
 
 /** ISO YYYY-MM-DD pour colonnes Postgres `date`. Accepte aussi YYYY/MM/DD (placeholders admin). Pas de parse JJ/MM/AAAA. */
@@ -379,8 +381,9 @@ export function AppProvider({ children }) {
     let cancelled = false;
     programsSyncedRef.current = true;
     (async () => {
-      const localMine = memberPrograms.filter((p) => p.userId === localUserId);
-      const res = await syncMemberProgramsWithSupabase(localMine, authId);
+      // Supabase seul : un distant vide efface le cache (le seed n'est pas écrit).
+      const saisonId = getActiveRegularSeason(seasons)?.id || null;
+      const res = await syncMemberProgramsWithSupabase(authId, saisonId);
       if (cancelled || !res.ok) return;
       setMemberPrograms((prev) => {
         const others = prev.filter((p) => p.userId !== localUserId);
@@ -394,7 +397,7 @@ export function AppProvider({ children }) {
     return () => {
       cancelled = true;
     };
-  }, [hydrated, supabaseSession?.user?.id, currentUser?.id]);
+  }, [hydrated, supabaseSession?.user?.id, currentUser?.id, seasons]);
 
   // Liste distante = source de vérité. Les demandes locales absentes sont retirées
   // (l'effet de sauvegarde les enlève aussi d'AsyncStorage).
@@ -453,13 +456,9 @@ export function AppProvider({ children }) {
       if (!res.ok || res.skipped) return;
       memberApplicationsSyncedRef.current = authId;
       const remote = res.applications || [];
-      // Même liste vide : on marque la sync OK (évite de bloquer sur un 1er SELECT vide)
-      setRegistrations((prev) => {
-        if (!remote.length) return prev;
-        const remoteById = new Map(remote.map((r) => [r.id, r]));
-        const localOnly = prev.filter((r) => !remoteById.has(r.id));
-        return [...localOnly, ...remote];
-      });
+      // Distant vide inclus : remplace le cache. L'effet de sauvegarde écrit AsyncStorage.
+      // Un échec réseau est sorti plus haut : l'ancien cache reste.
+      setRegistrations(remote);
     })();
 
     return () => {
@@ -577,6 +576,15 @@ export function AppProvider({ children }) {
       user: sessionUser,
       dashboard: DASHBOARD_BY_ROLE[sessionRole],
     };
+  };
+
+  // Renouvelle le jeton Auth puis aligne l'état React sur la session client.
+  const confirmCurrentPassword = async (password) => {
+    const result = await verifyCurrentPassword(password);
+    if (result.ok && result.session) {
+      setSupabaseSession(result.session);
+    }
+    return result;
   };
 
   const logout = async () => {
@@ -905,142 +913,133 @@ export function AppProvider({ children }) {
     return { ok: true, season };
   };
 
-  const startNewSeason = async ({
-    name,
-    startDate,
-    version,
-    openRegistration = true,
-  }) => {
+  const startNewSeason = async ({ name, startDate, version, type }) => {
     const seasonName = String(name || "").trim();
-    const start = toIsoDateOnly(startDate);
+    const seasonType = String(type || SEASON_TYPES.REGULAR).trim().toLowerCase();
+    const start = parseSeasonStartDate(startDate);
     const versionNum = Number.parseInt(String(version || "").trim(), 10);
-    if (!seasonName || !start || !Number.isFinite(versionNum) || versionNum < 1) {
+    if (
+      seasonType !== SEASON_TYPES.REGULAR &&
+      seasonType !== SEASON_TYPES.SUMMER
+    ) {
+      return {
+        ok: false,
+        error: "نوع الموسم غير صالح — اختر موسماً عادياً أو مدرسة صيفية",
+      };
+    }
+    if (!seasonName || !Number.isFinite(versionNum) || versionNum < 1) {
       return { ok: false, error: "املأ جميع الحقول" };
     }
+    if (!start) {
+      return {
+        ok: false,
+        error: "صيغة التاريخ غير صالحة — استخدم 2026/09/01",
+      };
+    }
+    if (!isSupabaseConfigured()) {
+      return { ok: false, error: "Supabase غير مفعّل" };
+    }
 
-    const previousRegularIds = seasons
-      .filter((s) => s.type === SEASON_TYPES.REGULAR)
-      .map((s) => s.id);
+    // Rien n'est supprimé si le snapshot échoue.
+    const snapRes = await snapshotBeforeNewSeason();
+    if (!snapRes.ok && !snapRes.skipped) {
+      return {
+        ok: false,
+        error: snapRes.error || "تعذر حفظ إحصائيات الموسم السابق",
+      };
+    }
 
-    const registrationOpens = openRegistration !== false;
-
-    const season = {
-      id: uid("s"),
+    const rpcRes = await startNewSeasonRpc({
       name: seasonName,
-      type: SEASON_TYPES.REGULAR,
       startDate: start,
       version: versionNum,
-      registrationOpen: registrationOpens,
-      active: true,
-      remote: false,
-    };
-
-    const previousSeasonsSnapshot = seasons;
-
-    setSeasons((prev) => {
-      const closed = prev.map((s) =>
-        s.type === SEASON_TYPES.REGULAR
-          ? { ...s, registrationOpen: false, active: false }
-          : s
-      );
-      return uniqSeasonsById([...closed, season]);
+      type: seasonType,
     });
+    if (!rpcRes.ok) {
+      return { ok: false, error: rpcRes.error || "تعذر انطلاق الموسم" };
+    }
 
-    if (isSupabaseConfigured()) {
-      // Snapshot AVANT close : computeSeasonStats ignore les séances
-      // archivee, et le trigger 0080 archive dès active → false.
-      const snapRes = await snapshotSeasonsBeforeClose(previousRegularIds);
-      if (!snapRes.ok && !snapRes.skipped) {
-        setSeasons(previousSeasonsSnapshot);
-        return {
-          ok: false,
-          error: snapRes.error || "تعذر حفظ إحصائيات الموسم السابق",
-        };
+    const payload = rpcRes.result || {};
+    // chat_group_ids : policy storage chat_group_avatars_delete_admin =
+    // private.is_chat_group_admin (superviseur de séance), pas l'admin
+    // plateforme. Après la suppression des groupes le contrôle échoue.
+    // Les fichiers {groupId}.jpg restent orphelins.
+    const supervisorIds = Array.isArray(payload.supervisor_ids)
+      ? payload.supervisor_ids.filter(Boolean)
+      : [];
+    const deletedIds = [];
+    const failedIds = [];
+    const supervisorErrors = [];
+    for (const userId of supervisorIds) {
+      const removed = await deleteSupervisorAccount({ userId });
+      if (removed.ok) deletedIds.push(userId);
+      else {
+        failedIds.push(userId);
+        supervisorErrors.push(removed.error || userId);
       }
-      const closeRes = await closeRegularSaisons(previousRegularIds);
-      if (!closeRes.ok && !closeRes.skipped) {
-        setSeasons(previousSeasonsSnapshot);
-        return {
-          ok: false,
-          error: closeRes.error || "تعذر إغلاق المواسم السابقة",
-        };
-      }
-      // Filet client : le trigger 0080 a déjà archivé. Redondant si 0080
-      // est appliqué ; on remonte quand même l'erreur au lieu de l'avaler.
-      const archiveRes = await archiveSeancesForSaisonIds(previousRegularIds);
-      if (!archiveRes.ok && !archiveRes.skipped) {
-        setSeasons(previousSeasonsSnapshot);
-        return {
-          ok: false,
-          error: archiveRes.error || "تعذر أرشفة حصص الموسم السابق",
-        };
-      }
+    }
 
-      // Désactiver les comptes superviseurs de l'ancienne saison (historique conservé)
-      const deact = await deactivateSupervisorsForSaisons(previousRegularIds);
-      if (!deact.ok && !deact.skipped) {
-        setSeasons(previousSeasonsSnapshot);
-        return {
-          ok: false,
-          error: deact.error || "تعذر تعطيل مشرفي الموسم السابق",
-        };
-      }
-      if (deact.count > 0) {
-        setUsers((prev) =>
-          prev.map((u) => {
-            if (!userHasRole(u, ROLES.SUPERVISOR) || userHasRole(u, ROLES.ADMIN)) {
-              return u;
-            }
-            if (u.accountStatus === ACCOUNT_STATUS.INACTIVE) return u;
-            return { ...u, accountStatus: ACCOUNT_STATUS.INACTIVE };
-          })
-        );
-      }
-
-      const upsert = await upsertSaison(season);
-      if (!upsert.ok) {
-        setSeasons(previousSeasonsSnapshot);
-        return { ok: false, error: upsert.error || "تعذر حفظ الموسم الجديد" };
-      }
+    const remote = await fetchSaisons();
+    if (remote.ok) {
+      setSeasons(uniqSeasonsById(remote.seasons));
     } else {
-      // Mode local : désactiver les superviseurs mock
-      setUsers((prev) =>
-        prev.map((u) => {
-          if (!userHasRole(u, ROLES.SUPERVISOR) || userHasRole(u, ROLES.ADMIN)) {
-            return u;
-          }
-          return { ...u, accountStatus: ACCOUNT_STATUS.INACTIVE };
-        })
+      setSeasons((prev) =>
+        uniqSeasonsById([
+          ...prev.map((s) =>
+            s.active ? { ...s, active: false, registrationOpen: false } : s
+          ),
+          {
+            id: payload.saison_id,
+            name: seasonName,
+            type: seasonType,
+            startDate: start,
+            version: versionNum,
+            registrationOpen: true,
+            active: true,
+            remote: seasonType === SEASON_TYPES.SUMMER,
+          },
+        ])
       );
     }
 
-    const alertMessage = registrationOpens
-      ? `انطلاق موسم جديد: «${seasonName}» — باب التسجيل مفتوح الآن. يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`
-      : `انطلاق موسم جديد: «${seasonName}» — سيفتح باب التسجيل لاحقاً.`;
-    pushNotification({
-      title: "انطلاق موسم جديد",
-      body: alertMessage,
-      audience: "members",
-      saisonId: season.id,
-      category: NOTIF_CATEGORY.REGISTRATION,
-    });
+    await refreshRegistrations();
+    setNotifications([]);
 
-    let alertOk = true;
-    let alertError = null;
-    try {
-      const alertRes = await sendRemoteAlert(alertMessage, "members", {
-        saisonId: season.id,
-      });
-      if (!alertRes?.ok) {
-        alertOk = false;
-        alertError = alertRes?.error || null;
-      }
-    } catch (e) {
-      alertOk = false;
-      alertError = e?.message || null;
-    }
+    const deletedSet = new Set(deletedIds);
+    const failedSet = new Set(failedIds);
+    setUsers((prev) =>
+      prev.flatMap((user) => {
+        const ids = [user.id, user.authId].filter(Boolean);
+        if (ids.some((id) => deletedSet.has(id))) return [];
+        if (ids.some((id) => failedSet.has(id))) {
+          return [{ ...user, accountStatus: ACCOUNT_STATUS.INACTIVE }];
+        }
+        // Profil mixte : la RPC a retiré le rôle superviseur, le compte reste.
+        if (
+          userHasRole(user, ROLES.SUPERVISOR) &&
+          userHasRole(user, ROLES.MEMBER) &&
+          !userHasRole(user, ROLES.ADMIN)
+        ) {
+          const roles = normalizeRoles(user).filter((role) => role !== ROLES.SUPERVISOR);
+          return [
+            {
+              ...user,
+              role: user.role === ROLES.SUPERVISOR ? ROLES.MEMBER : user.role,
+              roles,
+            },
+          ];
+        }
+        return [user];
+      })
+    );
 
-    return { ok: true, season, alertOk, alertError };
+    return {
+      ok: true,
+      season: { id: payload.saison_id, name: seasonName },
+      supervisorsDeleted: deletedIds.length,
+      supervisorsTotal: supervisorIds.length,
+      supervisorErrors,
+    };
   };
 
   const announceRegistrationForm = async (seasonId) => {
@@ -2406,15 +2405,22 @@ export function AppProvider({ children }) {
       .filter((p) => p.userId === memberId)
       .map(enrichMemberProgram);
 
-  const persistMemberProgramRemote = async (row) => {
+  const persistMemberProgramRemote = async (row, saisonId) => {
     if (!isSupabaseConfigured() || !supabaseSession?.user?.id) {
       return { ok: true, skipped: true };
     }
-    return upsertMemberProgram(row);
+    if (!saisonId) {
+      return { ok: false, error: "لا يوجد موسم نشط حالياً" };
+    }
+    return upsertMemberProgram(row, saisonId);
   };
 
   const saveMemberProgram = async (program, memberId = currentUser?.id) => {
     if (!memberId) return { ok: false, error: "يجب تسجيل الدخول" };
+    const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
+    if (!activeSeasonId) {
+      return { ok: false, error: "لا يوجد موسم نشط حالياً" };
+    }
     const title = String(program.title || "").trim();
     const nbHizb = Number(program.nbHizb);
     const durationDays = Number(program.durationDays);
@@ -2445,7 +2451,7 @@ export function AppProvider({ children }) {
       type: normalizeProgramType(program.type ?? existing?.type),
     };
 
-    const sync = await persistMemberProgramRemote(row);
+    const sync = await persistMemberProgramRemote(row, activeSeasonId);
     if (!sync.ok && !sync.skipped) {
       return { ok: false, error: sync.error || "تعذر حفظ البرنامج" };
     }
@@ -2847,6 +2853,7 @@ export function AppProvider({ children }) {
     isSupabaseConfigured: isSupabaseConfigured(),
     login,
     logout,
+    confirmCurrentPassword,
     refreshCurrentUser,
     resetToSeedData,
     registerAccount,

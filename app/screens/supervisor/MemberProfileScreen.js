@@ -31,9 +31,8 @@ import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
 import {
   getMemberProgressEntries,
-  computeProgressMetrics,
+  getCurrentProgressPosition,
   computeProgressPace,
-  latestProgressionRow,
 } from "../../lib/progressApi";
 import { getMemberObjectif } from "../../lib/objectifsApi";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
@@ -207,7 +206,6 @@ export default function MemberProfileScreen({ navigation, route }) {
     level,
     hifzAmount,
     gender,
-    registrationDate,
     adminTheme = false,
     viewerRole = null,
   } = route.params || {};
@@ -216,7 +214,6 @@ export default function MemberProfileScreen({ navigation, route }) {
   const canRemoveFromSeance = viewerRole === "admin" || viewerRole === "supervisor";
 
   const fullName = `${firstName || ""} ${lastName || ""}`.trim() || "عضو";
-  const registrationDateOnly = registrationDate ? String(registrationDate).slice(0, 10) : null;
 
   const [inscriptionId, setInscriptionId] = useState(null);
   const [activeSeasonId, setActiveSeasonId] = useState(null);
@@ -227,15 +224,19 @@ export default function MemberProfileScreen({ navigation, route }) {
   const [groupSchedule, setGroupSchedule] = useState(null);
   const [supervisorName, setSupervisorName] = useState(null);
   const [avatarUri, setAvatarUri] = useState(avatarUrl || null);
+  // Date de la saison active seulement (inscription.date_inscription). Jamais profiles.created_at.
+  const [registrationDateOnly, setRegistrationDateOnly] = useState(null);
 
   const applyLoadedSeance = useCallback((season, inscription) => {
     setActiveSeasonId(season?.id || null);
     setSeasonLabel(season?.name || null);
+    const rawDate = inscription?.date_inscription;
+    setRegistrationDateOnly(rawDate ? String(rawDate).slice(0, 10) : null);
     if (!inscription) {
       setInscriptionId(null);
       setSeanceId(null);
       setSaisonId(season?.id || null);
-      setGroupName(season ? "بدون حصة" : null);
+      setGroupName("لم يتم تعيينه في حصة بعد");
       setGroupSchedule(null);
       setSupervisorName(null);
       return;
@@ -463,22 +464,33 @@ export default function MemberProfileScreen({ navigation, route }) {
 
     (async () => {
       const objectifSaisonId = activeSeasonId || saisonId || null;
-      const [progRes, objRes, presRes] = await Promise.all([
-        getMemberProgressEntries(memberId),
+      const presPromise = seanceId
+        ? getMemberPresenceSummary(memberId, seanceId)
+        : Promise.resolve({
+            ok: true,
+            hasData: false,
+            rate: null,
+            presentCount: 0,
+            absentCount: 0,
+            records: [],
+          });
+      const [posRes, objRes, presRes, paceRes] = await Promise.all([
+        getCurrentProgressPosition(memberId),
         objectifSaisonId
           ? getMemberObjectif(memberId, objectifSaisonId)
           : Promise.resolve({ ok: true, objectif: null }),
-        getMemberPresenceSummary(memberId, seanceId),
+        presPromise,
+        getMemberProgressEntries(memberId),
       ]);
       if (cancelled) return;
 
       const objectif =
         objRes.ok && objRes.objectif ? objRes.objectif : null;
 
-      if (!progRes.ok) {
+      if (!posRes.ok) {
         setProgressState({
           loading: false,
-          error: progRes.error,
+          error: posRes.error,
           hasData: false,
           metrics: null,
           note: null,
@@ -487,10 +499,10 @@ export default function MemberProfileScreen({ navigation, route }) {
           weekDeltaTumuns: null,
         });
       } else {
-        const entries = progRes.entries || [];
-        const latest = latestProgressionRow(entries);
-        const metrics = latest ? computeProgressMetrics(latest) : null;
-        const pace = computeProgressPace(entries, activeSeasonId ?? null);
+        const metrics = posRes.hasData ? posRes.metrics : null;
+        const pace = paceRes.ok
+          ? computeProgressPace(paceRes.entries || [], activeSeasonId ?? null)
+          : { seasonDeltaTumuns: null, weekDeltaTumuns: null };
         setProgressState({
           loading: false,
           error: null,

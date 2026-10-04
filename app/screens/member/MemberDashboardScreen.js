@@ -18,9 +18,10 @@ import { Home, BookOpen, User, ClipboardList, GraduationCap } from "lucide-react
 import { useApp } from "../../context/AppContext";
 import {
   getMyProgress,
+  getMyCurrentProgressPosition,
   computeProgressMetrics,
   computeProgressPace,
-  latestProgressionRow,
+  PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { SEASON_TYPES } from "../../constants/roles";
 import { NOTIF_CATEGORY } from "../../constants/notifications";
@@ -44,6 +45,7 @@ import {
 import {
   getMemberProfileFields,
   formatGenderLabel,
+  getMyActiveEnrollment,
 } from "../../lib/membersApi";
 import {
   getMyCurrentInscription,
@@ -300,6 +302,9 @@ export default function MemberDashboardScreen({ navigation, route }) {
   const [adminAlerts, setAdminAlerts] = useState([]);
   const [pendingAlertCount, setPendingAlertCount] = useState(0);
   const [progressEntries, setProgressEntries] = useState([]);
+  const [currentMetrics, setCurrentMetrics] = useState(null);
+  const [positionReady, setPositionReady] = useState(false);
+  const [progressLocked, setProgressLocked] = useState(false);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   /** Timestamp ms — ne montrer que les activités >= date d'inscription */
   const [activitySinceMs, setActivitySinceMs] = useState(null);
@@ -355,12 +360,21 @@ export default function MemberDashboardScreen({ navigation, route }) {
 
   const loadProgressEntries = useCallback(async () => {
     setActivitiesLoading(true);
-    const res = await getMyProgress({
-      saisonId: activeSeasonId || undefined,
-    });
+    const [res, posRes, enrollRes] = await Promise.all([
+      getMyProgress({
+        saisonId: activeSeasonId || undefined,
+      }),
+      getMyCurrentProgressPosition(),
+      getMyActiveEnrollment(),
+    ]);
     if (res.ok) {
       setProgressEntries(res.entries || []);
     }
+    if (posRes.ok) {
+      setCurrentMetrics(posRes.hasData ? posRes.metrics : null);
+    }
+    if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
+    setPositionReady(true);
     setActivitiesLoading(false);
   }, [activeSeasonId]);
 
@@ -642,10 +656,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
 
   const activePrograms = myMemberPrograms.length;
 
-  const memorizationMetrics = useMemo(() => {
-    const latest = latestProgressionRow(progressEntries);
-    return latest ? computeProgressMetrics(latest) : null;
-  }, [progressEntries]);
+  const memorizationMetrics = currentMetrics;
 
   const totalAhzab = memorizationMetrics?.nbHizbCompletes ?? 0;
 
@@ -661,7 +672,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
   const profileProgressState = useMemo(
     () => ({
       loading:
-        !memorizationMetrics && (activitiesLoading || progressState.loading),
+        !memorizationMetrics &&
+        (activitiesLoading || !positionReady || progressState.loading),
       error: progressState.error,
       hasData: !!memorizationMetrics,
       metrics: memorizationMetrics,
@@ -673,6 +685,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
     [
       memorizationMetrics,
       activitiesLoading,
+      positionReady,
       progressState.loading,
       progressState.error,
       seasonObjectif,
@@ -688,10 +701,10 @@ export default function MemberDashboardScreen({ navigation, route }) {
     const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
 
     if (!hasObjectif) {
-      const ring = formatRingPercent(0);
+      // Pas de 0 % : l'anneau reste vide, le centre affiche « — ».
       return {
-        memorizationPct: ring.progress,
-        memorizationPctLabel: ring.label,
+        memorizationPct: 0,
+        memorizationPctLabel: "—",
         programsHizbLabel: "لم يُحدد هدف لهذا الموسم بعد",
         ringA11y: "لم يُحدد هدف لهذا الموسم بعد. اضغط لتحديد عدد الأحزاب.",
       };
@@ -1174,7 +1187,10 @@ export default function MemberDashboardScreen({ navigation, route }) {
             />
 
             <SectionCard>
-              <AdminAlertsSectionTitle alert={adminAlerts[0] || null} />
+              <AdminAlertsSectionTitle
+                alert={adminAlerts[0] || null}
+                onPress={() => navigation.navigate("MemberAlerts")}
+              />
               {adminAlerts.length === 0 ? (
                 <EmptyState text="لا توجد تنبيهات جديدة" />
               ) : (
@@ -1271,6 +1287,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
               <ProgressCard
                 progressState={profileProgressState}
                 onUpdate={openProgression}
+                lockedMessage={progressLocked ? PROGRESS_LOCKED_MESSAGE : null}
               />
 
               <AttendanceCard
@@ -1344,14 +1361,20 @@ const ALERTS_TITLE_GAP = 8;
 const ALERTS_LINE_LEAD = 10;
 
 /** Filet or : du centre de l'avatar jusqu'à 30 % du titre. */
-function AdminAlertsSectionTitle({ alert }) {
+function AdminAlertsSectionTitle({ alert, onPress }) {
   const [titleWidth, setTitleWidth] = useState(0);
   const lineInset = ALERTS_LINE_LEAD + ALERTS_AVATAR_SIZE / 2;
   const lineWidth = ALERTS_AVATAR_SIZE / 2 + ALERTS_TITLE_GAP + titleWidth * 0.3;
 
   return (
     <View style={styles.alertsTitleWrap}>
-      <View style={styles.alertsTitleRow}>
+      <TouchableOpacity
+        style={styles.alertsTitleRow}
+        onPress={onPress}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel="تنبيهات الإدارة"
+      >
         <View style={styles.alertsLineLead} />
         <ProfileAvatar
           userId={alert?.senderId || null}
@@ -1372,7 +1395,7 @@ function AdminAlertsSectionTitle({ alert }) {
         >
           تنبيهات الإدارة
         </Text>
-      </View>
+      </TouchableOpacity>
       <View
         style={[
           styles.alertsTitleLine,

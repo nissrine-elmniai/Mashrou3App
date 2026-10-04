@@ -747,21 +747,25 @@ const CURRENT_INSCRIPTION_SELECT =
   "id, membre_id, seance_id, saison_id, date_inscription, statut, seance:seances!inscriptions_seance_id_fkey(id, nom, statut, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, canonical_email))";
 
 /**
- * Séance actuelle du membre : saison active en base, inscription acceptée,
- * séance non archivée. Une seule requête d'inscriptions pour ce membre.
+ * Inscrit = au moins une inscription 'accepte' dont saison_id est une saison
+ * active, quel que soit le type. season renvoyée = celle de cette inscription.
+ * @returns {{ ok, enrolled?, inscription?, season?, error? }}
  */
-export async function loadCurrentMemberSeance(memberId) {
+export async function getMemberActiveEnrollment(memberId) {
   if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
+    return { ok: false, error: "Supabase غير مفعّل", enrolled: false };
   }
   if (!memberId) {
-    return { ok: false, error: "معرّف العضو مفقود" };
+    return { ok: false, error: "معرّف العضو مفقود", enrolled: false };
   }
   try {
     const seasonRes = await fetchSeasonDirectory();
-    if (!seasonRes.ok) return { ok: false, error: seasonRes.error };
-    const season = seasonRes.activeSeason;
-    if (!season) return { ok: true, season: null, inscription: null };
+    if (!seasonRes.ok) return { ok: false, error: seasonRes.error, enrolled: false };
+    const activeSeasons = (seasonRes.seasons || []).filter((season) => season.active);
+    if (activeSeasons.length === 0) {
+      return { ok: true, enrolled: false, inscription: null, season: null };
+    }
+    const activeIds = new Set(activeSeasons.map((season) => String(season.id)));
 
     const { data, error } = await withTimeout(
       supabase
@@ -773,23 +777,53 @@ export async function loadCurrentMemberSeance(memberId) {
       "قراءة حصة العضو"
     );
     if (error) {
-      logSupabaseError("loadCurrentMemberSeance", error);
-      return { ok: false, error: mapTableError(error, "inscriptions") };
+      logSupabaseError("getMemberActiveEnrollment", error);
+      return { ok: false, error: mapTableError(error, "inscriptions"), enrolled: false };
     }
 
     const inscription =
       (data || [])
-        .filter((row) => isCurrentSeanceInscription(row, season.id))
+        .filter((row) => activeIds.has(String(row.saison_id || "")))
         .sort(
           (a, b) =>
             new Date(b.date_inscription || 0).getTime() -
             new Date(a.date_inscription || 0).getTime()
         )[0] || null;
 
-    return { ok: true, season, inscription };
+    const season = inscription
+      ? activeSeasons.find(
+          (item) => String(item.id) === String(inscription.saison_id || "")
+        ) || null
+      : null;
+
+    return { ok: true, enrolled: !!inscription, inscription, season };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      enrolled: false,
+    };
   }
+}
+
+/** Même règle que getMemberActiveEnrollment, pour le membre connecté. */
+export async function getMyActiveEnrollment() {
+  const { data } = await supabase.auth.getUser();
+  const memberId = data?.user?.id || null;
+  if (!memberId) {
+    return { ok: false, error: "يجب تسجيل الدخول", enrolled: false };
+  }
+  return getMemberActiveEnrollment(memberId);
+}
+
+/**
+ * Séance actuelle : inscription acceptée dans une saison active (tout type).
+ * Plus de préférence pour le type regular.
+ */
+export async function loadCurrentMemberSeance(memberId) {
+  const res = await getMemberActiveEnrollment(memberId);
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, season: res.season, inscription: res.inscription };
 }
 
 /**

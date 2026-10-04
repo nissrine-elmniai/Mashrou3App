@@ -25,8 +25,10 @@ import {
 import {
   flushMemberProgressDelta,
   scheduleMemberProgressDelta,
+  PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { getActiveRegularSeason, getActiveSeason } from "../../lib/seasonScope";
+import { getMyActiveEnrollment } from "../../lib/membersApi";
 
 const EMPTY_FORM = {
   title: "",
@@ -89,8 +91,20 @@ export default function MemberProgramsPanel({ navigation }) {
   const [progressModal, setProgressModal] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
-  const activeSeasonIdRef = useRef(null);
-  activeSeasonIdRef.current = getActiveRegularSeason(seasons)?.id ?? null;
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id ?? null;
+  const progressSeasonIdRef = useRef(null);
+  progressSeasonIdRef.current = getActiveSeason(seasons)?.id ?? null;
+  const [progressLocked, setProgressLocked] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyActiveEnrollment().then((res) => {
+      if (!cancelled && res.ok) setProgressLocked(!res.enrolled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(
     () => () => {
@@ -154,12 +168,16 @@ export default function MemberProgramsPanel({ navigation }) {
 
   const handleAdjustInModal = async (delta) => {
     if (!progressModal) return;
+    if (progressLocked && isHifzProgram(progressModal)) {
+      Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
+      return;
+    }
     const result = await adjustMemberProgramTumuns(progressModal.id, delta);
     if (!result.ok || result.unchanged) return;
     if (isHifzProgram(result.program)) {
       scheduleMemberProgressDelta({
         delta,
-        saisonId: activeSeasonIdRef.current,
+        saisonId: progressSeasonIdRef.current,
         notes: result.program.title || null,
       });
     }
@@ -185,18 +203,42 @@ export default function MemberProgramsPanel({ navigation }) {
   const progressProgram = progressModal
     ? programs.find((p) => p.id === progressModal.id) || progressModal
     : null;
+  const hifzWriteLocked =
+    progressLocked && isHifzProgram(progressProgram);
 
   return (
     <View>
-      <TouchableOpacity style={styles.newBtn} onPress={openCreate} activeOpacity={0.85}>
-        <Ionicons name="add" size={20} color={colors.primary} />
-        <Text style={styles.newBtnText}>برنامج جديد</Text>
+      <TouchableOpacity
+        style={[styles.newBtn, !activeSeasonId && styles.newBtnDisabled]}
+        onPress={activeSeasonId ? openCreate : undefined}
+        disabled={!activeSeasonId}
+        activeOpacity={0.85}
+      >
+        <Ionicons
+          name="add"
+          size={20}
+          color={activeSeasonId ? colors.primary : colors.muted}
+        />
+        <Text
+          style={[
+            styles.newBtnText,
+            !activeSeasonId && styles.newBtnTextDisabled,
+          ]}
+        >
+          {activeSeasonId ? "برنامج جديد" : "لا يوجد موسم نشط حالياً"}
+        </Text>
       </TouchableOpacity>
 
       <Text style={styles.sectionTitle}>برامج الحفظ</Text>
 
       {programs.length === 0 ? (
-        <EmptyState text="لا يوجد برنامج بعد — اضغط «برنامج جديد»" />
+        <EmptyState
+          text={
+            activeSeasonId
+              ? "لا يوجد برنامج بعد — اضغط «برنامج جديد»"
+              : "لا يوجد موسم نشط حالياً"
+          }
+        />
       ) : (
         programs.map((program) => (
           <MemberProgramCard
@@ -244,16 +286,21 @@ export default function MemberProgramsPanel({ navigation }) {
                 <Text style={styles.tumunModalPct}>
                   {progressProgram.progression}%
                 </Text>
+                {hifzWriteLocked ? (
+                  <Text style={styles.progressModalHint}>
+                    {PROGRESS_LOCKED_MESSAGE}
+                  </Text>
+                ) : null}
 
                 <View style={styles.stepperRow}>
                   <TouchableOpacity
                     style={[
                       styles.stepperBtn,
-                      progressProgram.completedTumuns <= 0 &&
+                      (hifzWriteLocked || progressProgram.completedTumuns <= 0) &&
                         styles.stepperBtnDisabled,
                     ]}
                     onPress={() => handleAdjustInModal(-1)}
-                    disabled={progressProgram.completedTumuns <= 0}
+                    disabled={hifzWriteLocked || progressProgram.completedTumuns <= 0}
                   >
                     <Text style={styles.stepperBtnText}>−</Text>
                   </TouchableOpacity>
@@ -265,11 +312,14 @@ export default function MemberProgramsPanel({ navigation }) {
                   <TouchableOpacity
                     style={[
                       styles.stepperBtn,
-                      progressProgram.completedTumuns >=
-                        progressProgram.totalTumuns && styles.stepperBtnDisabled,
+                      (hifzWriteLocked ||
+                        progressProgram.completedTumuns >=
+                          progressProgram.totalTumuns) &&
+                        styles.stepperBtnDisabled,
                     ]}
                     onPress={() => handleAdjustInModal(1)}
                     disabled={
+                      hifzWriteLocked ||
                       progressProgram.completedTumuns >= progressProgram.totalTumuns
                     }
                   >
@@ -519,11 +569,17 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     marginBottom: 16,
   },
+  newBtnDisabled: {
+    opacity: 0.55,
+  },
   newBtnText: {
     color: colors.primary,
     fontWeight: "700",
     fontSize: 16,
     ...rtlText,
+  },
+  newBtnTextDisabled: {
+    color: colors.muted,
   },
   sectionTitle: {
     fontSize: 16,

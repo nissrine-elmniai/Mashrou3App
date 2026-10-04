@@ -36,6 +36,7 @@ import {
 } from "../../constants/tests";
 import { colorWithAlpha } from "../../components/tests/StatusBadge";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 
 const TABS = [
   { key: "all", label: "الكل" },
@@ -345,6 +346,12 @@ export default function AdminTestsScreen({ navigation, route }) {
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
+        />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
         />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}

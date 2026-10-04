@@ -242,7 +242,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
           session: hasCurrentSeance ? seance.nom : "بدون حصة",
           supervisorName: hasCurrentSeance ? fullName || email : null,
           groupSchedule: hasCurrentSeance ? formatSeanceScheduleLabel(seance) : null,
-          registrationDate: i.date_inscription || profile?.created_at || null,
+          registrationDate: i.date_inscription || null,
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, "ar"));

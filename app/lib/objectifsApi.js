@@ -19,8 +19,18 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+export const OBJECTIF_LOCKED_MESSAGE =
+  "لا يمكن تحديد الهدف قبل التسجيل في الموسم الحالي";
+
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
+  const details = `${error?.details || ""} ${error?.hint || ""}`;
+  if (
+    msg.includes(OBJECTIF_LOCKED_MESSAGE) ||
+    details.includes(OBJECTIF_LOCKED_MESSAGE)
+  ) {
+    return OBJECTIF_LOCKED_MESSAGE;
+  }
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
   }

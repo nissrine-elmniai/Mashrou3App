@@ -30,11 +30,21 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
+function emptyTestStats() {
+  return { count: 0, gradedCount: 0, averageNote: null };
+}
+
+function emptyObjectifStats() {
+  return { fixedCount: 0, achievedCount: 0, achievementRate: null };
+}
+
 function emptyDetails() {
   return {
     bySeance: [],
     bySupervisor: [],
     progressTimeline: [],
+    tests: emptyTestStats(),
+    objectifs: emptyObjectifStats(),
   };
 }
 
@@ -56,12 +66,31 @@ function emptyStats(saisonId) {
 
 function parseDetails(raw) {
   if (!raw || typeof raw !== "object") return emptyDetails();
+  const tests = raw.tests && typeof raw.tests === "object" ? raw.tests : {};
+  const objectifs =
+    raw.objectifs && typeof raw.objectifs === "object" ? raw.objectifs : {};
   return {
     bySeance: Array.isArray(raw.bySeance) ? raw.bySeance : [],
     bySupervisor: Array.isArray(raw.bySupervisor) ? raw.bySupervisor : [],
     progressTimeline: Array.isArray(raw.progressTimeline)
       ? raw.progressTimeline
       : [],
+    tests: {
+      count: Number(tests.count) || 0,
+      gradedCount: Number(tests.gradedCount) || 0,
+      averageNote:
+        tests.averageNote == null || tests.averageNote === ""
+          ? null
+          : Number(tests.averageNote),
+    },
+    objectifs: {
+      fixedCount: Number(objectifs.fixedCount) || 0,
+      achievedCount: Number(objectifs.achievedCount) || 0,
+      achievementRate:
+        objectifs.achievementRate == null || objectifs.achievementRate === ""
+          ? null
+          : Number(objectifs.achievementRate),
+    },
   };
 }
 
@@ -171,10 +200,11 @@ async function fetchLatestProgressForMembers(memberIds) {
     supabase
       .from("progression")
       .select(
-        "membre_id, nb_hizb_completes, tumun_courant, juze, tumun, date_saisie, date, saison_id"
+        "membre_id, nb_hizb_completes, tumun_courant, juze, tumun, date_saisie, date, saison_id, id"
       )
       .in("membre_id", memberIds)
-      .order("date_saisie", { ascending: false }),
+      .order("date", { ascending: false })
+      .order("id", { ascending: false }),
     SUPABASE_TIMEOUT_MS,
     "قراءة تقدم الأعضاء"
   );
@@ -185,9 +215,11 @@ async function fetchLatestProgressForMembers(memberIds) {
         supabase
           .from("progression")
           .select(
-            "membre_id, nb_hizb_completes, tumun_courant, juze, tumun, date, saison_id"
+            "membre_id, nb_hizb_completes, tumun_courant, juze, tumun, date, saison_id, id"
           )
-          .in("membre_id", memberIds),
+          .in("membre_id", memberIds)
+          .order("date", { ascending: false })
+          .order("id", { ascending: false }),
         SUPABASE_TIMEOUT_MS,
         "قراءة تقدم الأعضاء"
       );
@@ -347,8 +379,93 @@ export function applySeasonStatsFilters(stats, { seanceId = null, supervisorId =
   };
 }
 
+/** Tests de la saison : nombre, invitations notées, moyenne des notes. */
+async function fetchSeasonTestStats(saisonId) {
+  const testsRes = await withTimeout(
+    supabase.from("tests").select("id").eq("saison_id", saisonId),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة اختبارات الموسم"
+  );
+  if (testsRes.error) {
+    return { ok: false, error: mapTableError(testsRes.error, "tests") };
+  }
+  const ids = (testsRes.data || []).map((row) => row.id).filter(Boolean);
+  if (ids.length === 0) {
+    return { ok: true, summary: emptyTestStats() };
+  }
+  const invRes = await withTimeout(
+    supabase
+      .from("test_invitations")
+      .select("statut, note")
+      .in("test_id", ids),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة درجات الاختبارات"
+  );
+  if (invRes.error) {
+    return { ok: false, error: mapTableError(invRes.error, "test_invitations") };
+  }
+  const graded = (invRes.data || []).filter(
+    (row) => row.statut === "note" && row.note != null && row.note !== ""
+  );
+  const averageNote =
+    graded.length === 0
+      ? null
+      : Math.round(
+          (graded.reduce((sum, row) => sum + Number(row.note), 0) / graded.length) *
+            10
+        ) / 10;
+  return {
+    ok: true,
+    summary: {
+      count: ids.length,
+      gradedCount: graded.length,
+      averageNote: Number.isFinite(averageNote) ? averageNote : null,
+    },
+  };
+}
+
+async function fetchSeasonObjectifRows(saisonId) {
+  const { data, error } = await withTimeout(
+    supabase
+      .from("objectifs")
+      .select("membre_id, nb_hizb_cible, nb_hizb_depart")
+      .eq("saison_id", saisonId),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة أهداف الموسم"
+  );
+  if (error) {
+    return { ok: false, error: mapTableError(error, "objectifs"), rows: [] };
+  }
+  return { ok: true, rows: data || [] };
+}
+
+/**
+ * Atteint si position actuelle − nb_hizb_depart ≥ nb_hizb_cible.
+ * Position = dernier progression.nb_hizb_completes du membre (0 si aucune ligne).
+ */
+function summarizeObjectifs(rows, progressByMember) {
+  let achievedCount = 0;
+  for (const row of rows || []) {
+    const cible = Number(row.nb_hizb_cible);
+    const depart = Number(row.nb_hizb_depart);
+    const raw = progressByMember[row.membre_id]?.nb_hizb_completes;
+    const position = Number.isFinite(Number(raw)) ? Number(raw) : 0;
+    const start = Number.isFinite(depart) ? depart : 0;
+    if (Number.isFinite(cible) && position - start >= cible) achievedCount += 1;
+  }
+  const fixedCount = (rows || []).length;
+  return {
+    fixedCount,
+    achievedCount,
+    achievementRate:
+      fixedCount === 0 ? null : Math.round((achievedCount / fixedCount) * 100),
+  };
+}
+
 /**
  * Calcule les statistiques live d'un musim (données actuelles en base).
+ * Toutes les séances de la saison comptent, y compris statut = archivee :
+ * le snapshot est pris avant la purge de fin de saison.
  */
 export async function computeSeasonStats(saisonId) {
   if (!isSupabaseConfigured()) {
@@ -369,7 +486,7 @@ export async function computeSeasonStats(saisonId) {
     }
 
     const seances = seancesRes.seances || [];
-    const configuredSeances = seances.filter((s) => s.statut !== "archivee");
+    const configuredSeances = seances;
     const seanceById = Object.fromEntries(seances.map((s) => [s.id, s]));
     const supervisorIds = [
       ...new Set(configuredSeances.map((s) => s.superviseur_id).filter(Boolean)),
@@ -405,7 +522,22 @@ export async function computeSeasonStats(saisonId) {
       else if (genre === "أنثى") membersFemale += 1;
     }
 
-    const progRes = await fetchLatestProgressForMembers(memberIds);
+    const objectifsRes = await fetchSeasonObjectifRows(saisonId);
+    if (!objectifsRes.ok) {
+      return { ok: false, error: objectifsRes.error, stats: emptyStats(saisonId) };
+    }
+    const testsRes = await fetchSeasonTestStats(saisonId);
+    if (!testsRes.ok) {
+      return { ok: false, error: testsRes.error, stats: emptyStats(saisonId) };
+    }
+    const progressMemberIds = [
+      ...new Set([
+        ...memberIds,
+        ...objectifsRes.rows.map((row) => row.membre_id).filter(Boolean),
+      ]),
+    ];
+
+    const progRes = await fetchLatestProgressForMembers(progressMemberIds);
     const progressByMember = progRes.ok ? progRes.byMember : {};
     const progressPct = (id) => {
       const m = computeProgressMetrics(progressByMember[id]);
@@ -539,6 +671,8 @@ export async function computeSeasonStats(saisonId) {
           bySeance,
           bySupervisor,
           progressTimeline,
+          tests: testsRes.summary,
+          objectifs: summarizeObjectifs(objectifsRes.rows, progressByMember),
         },
       },
     };
@@ -622,8 +756,8 @@ export async function saveSeasonStatsSnapshot(stats) {
 }
 
 /**
- * Stats d'un musim : live si actif, sinon snapshot (recalcul si absent).
- * @param {{ preferLive?: boolean }} options
+ * Saison close : lecture du snapshot uniquement, jamais de recalcul.
+ * Sans ligne season_stats → missing, aucun calcul en direct.
  */
 export async function getSeasonStats(
   saisonId,
@@ -635,32 +769,26 @@ export async function getSeasonStats(
 
   if (!preferLive && !seasonActive) {
     const snap = await fetchSeasonStatsSnapshot(saisonId);
-    if (snap.ok && snap.stats) {
-      const hasDetails =
-        (snap.stats.details?.bySeance || []).length > 0 ||
-        (snap.stats.details?.progressTimeline || []).length > 0;
-      if (hasDetails) return { ok: true, stats: snap.stats };
-      // Snapshot KPI seul : recalcul live pour graphiques si données encore dispo
-      const live = await computeSeasonStats(saisonId);
-      if (live.ok) {
-        return {
-          ok: true,
-          stats: {
-            ...snap.stats,
-            details: live.stats.details,
-            source: "snapshot",
-          },
-        };
-      }
-      return { ok: true, stats: snap.stats };
+    if (!snap.ok) {
+      return { ok: false, error: snap.error, stats: emptyStats(saisonId) };
     }
+    if (!snap.stats) {
+      return {
+        ok: true,
+        missing: true,
+        stats: null,
+        error: "لا توجد إحصائيات محفوظة لهذا الموسم",
+      };
+    }
+    return { ok: true, stats: snap.stats };
   }
 
   return computeSeasonStats(saisonId);
 }
 
 /**
- * Calcule et fige les stats avant clôture d'un (ou plusieurs) musim(s).
+ * Fige les ids donnés. N'appelle pas cette fonction avec une saison déjà
+ * close qui a déjà un snapshot : le recalcul écraserait l'historique.
  */
 export async function snapshotSeasonsBeforeClose(saisonIds = []) {
   const ids = [...new Set((saisonIds || []).filter(Boolean))];
@@ -683,4 +811,61 @@ export async function snapshotSeasonsBeforeClose(saisonIds = []) {
     saved,
     error: errors.length ? errors.join(" — ") : null,
   };
+}
+
+/**
+ * Avant start_new_season :
+ * - chaque saison active (regular et summer) ;
+ * - chaque saison close qui a encore au moins une séance et aucune ligne
+ *   season_stats (rattrapage unique, jamais une saison close déjà figée).
+ */
+export async function snapshotBeforeNewSeason() {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, saved: 0 };
+  }
+  try {
+    const [seasonsRes, statsRes, seancesRes] = await Promise.all([
+      withTimeout(
+        supabase.from("saisons").select("id, active"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة المواسم"
+      ),
+      withTimeout(
+        supabase.from("season_stats").select("saison_id"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة إحصائيات المواسم"
+      ),
+      withTimeout(
+        supabase.from("seances").select("saison_id"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة حصص المواسم"
+      ),
+    ]);
+    if (seasonsRes.error) {
+      return { ok: false, error: mapTableError(seasonsRes.error, "saisons") };
+    }
+    if (statsRes.error) {
+      return { ok: false, error: mapTableError(statsRes.error, "season_stats") };
+    }
+    if (seancesRes.error) {
+      return { ok: false, error: mapTableError(seancesRes.error, "seances") };
+    }
+
+    const seasons = seasonsRes.data || [];
+    const haveStats = new Set(
+      (statsRes.data || []).map((row) => row.saison_id).filter(Boolean)
+    );
+    const withSeances = new Set(
+      (seancesRes.data || []).map((row) => row.saison_id).filter(Boolean)
+    );
+    const activeIds = seasons.filter((row) => row.active).map((row) => row.id);
+    const catchupIds = seasons
+      .filter(
+        (row) => !row.active && withSeances.has(row.id) && !haveStats.has(row.id)
+      )
+      .map((row) => row.id);
+    return snapshotSeasonsBeforeClose([...activeIds, ...catchupIds]);
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر حفظ إحصائيات الموسم" };
+  }
 }

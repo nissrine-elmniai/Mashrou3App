@@ -15,13 +15,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
 import { colors } from "../../constants/theme";
 import { rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
-import { getMemberProfileFields } from "../../lib/membersApi";
+import { getMemberProfileFields, getMyActiveEnrollment } from "../../lib/membersApi";
 import { getMyCurrentInscription } from "../../lib/messagesApi";
 import {
   getMyProgress,
-  computeProgressMetrics,
+  getMyCurrentProgressPosition,
   computeProgressPace,
-  latestProgressionRow,
+  PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { getMyObjectif } from "../../lib/objectifsApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
@@ -62,6 +62,7 @@ export default function MemberProfileScreen({ navigation }) {
     saisonId: null,
     registrationDate: null,
   });
+  const [progressLocked, setProgressLocked] = useState(false);
   const [progressState, setProgressState] = useState({
     loading: !!authId,
     error: null,
@@ -164,8 +165,9 @@ export default function MemberProfileScreen({ navigation }) {
     });
 
     const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
-    const [progRes, objRes, presRes] = await Promise.all([
-      getMyProgress(),
+    const [posRes, histRes, objRes, presRes, enrollRes] = await Promise.all([
+      getMyCurrentProgressPosition(),
+      getMyProgress({ saisonId: objectifSaisonId || undefined }),
       objectifSaisonId
         ? getMyObjectif(objectifSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
@@ -179,15 +181,18 @@ export default function MemberProfileScreen({ navigation }) {
             absentCount: 0,
             records: [],
           }),
+      getMyActiveEnrollment(),
     ]);
+
+    if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
 
     const objectif =
       objRes.ok && objRes.objectif ? objRes.objectif : null;
 
-    if (!progRes.ok) {
+    if (!posRes.ok) {
       setProgressState({
         loading: false,
-        error: progRes.error,
+        error: posRes.error,
         hasData: false,
         metrics: null,
         note: null,
@@ -196,11 +201,10 @@ export default function MemberProfileScreen({ navigation }) {
         weekDeltaTumuns: null,
       });
     } else {
-      const entries = progRes.entries || [];
-      const latest = latestProgressionRow(entries);
-      const metrics = latest ? computeProgressMetrics(latest) : null;
-      const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
-      const pace = computeProgressPace(entries, saisonId);
+      const metrics = posRes.hasData ? posRes.metrics : null;
+      const pace = histRes.ok
+        ? computeProgressPace(histRes.entries || [], objectifSaisonId)
+        : { seasonDeltaTumuns: null, weekDeltaTumuns: null };
       setProgressState({
         loading: false,
         error: null,
@@ -304,6 +308,7 @@ export default function MemberProfileScreen({ navigation }) {
           <ProgressCard
             progressState={progressState}
             onUpdate={() => navigation.navigate("MemberProgress")}
+            lockedMessage={progressLocked ? PROGRESS_LOCKED_MESSAGE : null}
           />
 
           <AttendanceCard

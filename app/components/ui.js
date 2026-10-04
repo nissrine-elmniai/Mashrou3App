@@ -188,11 +188,26 @@ export function SectionTitle({
   style,
   lineStyle,
   children,
+  onPress,
 }) {
   if (!title) return null;
+  const titleNode = (
+    <Text style={[styles.sectionTitle, { color: primary }]}>{title}</Text>
+  );
   return (
     <View style={style}>
-      <Text style={[styles.sectionTitle, { color: primary }]}>{title}</Text>
+      {onPress ? (
+        <TouchableOpacity
+          onPress={onPress}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={title}
+        >
+          {titleNode}
+        </TouchableOpacity>
+      ) : (
+        titleNode
+      )}
       {children}
       <View style={[styles.cardGoldLine, lineStyle]} />
     </View>
@@ -204,12 +219,13 @@ export function SectionCard({
   subtitle,
   primary = colors.primary,
   borderColor = colors.borderGreen,
+  onTitlePress,
   children,
 }) {
   return (
     <View style={[styles.sectionCard, { borderColor }, shadows.card]}>
       {title ? (
-        <SectionTitle title={title} primary={primary}>
+        <SectionTitle title={title} primary={primary} onPress={onTitlePress}>
           {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
         </SectionTitle>
       ) : subtitle ? (

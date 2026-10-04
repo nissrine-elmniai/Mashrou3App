@@ -40,7 +40,9 @@ import {
   normalizePgTime,
 } from "../../lib/seancesApi";
 import { GENDER_OPTIONS } from "../../constants/roles";
+import { colors } from "../../constants/theme";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 
 const palette = {
   primary: "#2E7D32",
@@ -443,6 +445,12 @@ export default function AdminSeasonsScreen({ navigation }) {
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
+        />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
         />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminRegistrations")}

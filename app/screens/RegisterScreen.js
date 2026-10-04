@@ -530,14 +530,15 @@ export default function RegisterScreen({ navigation }) {
             {form.gender ? (
               <View style={styles.inputGroup}>
                 <FieldLabel required>الحصة</FieldLabel>
-                <Text style={styles.hintInline}>
-                  الحصص المعروضة حسب الجنس الذي اخترته — يضيفها المشرف العام فقط
-                </Text>
                 {seancesLoading ? (
                   <Text style={styles.hintText}>جاري تحميل الحصص المتاحة...</Text>
                 ) : availableSeances.length === 0 ? (
                   <Text style={styles.hintText}>
-                    لا توجد حصص متاحة حالياً لهذا الجنس
+                    {form.gender === "أنثى"
+                      ? "لا توجد حصص للإناث في هذا الموسم بعد"
+                      : form.gender === "ذكر"
+                        ? "لا توجد حصص للذكور في هذا الموسم بعد"
+                        : "لا توجد حصص متاحة حالياً لهذا الجنس"}
                   </Text>
                 ) : (
                   <ChipGroup
@@ -801,13 +802,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 16,
     lineHeight: 20,
-  },
-  hintInline: {
-    ...rtlText,
-    color: colors.muted,
-    fontSize: 12,
-    marginBottom: 10,
-    lineHeight: 18,
   },
   loginButton: {
     backgroundColor: colors.primary,

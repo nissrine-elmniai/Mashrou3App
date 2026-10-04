@@ -318,6 +318,36 @@ export async function signInWithEmailPassword(email, password) {
 }
 
 /**
+ * Vérifie le mot de passe du compte déjà connecté.
+ * Appelle signInWithPassword directement : signInWithEmailPassword
+ * déconnecte les comptes inactive / invited.
+ * Ne journalise pas le mot de passe.
+ */
+export async function verifyCurrentPassword(password) {
+  const { data: current, error: currentError } = await supabase.auth.getUser();
+  const email = current?.user?.email;
+  const currentId = current?.user?.id;
+  if (currentError || !email || !currentId) {
+    return { ok: false, error: "SESSION_INTROUVABLE" };
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+  if (error || !data?.session || !data?.user) {
+    return {
+      ok: false,
+      error: error ? mapSupabaseAuthError(error) : "كلمة المرور غير صحيحة",
+    };
+  }
+  if (data.user.id !== currentId) {
+    return { ok: false };
+  }
+  return { ok: true, session: data.session };
+}
+
+/**
  * Crée / active un compte invité via Edge Function (service role + email_confirm).
  * Évite auth.signUp qui dépend du SMTP Auth (souvent en panne).
  */

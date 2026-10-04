@@ -21,6 +21,7 @@ import { mergeInboxRows } from "../../lib/messagesApi";
 import { initials } from "../supervisor/supervisorHelpers";
 import { displayProfileEmail } from "../../lib/authEmail";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
 
 export default function AdminChatScreen({ navigation }) {
   const { currentUser, stats, seasons } = useApp();
@@ -94,6 +95,12 @@ export default function AdminChatScreen({ navigation }) {
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
+        />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
         />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}

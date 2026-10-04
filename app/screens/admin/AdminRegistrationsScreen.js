@@ -27,6 +27,8 @@ import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { rtlText, row } from "../../constants/rtl";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import InboxHeaderButton from "../../components/InboxHeaderButton";
+import { colors } from "../../constants/theme";
 import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
 
 const palette = {
@@ -43,8 +45,6 @@ const palette = {
 
 export default function AdminRegistrationsScreen({ navigation, route }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "registrations");
-  const seasonType = route?.params?.seasonType || SEASON_TYPES.REGULAR;
-  const isSummer = seasonType === SEASON_TYPES.SUMMER;
 
   const {
     registrations,
@@ -86,6 +86,11 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     }, [reloadRegistrations])
   );
   const activeSeason = getActiveRegularSeason(seasons);
+  // Paramètre de route prioritaire ; sinon le type de la saison active ;
+  // regular seulement s'il n'y a aucune saison active.
+  const seasonType =
+    route?.params?.seasonType || activeSeason?.type || SEASON_TYPES.REGULAR;
+  const isSummer = seasonType === SEASON_TYPES.SUMMER;
 
   const matchesKind = (reg) => {
     if (kindFilter === "all") return true;
@@ -284,6 +289,12 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
+        />
+        <InboxHeaderButton
+          navigation={navigation}
+          color={colors.muted}
+          variant="lucide"
+          size={24}
         />
         <TouchableOpacity
           onPress={() => navigation.navigate("AdminNotifications")}
