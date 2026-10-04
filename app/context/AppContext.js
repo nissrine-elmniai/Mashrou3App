@@ -717,15 +717,6 @@ export function AppProvider({ children }) {
       seasons.find((s) => s.active)?.id ||
       seasons[0]?.id ||
       null;
-    const duplicate = registrations.find(
-      (r) =>
-        r.phone === phoneClean &&
-        (r.seasonId || null) === (resolvedSeasonId || null) &&
-        r.status !== REGISTRATION_STATUS.REJECTED
-    );
-    if (duplicate) {
-      return { ok: false, error: "لديك طلب تسجيل مسبقاً" };
-    }
 
     const { firstName, lastName } = splitFullName(name);
     const registration = {
@@ -758,7 +749,6 @@ export function AppProvider({ children }) {
       }
     }
 
-    setRegistrations((prev) => [...prev, registration]);
     pushNotification({
       title: "طلب انضمام جديد",
       body: `طلب انضمام من ${name} — راجعه من طلبات الانضمام`,
@@ -1992,13 +1982,6 @@ export function AppProvider({ children }) {
     };
   };
 
-  const findRegistrationByPhone = (phone) => {
-    const phoneClean = String(phone || "").trim();
-    return registrations
-      .filter((r) => r.phone === phoneClean)
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
-  };
-
   const createGroup = ({
     seasonId,
     name,
@@ -2860,7 +2843,6 @@ export function AppProvider({ children }) {
     submitMemberApplication,
     activateInvite,
     activateSupervisorAccount,
-    findRegistrationByPhone,
     resetPassword,
     confirmPasswordReset,
     createSeason,

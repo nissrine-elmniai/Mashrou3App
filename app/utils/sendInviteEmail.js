@@ -158,6 +158,23 @@ export async function sendMemberAcceptEmail({
   });
 }
 
+/** رسالة رفض طلب انضمام */
+export async function sendMemberRejectEmail({ toEmail, fullName }) {
+  const subject = "طلب الانضمام لمشروع مهندس حامل لكتاب الله";
+  const message = [
+    "الالسلام عليكم ورحمة الله،",
+    "شكراً لاهتمامك بمشروع «مهندس حامل لكتاب الله». نعتذر، لم نتمكن من قبول طلب انضمامك. تأكّد من صحة المعلومات ثم أعد المحاولة.",
+    "بالتوفيق",
+  ].join("\n");
+
+  return sendAppEmail({
+    toEmail,
+    toName: fullName,
+    subject,
+    message,
+  });
+}
+
 /** رسالة دعوة مشرف */
 export async function sendSupervisorInviteEmail({
   toEmail,

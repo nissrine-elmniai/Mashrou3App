@@ -41,6 +41,7 @@ import {
   loadCurrentMemberSeance,
   removeMemberFromSeance,
   updateMemberSeance,
+  findAdminSeanceAssignmentSeason,
   formatGenderLabel,
 } from "../../lib/membersApi";
 import { displayProfileEmail } from "../../lib/authEmail";
@@ -217,6 +218,8 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   const [inscriptionId, setInscriptionId] = useState(null);
   const [activeSeasonId, setActiveSeasonId] = useState(null);
+  const [assignmentSeasonId, setAssignmentSeasonId] = useState(null);
+  const [assignmentHint, setAssignmentHint] = useState(null);
   const [seasonLabel, setSeasonLabel] = useState(null);
   const [seanceId, setSeanceId] = useState(null);
   const [saisonId, setSaisonId] = useState(null);
@@ -292,12 +295,14 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   // L'admin affecte toujours dans le musim actif (un membre d'une ancienne
   // version peut ainsi être ajouté à une séance de la version en cours).
-  const pickerSaisonId = adminTheme ? activeSeasonId || null : saisonId || null;
+  const pickerSaisonId = adminTheme
+    ? assignmentSeasonId || activeSeasonId || null
+    : saisonId || null;
 
   const openSeancePicker = async () => {
     if (!isAdminViewer || savingSeance) return;
     if (!pickerSaisonId) {
-      Alert.alert("تنبيه", "لا يوجد موسم نشط");
+      Alert.alert("تنبيه", assignmentHint || "لا يوجد موسم نشط");
       return;
     }
     setSeanceModalVisible(true);
@@ -381,6 +386,15 @@ export default function MemberProfileScreen({ navigation, route }) {
     }
     const loaded = await loadCurrentMemberSeance(memberId);
     if (loaded.ok) applyLoadedSeance(loaded.season, loaded.inscription);
+    if (isAdminViewer) {
+      const target = await findAdminSeanceAssignmentSeason(memberId);
+      if (target.ok) {
+        setAssignmentSeasonId(target.seasonId || null);
+        setAssignmentHint(
+          target.seasonId ? null : target.message || "لا يوجد طلب تسجيل مقبول"
+        );
+      }
+    }
     Alert.alert("تم", "تم إزالة العضو من الحصة بنجاح");
   };
 
@@ -391,11 +405,16 @@ export default function MemberProfileScreen({ navigation, route }) {
       const res = await loadCurrentMemberSeance(memberId);
       if (cancelled || !res.ok) return;
       applyLoadedSeance(res.season, res.inscription);
+      if (!isAdminViewer) return;
+      const target = await findAdminSeanceAssignmentSeason(memberId);
+      if (cancelled || !target.ok) return;
+      setAssignmentSeasonId(target.seasonId || null);
+      setAssignmentHint(target.seasonId ? null : target.message || "لا يوجد طلب تسجيل مقبول");
     })();
     return () => {
       cancelled = true;
     };
-  }, [memberId, applyLoadedSeance]);
+  }, [memberId, applyLoadedSeance, isAdminViewer]);
 
   useEffect(() => {
     if (!memberId) return;

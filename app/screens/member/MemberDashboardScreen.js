@@ -1249,6 +1249,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
             openRegular={openRegular}
             openSummer={openSummer}
             gender={displayGenderFromUser(currentUser?.gender)}
+            userId={currentUser?.authId || null}
             onSubmit={handleRegister}
           />
         )}
