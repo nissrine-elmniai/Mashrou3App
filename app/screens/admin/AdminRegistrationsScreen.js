@@ -29,7 +29,10 @@ import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors } from "../../constants/theme";
-import { sendMemberAcceptEmail } from "../../utils/sendInviteEmail";
+import {
+  sendMemberAcceptEmail,
+  sendMemberRejectEmail,
+} from "../../utils/sendInviteEmail";
 
 const palette = {
   primary: "#2E7D32",
@@ -222,12 +225,45 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         text: "رفض",
         style: "destructive",
         onPress: async () => {
-          const result = await reviewRegistration(
-            reg.id,
-            REGISTRATION_STATUS.REJECTED
-          );
-          if (!result?.ok) {
-            Alert.alert("خطأ", result?.error || "تعذر رفض الطلب");
+          setSendingId(reg.id);
+          let rejected = false;
+          try {
+            const result = await reviewRegistration(
+              reg.id,
+              REGISTRATION_STATUS.REJECTED
+            );
+            if (!result?.ok) {
+              Alert.alert("خطأ", result?.error || "تعذر رفض الطلب");
+              return;
+            }
+            rejected = true;
+            if (result.kind !== REGISTRATION_KIND.JOIN) return;
+            if (!reg.email) {
+              Alert.alert(
+                "تم الرفض",
+                "حُفظ الرفض، لكن لا يوجد بريد إلكتروني لإعلام المترشح."
+              );
+              return;
+            }
+            const mail = await sendMemberRejectEmail({
+              toEmail: reg.email,
+              fullName: reg.fullName,
+            });
+            if (!mail.ok) {
+              Alert.alert(
+                "تم الرفض — فشل إرسال البريد",
+                mail.error || "تعذر إرسال رسالة الرفض. الرفض محفوظ."
+              );
+            }
+          } catch (e) {
+            Alert.alert(
+              rejected ? "تم الرفض — فشل إرسال البريد" : "خطأ",
+              rejected
+                ? e?.message || "تعذر إرسال رسالة الرفض. الرفض محفوظ."
+                : e?.message || "حدث خطأ أثناء رفض الطلب"
+            );
+          } finally {
+            setSendingId(null);
           }
         },
       },

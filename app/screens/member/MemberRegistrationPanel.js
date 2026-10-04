@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -13,6 +14,7 @@ import {
   formatSeanceScheduleLabel,
 } from "../../lib/seancesApi";
 import { parseObjectifInput } from "../../lib/objectifsApi";
+import { fetchMySeasonRegistrationView } from "../../lib/memberApplicationsApi";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, textAlignStart } from "../../constants/rtl";
 import { SectionCard, QuickButton, EmptyState } from "../../components/ui";
@@ -238,12 +240,104 @@ function RegistrationBlock({
   );
 }
 
+function SeasonStatus({ state }) {
+  if (state?.mode === "review") {
+    return <Text style={styles.statusText}>طلبك قيد المراجعة</Text>;
+  }
+  if (state?.mode === "accepted") {
+    return (
+      <Text style={styles.statusText}>
+        {state.seanceName
+          ? `تم قبول تسجيلك\n${state.seanceName}`
+          : "تم قبول تسجيلك"}
+      </Text>
+    );
+  }
+  if (state?.mode === "waiting") {
+    return (
+      <Text style={styles.statusText}>
+        تم قبول تسجيلك — في انتظار تعيين حصة جديدة
+      </Text>
+    );
+  }
+  return null;
+}
+
 export default function MemberRegistrationPanel({
   openRegular,
   openSummer,
   gender,
   onSubmit,
+  userId,
 }) {
+  const [bySeason, setBySeason] = useState({});
+  const [loadingView, setLoadingView] = useState(false);
+  const [viewError, setViewError] = useState(null);
+  const seasonKey = [...openRegular, ...openSummer].map((season) => season.id).join("|");
+
+  const loadView = useCallback(async () => {
+    const ids = seasonKey ? seasonKey.split("|") : [];
+    if (!userId || ids.length === 0) {
+      setBySeason({});
+      setViewError(null);
+      return;
+    }
+    setLoadingView(true);
+    const res = await fetchMySeasonRegistrationView(userId, ids);
+    setLoadingView(false);
+    if (!res.ok) {
+      setViewError(res.error || "تعذر تحميل حالة التسجيل");
+      return;
+    }
+    setViewError(null);
+    setBySeason(res.bySeason || {});
+  }, [seasonKey, userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadView();
+    }, [loadView])
+  );
+
+  const handleSubmit = async (payload) => {
+    const result = await onSubmit(payload);
+    if (result?.ok) await loadView();
+    return result;
+  };
+
+  const renderSeasons = (seasons, buttonColor) => {
+    if (loadingView) {
+      return <ActivityIndicator color={buttonColor} style={{ marginVertical: 12 }} />;
+    }
+    return seasons.map((season) => {
+      const state = bySeason[String(season.id)];
+      if (
+        state?.mode === "review" ||
+        state?.mode === "accepted" ||
+        state?.mode === "waiting"
+      ) {
+        return <SeasonStatus key={season.id} state={state} />;
+      }
+      return (
+        <View key={season.id}>
+          {state?.rejected ? (
+            <Text style={styles.statusText}>
+              لم يتم قبول طلبك السابق، يمكنك إعادة التقديم
+            </Text>
+          ) : null}
+          {viewError ? <Text style={styles.hint}>{viewError}</Text> : null}
+          <RegistrationBlock
+            seasons={[season]}
+            gender={gender}
+            buttonLabel="إرسال استمارة التسجيل"
+            buttonColor={buttonColor}
+            onSubmit={handleSubmit}
+          />
+        </View>
+      );
+    });
+  };
+
   // Inscription été ouverte sans saison regular : ne pas dire que le registre est fermé.
   const summerOnly = openRegular.length === 0 && openSummer.length > 0;
   return (
@@ -267,13 +361,7 @@ export default function MemberRegistrationPanel({
             }
           />
         ) : (
-          <RegistrationBlock
-            seasons={openRegular}
-            gender={gender}
-            buttonLabel="إرسال استمارة التسجيل"
-            buttonColor={colors.primary}
-            onSubmit={onSubmit}
-          />
+          renderSeasons(openRegular, colors.primary)
         )}
       </SectionCard>
 
@@ -286,13 +374,7 @@ export default function MemberRegistrationPanel({
         {openSummer.length === 0 ? (
           <EmptyState text="تسجيل المدرسة الصيفية مغلق حالياً" />
         ) : (
-          <RegistrationBlock
-            seasons={openSummer}
-            gender={gender}
-            buttonLabel="إرسال استمارة التسجيل"
-            buttonColor={colors.orange}
-            onSubmit={onSubmit}
-          />
+          renderSeasons(openSummer, colors.orange)
         )}
       </SectionCard>
     </View>
@@ -318,6 +400,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     marginBottom: 8,
+  },
+  statusText: {
+    ...rtlText,
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.text,
+    marginBottom: 12,
   },
   inputWrapper: {
     borderWidth: 1,

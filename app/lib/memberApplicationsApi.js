@@ -230,14 +230,18 @@ async function insertApplicationRow(row, label) {
   return error;
 }
 
-/** Cherche une réinscription ouverte (pending / activated) pour email+saison */
-export async function findOpenSeasonRenewal({ email, seasonId, userId = null }) {
+/**
+ * Réinscription ouverte (pending / activated) pour ce compte et cette saison.
+ * Depuis 0111 l'email enregistré est celui du JWT : on cherche par user_id.
+ * `email` reste accepté pour les appelants, il n'entre plus dans la requête.
+ */
+export async function findOpenSeasonRenewal({ seasonId, userId = null }) {
   if (!isSupabaseConfigured()) {
     return { ok: true, skipped: true, application: null };
   }
-  const mail = String(email || "").trim().toLowerCase();
+  const uid = String(userId || "").trim();
   const season = String(seasonId || "").trim();
-  if (!mail || !season) {
+  if (!uid || !season) {
     return { ok: false, error: "بيانات البحث غير مكتملة" };
   }
 
@@ -245,6 +249,7 @@ export async function findOpenSeasonRenewal({ email, seasonId, userId = null }) 
     let query = supabase
       .from("member_applications")
       .select("*")
+      .eq("user_id", uid)
       .eq("season_id", season)
       .neq("status", "rejected")
       .order("created_at", { ascending: false })
@@ -252,7 +257,7 @@ export async function findOpenSeasonRenewal({ email, seasonId, userId = null }) 
 
     // kind peut manquer si 0060 non appliquée — on filtre côté JS aussi
     const { data, error } = await withTimeout(
-      query.ilike("email", mail),
+      query,
       SUPABASE_TIMEOUT_MS,
       "التحقق من طلب إعادة التسجيل"
     );
@@ -269,16 +274,106 @@ export async function findOpenSeasonRenewal({ email, seasonId, userId = null }) 
           return false;
         }
         if (r.status === REGISTRATION_STATUS.REJECTED) return false;
-        if (userId) {
-          const uid = String(userId);
-          if (r.userId && r.userId !== uid) return false;
-        }
         return true;
       });
 
     return { ok: true, application: rows[0] || null };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Dernière demande du compte pour chaque saison, plus l'inscription acceptée
+ * encore rattachée à une séance non archivée.
+ * mode : review | accepted | waiting | form
+ */
+export async function fetchMySeasonRegistrationView(userId, seasonIds) {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, skipped: true, bySeason: {} };
+  }
+  const uid = String(userId || "").trim();
+  const ids = [
+    ...new Set((seasonIds || []).map((id) => String(id || "")).filter(Boolean)),
+  ];
+  if (!uid || ids.length === 0) {
+    return { ok: true, bySeason: {} };
+  }
+
+  try {
+    const [appsRes, inscRes] = await Promise.all([
+      withTimeout(
+        supabase
+          .from("member_applications")
+          .select("id, season_id, status, created_at")
+          .eq("user_id", uid)
+          .in("season_id", ids)
+          .order("created_at", { ascending: false }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة طلبات التسجيل"
+      ),
+      withTimeout(
+        supabase
+          .from("inscriptions")
+          .select(
+            "id, saison_id, statut, seance:seances!inscriptions_seance_id_fkey(nom, statut)"
+          )
+          .eq("membre_id", uid)
+          .eq("statut", "accepte")
+          .in("saison_id", ids),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة تسجيل الحصة"
+      ),
+    ]);
+
+    if (appsRes.error) {
+      return {
+        ok: false,
+        error: mapTableError(appsRes.error, "member_applications"),
+        bySeason: {},
+      };
+    }
+    if (inscRes.error) {
+      return {
+        ok: false,
+        error: mapTableError(inscRes.error, "inscriptions"),
+        bySeason: {},
+      };
+    }
+
+    const bySeason = {};
+    const seen = new Set();
+    for (const row of appsRes.data || []) {
+      const sid = String(row.season_id || "");
+      if (!sid || seen.has(sid)) continue;
+      seen.add(sid);
+      if (row.status === "pending" || row.status === "invited") {
+        bySeason[sid] = { mode: "review" };
+        continue;
+      }
+      if (row.status === "activated") {
+        const live = (inscRes.data || []).find(
+          (item) =>
+            String(item.saison_id || "") === sid &&
+            item.seance?.statut &&
+            item.seance.statut !== "archivee"
+        );
+        bySeason[sid] = live?.seance?.nom
+          ? { mode: "accepted", seanceName: live.seance.nom }
+          : { mode: "waiting" };
+        continue;
+      }
+      if (row.status === "rejected") {
+        bySeason[sid] = { mode: "form", rejected: true };
+      }
+    }
+    return { ok: true, bySeason };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      bySeason: {},
+    };
   }
 }
 
@@ -314,7 +409,7 @@ export async function insertPendingMemberApplication(reg) {
           ok: false,
           error: isRenewal
             ? "لديك طلب إعادة تسجيل مسبقاً لهذا الموسم"
-            : "لديك طلب تسجيل مسبقاً بهذا البريد",
+            : "لديك طلب قيد المراجعة بالفعل لهذا الموسم",
         };
       }
       if (/relation.*does not exist|Could not find the table/i.test(msg)) {

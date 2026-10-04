@@ -24,7 +24,7 @@ import {
 } from "../../lib/seancesApi";
 import {
   fetchActivatedMemberIdsForSeason,
-  isCurrentSeanceInscription,
+  isAcceptedInActiveSeason,
 } from "../../lib/membersApi";
 import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
 import { initials } from "../supervisor/supervisorHelpers";
@@ -65,12 +65,6 @@ function latestInscription(rows) {
   return [...rows].sort((a, b) => inscriptionTime(b) - inscriptionTime(a))[0];
 }
 
-function categoryForMember(current, isActivated) {
-  if (current) return CATEGORY_REGISTERED;
-  if (isActivated) return CATEGORY_WAITING;
-  return CATEGORY_OTHER;
-}
-
 function formatLastSeance(inscription, seasonNames) {
   const seanceName = inscription?.seance?.nom || null;
   if (!seanceName) return null;
@@ -91,6 +85,7 @@ export default function AdminMembersScreen({ navigation }) {
   const [progressOk, setProgressOk] = useState(true);
   const [applicationsOk, setApplicationsOk] = useState(true);
   const [activeSeason, setActiveSeason] = useState(null);
+  const [activeSeasonIds, setActiveSeasonIds] = useState([]);
   const [seasonNames, setSeasonNames] = useState({});
   const [profiles, setProfiles] = useState([]);
   const [inscriptions, setInscriptions] = useState([]);
@@ -121,7 +116,11 @@ export default function AdminMembersScreen({ navigation }) {
       });
       setSeasonNames(names);
       setActiveSeason(seasonRes.activeSeason);
-      if (!seasonRes.activeSeason) {
+      const activeIds = (seasonRes.seasons || [])
+        .filter((season) => season.active)
+        .map((season) => String(season.id));
+      setActiveSeasonIds(activeIds);
+      if (!seasonRes.activeSeason && activeIds.length === 0) {
         setProfiles([]);
         setInscriptions([]);
         setActivatedIds([]);
@@ -133,12 +132,11 @@ export default function AdminMembersScreen({ navigation }) {
         return;
       }
 
-      const seasonId = seasonRes.activeSeason.id;
       const [profRes, inscRes, progRes, appsRes] = await Promise.all([
         getMemberProfiles(),
         getAllAcceptedInscriptions(),
         getAllProgressionAdmin(),
-        fetchActivatedMemberIdsForSeason(seasonId),
+        fetchActivatedMemberIdsForSeason(activeIds),
       ]);
       if (seq !== loadSeq.current) return;
       if (profRes.ok) {
@@ -185,6 +183,7 @@ export default function AdminMembersScreen({ navigation }) {
   );
 
   const activatedSet = useMemo(() => new Set(activatedIds), [activatedIds]);
+  const activeIdSet = useMemo(() => new Set(activeSeasonIds), [activeSeasonIds]);
 
   const members = useMemo(() => {
     const byMember = new Map();
@@ -198,14 +197,19 @@ export default function AdminMembersScreen({ navigation }) {
       .filter((profile) => profile.account_status !== "invited")
       .map((profile) => {
         const memberInscriptions = byMember.get(profile.id) || [];
-        const current = activeSeason
-          ? latestInscription(
-              memberInscriptions.filter((row) =>
-                isCurrentSeanceInscription(row, activeSeason.id)
-              )
-            )
-          : null;
-        const categoryKey = categoryForMember(current, activatedSet.has(profile.id));
+        const current = latestInscription(
+          memberInscriptions.filter((row) =>
+            isAcceptedInActiveSeason(row, activeIdSet)
+          )
+        );
+        const hasArchived = memberInscriptions.some((row) =>
+          isAcceptedInActiveSeason(row, activeIdSet, { archivedOnly: true })
+        );
+        const categoryKey = current
+          ? CATEGORY_REGISTERED
+          : activatedSet.has(profile.id) || hasArchived
+            ? CATEGORY_WAITING
+            : CATEGORY_OTHER;
 
         const entries = progressions
           .filter((entry) => entry.membre_id === profile.id)
@@ -255,6 +259,7 @@ export default function AdminMembersScreen({ navigation }) {
     inscriptions,
     progressions,
     activatedSet,
+    activeIdSet,
     seasonNames,
     activeSeason,
     inscriptionsOk,

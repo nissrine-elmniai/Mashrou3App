@@ -17,7 +17,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useApp } from "../context/AppContext";
 import {
   GENDER_OPTIONS,
-  REGISTRATION_STATUS,
   REGISTRATION_STATUS_LABELS,
 } from "../constants/roles";
 import {
@@ -92,21 +91,14 @@ function FieldLabel({ children, required }) {
 export default function RegisterScreen({ navigation }) {
   const {
     seasons,
-    registrations,
     submitMemberApplication,
-    findRegistrationByPhone,
   } = useApp();
 
   const [form, setForm] = useState(EMPTY_FORM);
   const [availableSeances, setAvailableSeances] = useState([]);
   const [seancesLoading, setSeancesLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [submittedId, setSubmittedId] = useState(null);
-
-  const submitted = useMemo(
-    () => registrations.find((r) => r.id === submittedId) || null,
-    [registrations, submittedId]
-  );
+  const [submitted, setSubmitted] = useState(null);
 
   const setField = (key, value) => {
     setForm((prev) => {
@@ -255,16 +247,7 @@ export default function RegisterScreen({ navigation }) {
       Alert.alert("خطأ", result.error);
       return;
     }
-    setSubmittedId(result.registration.id);
-  };
-
-  const refreshStatus = () => {
-    const found = findRegistrationByPhone(form.phone || submitted?.phone);
-    if (!found) {
-      Alert.alert("تنبيه", "لم يُعثر على طلب بهذا الرقم");
-      return;
-    }
-    setSubmittedId(found.id);
+    setSubmitted(result.registration);
   };
 
   const answers = submitted?.formAnswers || {};
@@ -286,7 +269,7 @@ export default function RegisterScreen({ navigation }) {
             <Text style={styles.cardTitle}>متابعة الطلب</Text>
             <Text style={styles.cardSubtitle}>
               سيظهر طلبك للمشرف العام للمراجعة. عند القبول ستصلك دعوة على البريد
-              الإلكتروني لإنشاء الحساب — هذه الخطوة للأعضاء الجدد فقط.
+              الإلكتروني لإنشاء الحساب.
             </Text>
 
             <View style={styles.statusPill}>
@@ -345,29 +328,6 @@ export default function RegisterScreen({ navigation }) {
                 />
               ) : null}
             </View>
-
-            {submitted.status === REGISTRATION_STATUS.INVITED ? (
-              <TouchableOpacity
-                style={styles.loginButton}
-                onPress={() =>
-                  navigation.navigate("ActivateAccount", {
-                    email: submitted.email || "",
-                  })
-                }
-                activeOpacity={0.85}
-              >
-                <Text style={styles.loginButtonText}>إنشاء الحساب</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={refreshStatus}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="refresh-outline" size={18} color={colors.primary} />
-              <Text style={styles.secondaryButtonText}>تحديث الحالة</Text>
-            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.linkBtn}
@@ -815,23 +775,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     textAlign: "center",
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: radii.md,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: row,
-    gap: 8,
-    marginTop: 12,
-    backgroundColor: colors.primarySoft,
-  },
-  secondaryButtonText: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
   },
   linkBtn: { marginTop: 20, alignItems: "center" },
   forgotPasswordLink: {

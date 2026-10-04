@@ -743,6 +743,24 @@ export function isCurrentSeanceInscription(row, seasonId) {
   return !!statut && statut !== "archivee";
 }
 
+/**
+ * Inscription acceptée dans une des saisons actives.
+ * archivedOnly : séance archivée. Sinon : séance présente et non archivée.
+ */
+export function isAcceptedInActiveSeason(row, activeSeasonIds, { archivedOnly = false } = {}) {
+  if (!row) return false;
+  const ids =
+    activeSeasonIds instanceof Set
+      ? activeSeasonIds
+      : new Set((activeSeasonIds || []).map((id) => String(id)));
+  const sid = String(row.saison_id || row.seance?.saison_id || "");
+  if (!ids.has(sid)) return false;
+  const statut = row.seance?.statut;
+  if (!statut) return false;
+  if (archivedOnly) return statut === "archivee";
+  return statut !== "archivee";
+}
+
 const CURRENT_INSCRIPTION_SELECT =
   "id, membre_id, seance_id, saison_id, date_inscription, statut, seance:seances!inscriptions_seance_id_fkey(id, nom, statut, saison_id, jour, heure_debut, heure_fin, superviseur_id, superviseur:profiles!seances_superviseur_id_fkey(id, first_name, last_name, email, canonical_email))";
 
@@ -829,11 +847,16 @@ export async function loadCurrentMemberSeance(memberId) {
 /**
  * Demandes activées de la saison active (une requête, filtre season_id en texte).
  */
-export async function fetchActivatedMemberIdsForSeason(seasonId) {
+export async function fetchActivatedMemberIdsForSeason(seasonIdOrIds) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل", ids: [] };
   }
-  if (seasonId == null || String(seasonId) === "") {
+  const wanted = new Set(
+    (Array.isArray(seasonIdOrIds) ? seasonIdOrIds : [seasonIdOrIds])
+      .map((id) => (id == null ? "" : String(id)))
+      .filter((id) => id !== "")
+  );
+  if (wanted.size === 0) {
     return { ok: true, ids: [] };
   }
   try {
@@ -853,11 +876,10 @@ export async function fetchActivatedMemberIdsForSeason(seasonId) {
         ids: [],
       };
     }
-    const wanted = String(seasonId);
     const seen = new Set();
     const ids = [];
     for (const row of data || []) {
-      if (String(row.season_id ?? "") !== wanted || !row.user_id) continue;
+      if (!wanted.has(String(row.season_id ?? "")) || !row.user_id) continue;
       if (seen.has(row.user_id)) continue;
       seen.add(row.user_id);
       ids.push(row.user_id);
@@ -865,6 +887,75 @@ export async function fetchActivatedMemberIdsForSeason(seasonId) {
     return { ok: true, ids };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", ids: [] };
+  }
+}
+
+/**
+ * Saison dans laquelle l'admin peut affecter une séance.
+ * Inscription acceptée d'une saison active (séance vivante ou archivée),
+ * sinon demande activated d'une saison active.
+ */
+export async function findAdminSeanceAssignmentSeason(memberId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", seasonId: null };
+  }
+  if (!memberId) {
+    return { ok: false, error: "معرّف العضو مفقود", seasonId: null };
+  }
+  try {
+    const seasonRes = await fetchSeasonDirectory();
+    if (!seasonRes.ok) {
+      return { ok: false, error: seasonRes.error, seasonId: null };
+    }
+    const active = (seasonRes.seasons || []).filter((season) => season.active);
+    if (active.length === 0) {
+      return { ok: true, seasonId: null, message: "لا يوجد موسم نشط" };
+    }
+    const activeIds = new Set(active.map((season) => String(season.id)));
+
+    const enroll = await getMemberActiveEnrollment(memberId);
+    if (!enroll.ok) {
+      return { ok: false, error: enroll.error, seasonId: null };
+    }
+    const enrolledSeasonId = enroll.season?.id ? String(enroll.season.id) : "";
+    if (enrolledSeasonId && activeIds.has(enrolledSeasonId)) {
+      return { ok: true, seasonId: enrolledSeasonId, message: null };
+    }
+
+    const { data, error } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("season_id, updated_at, created_at")
+        .eq("user_id", memberId)
+        .eq("status", "activated"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة طلب العضو"
+    );
+    if (error) {
+      logSupabaseError("findAdminSeanceAssignmentSeason", error);
+      return {
+        ok: false,
+        error: mapTableError(error, "member_applications"),
+        seasonId: null,
+      };
+    }
+    const match = (data || [])
+      .filter((row) => activeIds.has(String(row.season_id || "")))
+      .sort((a, b) => {
+        const ta = new Date(a.updated_at || a.created_at || 0).getTime();
+        const tb = new Date(b.updated_at || b.created_at || 0).getTime();
+        return tb - ta;
+      })[0];
+    if (match?.season_id) {
+      return { ok: true, seasonId: String(match.season_id), message: null };
+    }
+    return { ok: true, seasonId: null, message: "لا يوجد طلب تسجيل مقبول" };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e?.message || "تعذر الاتصال بـ Supabase",
+      seasonId: null,
+    };
   }
 }
 
