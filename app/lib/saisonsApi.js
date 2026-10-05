@@ -81,21 +81,6 @@ function rowToSeason(row) {
   };
 }
 
-function seasonToRow(season) {
-  return {
-    id: season.id,
-    name: season.name,
-    type: season.type || "regular",
-    start_date: season.startDate || null,
-    end_date: season.endDate || null,
-    version: season.version != null ? Number(season.version) : null,
-    registration_open: !!season.registrationOpen,
-    active: !!season.active,
-    remote: !!season.remote,
-    updated_at: new Date().toISOString(),
-  };
-}
-
 /** (Admin) Liste des musims, plus récents d'abord. */
 export async function fetchSaisons() {
   if (!isSupabaseConfigured()) {
@@ -150,63 +135,9 @@ export async function fetchSeasonDirectory() {
   }
 }
 
-/** (Admin) Création ou mise à jour d'un musim. */
-export async function upsertSaison(season) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل" };
-  }
-  if (!season?.id || !season?.name) {
-    return { ok: false, error: "بيانات الموسم غير مكتملة" };
-  }
-  try {
-    const { data, error } = await withTimeout(
-      supabase.from("saisons").upsert(seasonToRow(season)).select("*").single(),
-      SUPABASE_TIMEOUT_MS,
-      "حفظ الموسم"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "saisons") };
-    }
-    return { ok: true, season: rowToSeason(data) };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
-/** (Admin) Ferme les musims ordinaires donnés côté serveur. */
-export async function closeRegularSaisons(saisonIds = []) {
-  if (!isSupabaseConfigured()) {
-    return { ok: true, skipped: true };
-  }
-  const ids = [...new Set((saisonIds || []).filter(Boolean))];
-  if (ids.length === 0) {
-    return { ok: true };
-  }
-  try {
-    const { error } = await withTimeout(
-      supabase
-        .from("saisons")
-        .update({
-          active: false,
-          registration_open: false,
-          updated_at: new Date().toISOString(),
-        })
-        .in("id", ids)
-        .eq("type", "regular"),
-      SUPABASE_TIMEOUT_MS,
-      "إغلاق المواسم"
-    );
-    if (error) {
-      return { ok: false, error: mapTableError(error, "saisons") };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
-  }
-}
-
 /**
- * Hydrate les musims : priorité Supabase ; si vide, pousse le cache local.
+ * Hydrate les saisons depuis Supabase.
+ * Une réponse serveur, même vide, fait foi : le cache local n'est jamais réécrit en base.
  * @returns {{ ok, seasons }}
  */
 export async function syncSeasonsWithSupabase(localSeasons = []) {
@@ -217,14 +148,7 @@ export async function syncSeasonsWithSupabase(localSeasons = []) {
   if (!remote.ok) {
     return { ok: false, seasons: localSeasons, error: remote.error };
   }
-  if (remote.seasons.length > 0) {
-    return { ok: true, seasons: remote.seasons, source: "remote" };
-  }
-  if (localSeasons.length > 0) {
-    await Promise.all(localSeasons.map((s) => upsertSaison(s)));
-    return { ok: true, seasons: localSeasons, source: "pushed" };
-  }
-  return { ok: true, seasons: [], source: "empty" };
+  return { ok: true, seasons: remote.seasons || [], source: "remote" };
 }
 
 /** (Admin) Compteurs tableau de bord pour un musim donné. */

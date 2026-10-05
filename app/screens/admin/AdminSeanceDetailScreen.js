@@ -6,15 +6,22 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
+  I18nManager,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { rtlText, arrowBack, row } from "../../constants/rtl";
-import { formatSeanceScheduleLabel } from "../../lib/seancesApi";
+import { deleteSeance, formatSeanceScheduleLabel } from "../../lib/seancesApi";
+import { getSeanceMembers } from "../../lib/membersApi";
 import { displayProfileEmail } from "../../lib/authEmail";
 import { getSeancePresenceOverview } from "../../lib/presenceApi";
+import ProfileAvatar from "../../components/ProfileAvatar";
+
+/** Chevron replié : pointe vers la gauche en RTL. */
+const MEMBERS_CHEVRON = I18nManager.isRTL ? "chevron-back" : "chevron-forward";
 
 const palette = {
   primary: "#2E7D32",
@@ -27,6 +34,13 @@ const palette = {
   card: "#FFFFFF",
   muted: "#9E9E9E",
 };
+
+/** Libellé court du genre, aligné sur la carte séance. */
+function genreDisplayLabel(genre) {
+  if (genre === "أنثى") return "إناث";
+  if (genre === "ذكر") return "ذكور";
+  return "";
+}
 
 function formatDateDisplay(str) {
   if (!str) return "—";
@@ -83,9 +97,6 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
   const seance = route.params?.seance || null;
   const insets = useSafeAreaInsets();
 
-  const memberCount = (seance?.inscriptions || []).filter(
-    (i) => i.statut === "accepte"
-  ).length;
   const supervisor = seance?.superviseur || null;
   const supervisorName = supervisor
     ? `${supervisor.first_name || ""} ${supervisor.last_name || ""}`.trim() ||
@@ -96,6 +107,11 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(true);
+  const [membersError, setMembersError] = useState(null);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [overview, setOverview] = useState({
     presentCount: 0,
     absentCount: 0,
@@ -126,11 +142,74 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
     setLoading(false);
   }, [seance?.id]);
 
+  const loadMembers = useCallback(async () => {
+    if (!seance?.id) {
+      setMembers([]);
+      setMembersLoading(false);
+      return;
+    }
+    setMembersLoading(true);
+    setMembersError(null);
+    const res = await getSeanceMembers(seance.id);
+    if (!res.ok) {
+      setMembers([]);
+      setMembersError(res.error || "تعذّر تحميل الأعضاء");
+      setMembersLoading(false);
+      return;
+    }
+    setMembers(res.members || []);
+    setMembersLoading(false);
+  }, [seance?.id]);
+
   useFocusEffect(
     useCallback(() => {
       loadOverview();
-    }, [loadOverview])
+      loadMembers();
+    }, [loadOverview, loadMembers])
   );
+
+  const confirmDelete = () => {
+    const nom = seance?.nom || "الحصة";
+    Alert.alert("حذف الحصة", `هل أنت متأكد من حذف حصة «${nom}»؟ لا يمكن التراجع عن هذه العملية.`, [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "حذف",
+        style: "destructive",
+        onPress: async () => {
+          setDeleting(true);
+          const result = await deleteSeance(seance.id);
+          setDeleting(false);
+          if (!result.ok) {
+            Alert.alert("خطأ", result.error || "تعذر حذف الحصة");
+            return;
+          }
+          navigation.goBack();
+        },
+      },
+    ]);
+  };
+
+  const openMember = (member) => {
+    navigation.navigate("MemberProfile", {
+      memberId: member.userId,
+      seanceId: seance.id,
+      firstName: member.prenom,
+      lastName: member.nom,
+      avatarUrl: member.avatarUrl,
+      email: member.email,
+      phone: member.telephone,
+      school: member.ecole,
+      level: member.niveau,
+      hifzAmount: member.quantiteHifz,
+      gender: member.genre,
+      canEditSeance: true,
+      adminTheme: true,
+      viewerRole: "admin",
+    });
+  };
+
+  const hasMembers = members.length > 0;
+  const deleteBlocked = membersLoading || !!membersError || hasMembers;
 
   const markedTotal = overview.presentCount + overview.absentCount;
   const attendancePct =
@@ -186,28 +265,74 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
           <InfoRow icon="calendar-outline" label="اليوم" value={seance.jour} />
           <InfoRow icon="time-outline" label="التوقيت" value={schedule} />
           <InfoRow
-            icon="play-outline"
-            label="ساعة البداية"
-            value={
-              seance.heure_debut
-                ? String(seance.heure_debut).slice(0, 5)
-                : null
-            }
+            icon="male-female-outline"
+            label="الجنس"
+            value={genreDisplayLabel(seance.genre)}
           />
-          <InfoRow
-            icon="flag-outline"
-            label="ساعة النهاية"
-            value={
-              seance.heure_fin ? String(seance.heure_fin).slice(0, 5) : null
-            }
-          />
-          <InfoRow icon="male-female-outline" label="الجنس" value={seance.genre} />
           <InfoRow icon="person-outline" label="المشرف" value={supervisorName} />
-          <InfoRow
-            icon="people-outline"
-            label="عدد الأعضاء"
-            value={String(memberCount)}
-          />
+          <TouchableOpacity
+            style={styles.infoRow}
+            onPress={() => setMembersOpen((open) => !open)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: membersOpen }}
+            accessibilityLabel="عدد الأعضاء"
+          >
+            <View style={styles.infoIcon}>
+              <Ionicons name="people-outline" size={18} color={palette.primary} />
+            </View>
+            <View style={styles.infoTextWrap}>
+              <Text style={styles.infoLabel}>عدد الأعضاء</Text>
+              <Text style={styles.infoValue}>
+                {membersLoading ? "…" : String(members.length)}
+              </Text>
+            </View>
+            <Ionicons
+              name={membersOpen ? "chevron-up" : MEMBERS_CHEVRON}
+              size={18}
+              color={palette.muted}
+            />
+          </TouchableOpacity>
+          {membersError && !membersOpen ? (
+            <Text style={styles.errorText}>{membersError}</Text>
+          ) : null}
+          {membersOpen ? (
+            <View style={styles.membersList}>
+              {membersLoading ? (
+                <ActivityIndicator color={palette.primary} />
+              ) : membersError ? (
+                <Text style={styles.errorText}>{membersError}</Text>
+              ) : members.length === 0 ? (
+                <Text style={styles.membersEmpty}>
+                  لا يوجد أعضاء في هذه الحصة بعد
+                </Text>
+              ) : (
+                members.map((member) => {
+                  const fullName =
+                    `${member.prenom || ""} ${member.nom || ""}`.trim() ||
+                    "عضو";
+                  return (
+                    <TouchableOpacity
+                      key={member.userId}
+                      style={styles.memberRow}
+                      onPress={() => openMember(member)}
+                      accessibilityRole="button"
+                      accessibilityLabel={fullName}
+                    >
+                      <ProfileAvatar
+                        avatarUrl={member.avatarUrl}
+                        userId={member.userId}
+                        fallbackLetter={fullName}
+                        size={36}
+                        softBackgroundColor={palette.softGreen}
+                        letterColor={palette.primary}
+                      />
+                      <Text style={styles.memberName}>{fullName}</Text>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </View>
+          ) : null}
         </View>
 
         {loading ? (
@@ -265,6 +390,39 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
             )}
           </>
         )}
+
+        <TouchableOpacity
+          style={[styles.deleteBtn, deleteBlocked && styles.deleteBtnDisabled]}
+          onPress={confirmDelete}
+          disabled={deleteBlocked || deleting}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: deleteBlocked || deleting }}
+        >
+          {deleting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Ionicons
+                name="trash-outline"
+                size={18}
+                color={deleteBlocked ? palette.muted : "#fff"}
+              />
+              <Text
+                style={[
+                  styles.deleteBtnText,
+                  deleteBlocked && styles.deleteBtnTextDisabled,
+                ]}
+              >
+                حذف الحصة
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+        {hasMembers ? (
+          <Text style={styles.deleteHint}>
+            لا يمكن حذف حصة بها أعضاء — انقل الأعضاء إلى حصة أخرى أولاً
+          </Text>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -443,6 +601,59 @@ const styles = StyleSheet.create({
   errorText: {
     color: palette.red,
     textAlign: "center",
+    ...rtlText,
+  },
+  membersList: {
+    marginTop: 4,
+    paddingTop: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.border,
+  },
+  membersEmpty: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    paddingVertical: 10,
+    ...rtlText,
+  },
+  memberRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+  },
+  memberName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: palette.textPrimary,
+    ...rtlText,
+  },
+  deleteBtn: {
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: palette.red,
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginTop: 8,
+  },
+  deleteBtnDisabled: {
+    backgroundColor: "#EEEEEE",
+  },
+  deleteBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+    ...rtlText,
+  },
+  deleteBtnTextDisabled: {
+    color: palette.muted,
+  },
+  deleteHint: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    marginTop: 8,
     ...rtlText,
   },
 });

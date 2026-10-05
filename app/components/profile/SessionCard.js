@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { View, StyleSheet } from "react-native";
 import { colors, radii, shadows } from "../../constants/theme";
+import { formatSeanceScheduleLabel } from "../../lib/seancesApi";
 import ProfileFieldRow from "./ProfileFieldRow";
 import ProfileCardHeader from "./ProfileCardHeader";
 
@@ -27,14 +28,21 @@ export default function SessionCard({
   groupName,
   jour,
   heureDebut,
+  heureFin,
   groupSchedule,
   registrationDate,
   emptyText = "لم يتم تعيينك في حصة بعد",
 }) {
   const scheduleLabel = useMemo(() => {
-    if (jour || heureDebut) return formatSessionSchedule(jour, heureDebut);
+    if (jour || heureDebut || heureFin) {
+      return formatSeanceScheduleLabel({
+        jour,
+        heure_debut: heureDebut,
+        heure_fin: heureFin,
+      });
+    }
     return formatSessionSchedule(groupSchedule);
-  }, [jour, heureDebut, groupSchedule]);
+  }, [jour, heureDebut, heureFin, groupSchedule]);
 
   const registrationDateOnly = registrationDate
     ? String(registrationDate).slice(0, 10)

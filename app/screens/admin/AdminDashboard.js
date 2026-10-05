@@ -384,7 +384,7 @@ export default function AdminDashboard({ navigation }) {
         >
           <Menu size={24} color={colors.text} pointerEvents="none" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>لوحة التحكم</Text>
+        <Text style={styles.topBarTitle}>الرئيسية</Text>
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
