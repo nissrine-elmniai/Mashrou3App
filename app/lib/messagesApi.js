@@ -121,7 +121,9 @@ async function fetchMyAcceptedInscriptions(userId, { saisonIds = null } = {}) {
     if (error) {
       return { ok: false, error: mapTableError(error, "inscriptions") };
     }
-    const rows = (data || []).filter((row) => row?.seance);
+    const rows = (data || []).filter(
+      (row) => row?.seance && row.seance.statut !== "archivee"
+    );
     return { ok: true, rows };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

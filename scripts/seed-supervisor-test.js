@@ -96,7 +96,8 @@ async function getOrCreateSeance(saisonId, supervisorId) {
   if (existing) return existing;
 
   const { data, error } = await supabase.from('seances').insert({
-    nom: 'Groupe Test', jour: 'lundi', heure_debut: '18:00', heure_fin: '19:00',
+    // Lundi = JOUR_SEMAINE_VALUES[2] dans app/lib/seancesApi.js (« الاثنين »).
+    nom: 'Groupe Test', jour: 'الاثنين', heure_debut: '18:00', heure_fin: '19:00',
     saison_id: saisonId, superviseur_id: supervisorId, statut: 'active'
   }).select().single();
   if (error) throw error;

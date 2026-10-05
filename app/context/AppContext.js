@@ -52,13 +52,11 @@ import {
   findOpenSeasonRenewal,
 } from "../lib/memberApplicationsApi";
 import { updateMemberInfo } from "../lib/membersApi";
-import { sendAlert as sendRemoteAlert } from "../lib/alertsApi";
 import {
   fetchSaisons,
   parseSeasonStartDate,
   startNewSeasonRpc,
   syncSeasonsWithSupabase,
-  upsertSaison,
 } from "../lib/saisonsApi";
 import { snapshotBeforeNewSeason } from "../lib/seasonStatsApi";
 import { getActiveRegularSeason, isSeasonRegistrationAvailable } from "../lib/seasonScope";
@@ -200,7 +198,9 @@ function maybeRegisterSessionPush(userId, { requestPermission = false } = {}) {
 export function AppProvider({ children }) {
   const [hydrated, setHydrated] = useState(false);
   const [users, setUsers] = useState(emptyState.users);
-  const [seasons, setSeasons] = useState(emptyState.seasons);
+  const [seasons, setSeasons] = useState(
+    isSupabaseConfigured() ? [] : emptyState.seasons
+  );
   const [registrations, setRegistrations] = useState(emptyState.registrations);
   const [groups, setGroups] = useState(emptyState.groups);
   const [progress, setProgress] = useState(emptyState.progress);
@@ -225,7 +225,7 @@ export function AppProvider({ children }) {
       const saved = await loadAppState();
       const remoteMode = isSupabaseConfigured();
       let loadedUsers = remoteMode ? [] : bootstrapUsers;
-      let loadedSeasons = bootstrapSeasons;
+      let loadedSeasons = remoteMode ? [] : bootstrapSeasons;
       if (saved) {
         loadedUsers =
           Array.isArray(saved.users) && saved.users.length > 0
@@ -238,7 +238,9 @@ export function AppProvider({ children }) {
         loadedSeasons =
           Array.isArray(saved.seasons) && saved.seasons.length > 0
             ? saved.seasons
-            : bootstrapSeasons;
+            : remoteMode
+              ? []
+              : bootstrapSeasons;
         setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
         setRegistrations(saved.registrations || []);
@@ -268,12 +270,14 @@ export function AppProvider({ children }) {
         );
       }
 
+      let seasonsFromServer = false;
       if (isSupabaseConfigured()) {
         const seasonSync = await syncSeasonsWithSupabase(
           (loadedSeasons || []).map(withIsoSeasonDates)
         );
-        if (seasonSync.ok && seasonSync.seasons) {
+        if (seasonSync.ok && Array.isArray(seasonSync.seasons)) {
           setSeasons(uniqSeasonsById(seasonSync.seasons));
+          seasonsFromServer = true;
         }
       }
 
@@ -315,7 +319,9 @@ export function AppProvider({ children }) {
       }
 
       if (restored) setCurrentUser(restored);
-      skipNextSave.current = true;
+      // Réponse serveur : le prochain save écrase AsyncStorage (liste vide comprise).
+      // Sinon on ne réécrit pas le cache déjà chargé.
+      skipNextSave.current = !seasonsFromServer;
       setHydrated(true);
     })();
   }, []);
@@ -751,7 +757,7 @@ export function AppProvider({ children }) {
 
     pushNotification({
       title: "طلب انضمام جديد",
-      body: `طلب انضمام من ${name} — راجعه من طلبات الانضمام`,
+      body: `طلب انضمام من ${name} — راجعه من طلبات الانضمام والتسجيل`,
       audience: "admin",
       category: NOTIF_CATEGORY.REGISTRATIONS,
       saisonId: registration.seasonId || null,
@@ -818,89 +824,6 @@ export function AppProvider({ children }) {
       return { ok: false, error: "Supabase غير مفعّل" };
     }
     return confirmPasswordResetWithOtp(email, token, newPassword);
-  };
-
-  const persistDeactivatedSiblings = async (siblings) => {
-    const toClose = (siblings || []).filter(
-      (s) => s.active || s.registrationOpen
-    );
-    if (toClose.length === 0) return { ok: true };
-    const results = await Promise.all(
-      toClose.map((s) =>
-        upsertSaison({ ...s, active: false, registrationOpen: false })
-      )
-    );
-    const failed = results.find((r) => !r.ok);
-    if (failed) {
-      return {
-        ok: false,
-        error: failed.error || "تعذر إغلاق الموسم السابق",
-      };
-    }
-    return { ok: true };
-  };
-
-  const createSeason = async (payload) => {
-    const { openRegistration = false, activate = false, ...rest } = payload;
-    const season = {
-      id: uid("s"),
-      registrationOpen: !!openRegistration,
-      active: !!activate,
-      remote: rest.type === "summer" || !!rest.remote,
-      ...rest,
-    };
-
-    const previousSameType = activate
-      ? seasons.filter((s) => s.type === season.type && s.id !== season.id)
-      : [];
-    const previousSeasonsSnapshot = seasons;
-
-    setSeasons((prev) => {
-      let next = [...prev, season];
-      if (activate) {
-        next = next.map((s) =>
-          s.type === season.type
-            ? {
-                ...s,
-                active: s.id === season.id,
-                registrationOpen:
-                  s.id === season.id
-                    ? !!openRegistration
-                    : false,
-              }
-            : s
-        );
-      }
-      return uniqSeasonsById(next);
-    });
-
-    if (isSupabaseConfigured()) {
-      // Désactiver les sœurs AVANT d'activer (index unique saisons_one_active_per_type).
-      // Le trigger 0080 archive les séances ; pas d'archivage client ici.
-      if (activate) {
-        const closed = await persistDeactivatedSiblings(previousSameType);
-        if (!closed.ok) {
-          setSeasons(previousSeasonsSnapshot);
-          return { ok: false, error: closed.error };
-        }
-      }
-      const upsert = await upsertSaison(season);
-      if (!upsert.ok) {
-        setSeasons(previousSeasonsSnapshot);
-        return { ok: false, error: upsert.error || "تعذر حفظ الموسم" };
-      }
-    }
-
-    if (openRegistration) {
-      pushNotification({
-        title: "فتح باب التسجيل",
-        body: `تم فتح استمارة التسجيل: ${season.name}`,
-        audience: "members",
-        category: NOTIF_CATEGORY.REGISTRATION,
-        saisonId: season.id,
-      });
-    }
-    return { ok: true, season };
   };
 
   const startNewSeason = async ({ name, startDate, version, type }) => {
@@ -1032,148 +955,6 @@ export function AppProvider({ children }) {
     };
   };
 
-  const announceRegistrationForm = async (seasonId) => {
-    const season = seasons.find((s) => s.id === seasonId);
-    if (!season) return { ok: false, error: "الموسم غير موجود" };
-    if (season.type === SEASON_TYPES.REGULAR) {
-      return {
-        ok: false,
-        error: "تسجيل الموسم العادي يُفتح تلقائياً عند انطلاق موسم جديد",
-      };
-    }
-    const next = {
-      ...season,
-      registrationOpen: true,
-      active: true,
-    };
-    const previous = seasons;
-    const siblings = seasons.filter(
-      (s) => s.type === season.type && s.id !== seasonId
-    );
-    setSeasons((prev) =>
-      prev.map((s) => {
-        if (s.id === seasonId) {
-          return { ...s, registrationOpen: true, active: true };
-        }
-        if (s.type === season.type) {
-          return { ...s, active: false, registrationOpen: false };
-        }
-        return s;
-      })
-    );
-    if (isSupabaseConfigured()) {
-      // Sœurs d'abord (index unique) ; le trigger 0080 archive leurs séances.
-      const closed = await persistDeactivatedSiblings(siblings);
-      if (!closed.ok) {
-        setSeasons(previous);
-        return { ok: false, error: closed.error };
-      }
-      const upsert = await upsertSaison(next);
-      if (!upsert.ok) {
-        setSeasons(previous);
-        return { ok: false, error: upsert.error || "تعذر حفظ فتح التسجيل" };
-      }
-    }
-    const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
-    pushNotification({
-      title: "فتح باب التسجيل",
-      body: alertMessage,
-      audience: "members",
-      saisonId: season.id,
-      category: NOTIF_CATEGORY.REGISTRATION,
-    });
-    try {
-      await sendRemoteAlert(alertMessage, "members", { saisonId: season.id });
-    } catch {
-      /* alerte non bloquante */
-    }
-    return { ok: true, season: next };
-  };
-
-  const updateSeason = (seasonId, patch) => {
-    setSeasons((prev) =>
-      prev.map((s) => (s.id === seasonId ? { ...s, ...patch } : s))
-    );
-  };
-
-  const setRegistrationOpen = async (seasonId, open) => {
-    const season = seasons.find((s) => s.id === seasonId);
-    if (!season) return { ok: false, error: "الموسم غير موجود" };
-
-    if (open && !season.active) {
-      return {
-        ok: false,
-        error:
-          season.type === SEASON_TYPES.REGULAR
-            ? "افتح التسجيل عبر «انطلاق موسم جديد» فقط"
-            : "افتح التسجيل عبر «إعلان استمارة التسجيل» — الموسم غير نشط",
-      };
-    }
-
-    const next = { ...season, registrationOpen: !!open };
-    updateSeason(seasonId, { registrationOpen: !!open });
-    if (isSupabaseConfigured()) {
-      const upsert = await upsertSaison(next);
-      if (!upsert.ok) {
-        updateSeason(seasonId, { registrationOpen: season.registrationOpen });
-        return { ok: false, error: upsert.error || "تعذر حفظ حالة التسجيل" };
-      }
-    }
-
-    if (open) {
-      const alertMessage = `فُتح باب التسجيل للموسم «${season.name}». يرجى تعبئة استمارة التسجيل من تبويب «التسجيل».`;
-      pushNotification({
-        title: "فتح باب التسجيل",
-        body: alertMessage,
-        audience: "members",
-        saisonId: season.id,
-        category: NOTIF_CATEGORY.REGISTRATION,
-      });
-      try {
-        await sendRemoteAlert(alertMessage, "members", {
-          saisonId: season.id,
-        });
-      } catch {
-        /* alerte non bloquante */
-      }
-    }
-    return { ok: true, season: next };
-  };
-
-  const activateSeason = async (seasonId) => {
-    const target = seasons.find((s) => s.id === seasonId);
-    if (!target) return { ok: false, error: "الموسم غير موجود" };
-
-    const previous = seasons;
-    const siblings = seasons.filter(
-      (s) => s.type === target.type && s.id !== seasonId
-    );
-
-    setSeasons((prev) =>
-      prev.map((s) => {
-        if (s.type !== target.type) return s;
-        if (s.id === seasonId) return { ...s, active: true };
-        return { ...s, active: false, registrationOpen: false };
-      })
-    );
-
-    if (isSupabaseConfigured()) {
-      // Sœurs d'abord (index unique saisons_one_active_per_type).
-      // Le trigger 0080 archive leurs séances ; pas d'archivage client ici.
-      const closed = await persistDeactivatedSiblings(siblings);
-      if (!closed.ok) {
-        setSeasons(previous);
-        return { ok: false, error: closed.error };
-      }
-      const upsert = await upsertSaison({ ...target, active: true });
-      if (!upsert.ok) {
-        setSeasons(previous);
-        return { ok: false, error: upsert.error || "تعذر تفعيل الموسم" };
-      }
-    }
-    return { ok: true };
-  };
-
   const submitSeasonRegistration = async ({
     seasonId,
     freeTimes = [],
@@ -1294,7 +1075,7 @@ export function AppProvider({ children }) {
     setRegistrations((prev) => [...prev, registration]);
     pushNotification({
       title: "إعادة تسجيل موسم",
-      body: "وصل طلب إعادة تسجيل من عضو حالي — راجعه من طلبات التسجيل",
+      body: "وصل طلب إعادة تسجيل من عضو حالي — راجعه من طلبات الانضمام والتسجيل",
       audience: "admin",
       category: NOTIF_CATEGORY.REGISTRATIONS,
       saisonId: registration.seasonId || null,
@@ -2845,12 +2626,7 @@ export function AppProvider({ children }) {
     activateSupervisorAccount,
     resetPassword,
     confirmPasswordReset,
-    createSeason,
     startNewSeason,
-    updateSeason,
-    setRegistrationOpen,
-    activateSeason,
-    announceRegistrationForm,
     submitSeasonRegistration,
     refreshRegistrations,
     reviewRegistration,

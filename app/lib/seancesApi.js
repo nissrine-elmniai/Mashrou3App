@@ -114,7 +114,7 @@ export async function getActiveSeancesByGenre(genre, saisonId = null) {
       .select("id, nom, jour, heure_debut, heure_fin, genre, statut, saison_id")
       .eq("statut", "active");
     if (saisonId) {
-      query = query.or(`saison_id.eq.${saisonId},saison_id.is.null`);
+      query = query.eq("saison_id", saisonId);
     }
     const { data, error } = await withTimeout(
       query,
@@ -348,31 +348,10 @@ function normalizePgDate(value) {
   return `${y}-${m}-${d}`;
 }
 
-function normalizeTimeValue(value) {
-  if (value == null || value === "") return null;
-  return String(value).slice(0, 5);
-}
-
-function planningFieldChanged(current, patch, field) {
-  if (patch[field] === undefined) return false;
-  if (field === "heure_debut" || field === "heure_fin") {
-    return normalizeTimeValue(current?.[field]) !== normalizeTimeValue(patch[field]);
-  }
-  return (current?.[field] ?? null) !== (patch[field] ?? null);
-}
-
-function hasPlanningChange(current, patch) {
-  return (
-    planningFieldChanged(current, patch, "jour") ||
-    planningFieldChanged(current, patch, "heure_debut") ||
-    planningFieldChanged(current, patch, "heure_fin")
-  );
-}
-
 /**
  * (Admin) Mise à jour d'une séance.
- * Si jour/heure_debut/heure_fin changent : archive l'ancienne période dans
- * seance_planning_history avant d'écraser, puis planning_valide_depuis = now().
+ * Historique des horaires écrit côté serveur par le trigger
+ * seances_record_planning_history (0117) — ne pas le réécrire ici.
  * @param {object} payload { seanceId, patch: { nom?, saison_id?, jour?, heure_debut?, heure_fin?, superviseur_id?, statut? } }
  * @returns { ok, seance? }
  */
@@ -456,53 +435,10 @@ export async function updateSeance({ seanceId, patch }) {
   }
 
   try {
-    const { data: current, error: fetchError } = await withTimeout(
-      supabase
-        .from("seances")
-        .select("jour, heure_debut, heure_fin, planning_valide_depuis, created_at")
-        .eq("id", seanceId)
-        .single(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة الحصة"
-    );
-
-    if (fetchError) {
-      return { ok: false, error: mapTableError(fetchError, "seances") };
-    }
-    if (!current) {
-      return { ok: false, error: "الحصة غير موجودة" };
-    }
-
     const now = new Date().toISOString();
+    // Historique des horaires écrit côté serveur par le trigger
+    // seances_record_planning_history (0117) — ne pas le réécrire ici.
     const updatePayload = { ...clean, updated_at: now };
-
-    if (hasPlanningChange(current, clean)) {
-      const archiveRow = {
-        seance_id: seanceId,
-        jour: current.jour ?? null,
-        heure_debut: current.heure_debut ?? null,
-        heure_fin: current.heure_fin ?? null,
-        valide_depuis: current.planning_valide_depuis || current.created_at || now,
-        valide_jusqu_a: now,
-      };
-
-      const { error: archiveError } = await withTimeout(
-        supabase.from("seance_planning_history").insert(archiveRow),
-        SUPABASE_TIMEOUT_MS,
-        "أرشفة جدول الحصة"
-      );
-
-      if (archiveError) {
-        // Ne bloque pas la mise à jour de la séance : table absente / grants
-        // manquants / RLS — le planning est quand même mis à jour.
-        console.warn(
-          "[seancesApi] archive planning history échouée — mise à jour sans historique:",
-          archiveError.message || archiveError
-        );
-      } else {
-        updatePayload.planning_valide_depuis = now;
-      }
-    }
 
     const { data, error } = await withTimeout(
       supabase
@@ -692,35 +628,32 @@ export async function assignOrSwapSeanceSuperviseur(seanceId, superviseurId) {
 }
 
 /**
- * (Admin) Archivage d'une séance : statut -> 'archivee' (pas de suppression
- * dure : l'historique des inscriptions/tests/progression est conservé).
- * @param {string} seanceId
- * @returns { ok, seance? }
+ * (Admin) Suppression d'une séance.
+ * Le trigger 0120 refuse (P0001) s'il reste une inscription acceptée.
+ * @returns {{ ok: boolean, error?: string }}
  */
-export async function archiveSeance(seanceId) {
-  return updateSeance({ seanceId, patch: { statut: "archivee" } });
-}
-
-/** (Admin) Archive toutes les séances actives des musims donnés (fin de musim). */
-export async function archiveSeancesForSaisonIds(saisonIds = []) {
+export async function deleteSeance(seanceId) {
   if (!isSupabaseConfigured()) {
-    return { ok: true, skipped: true };
+    return { ok: false, error: "Supabase غير مفعّل" };
   }
-  const ids = [...new Set((saisonIds || []).filter(Boolean))];
-  if (ids.length === 0) {
-    return { ok: true };
+  if (!seanceId) {
+    return { ok: false, error: "معرّف الحصة مفقود" };
   }
   try {
     const { error } = await withTimeout(
-      supabase
-        .from("seances")
-        .update({ statut: "archivee", updated_at: new Date().toISOString() })
-        .in("saison_id", ids)
-        .eq("statut", "active"),
+      supabase.from("seances").delete().eq("id", seanceId),
       SUPABASE_TIMEOUT_MS,
-      "أرشفة حصص الموسم السابق"
+      "حذف الحصة"
     );
     if (error) {
+      if (String(error.code || "") === "P0001") {
+        return {
+          ok: false,
+          error:
+            error.message ||
+            "لا يمكن حذف حصة بها أعضاء — انقل الأعضاء إلى حصة أخرى أولاً",
+        };
+      }
       return { ok: false, error: mapTableError(error, "seances") };
     }
     return { ok: true };

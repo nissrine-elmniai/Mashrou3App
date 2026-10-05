@@ -57,7 +57,7 @@ const MENU_ITEMS = [
   { id: "supervisors", label: "المشرفون", icon: UserCog },
   { id: "members", label: "الأعضاء", icon: Users },
   { id: "newSeason", label: "انطلاق موسم جديد", icon: CalendarPlus },
-  { id: "registrations", label: "طلبات الانضمام", icon: FileText },
+  { id: "registrations", label: "طلبات الانضمام والتسجيل", icon: FileText },
   { id: "sessions", label: "الحصص", icon: Calendar },
   { id: "tests", label: "الاختبارات", icon: ClipboardList },
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
@@ -232,6 +232,8 @@ export function AdminSidebar({
                       sbStyles.menuItemText,
                       isActive && sbStyles.menuItemTextActive,
                     ]}
+                    numberOfLines={2}
+                    ellipsizeMode="tail"
                   >
                     {item.label}
                   </Text>

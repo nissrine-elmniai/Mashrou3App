@@ -341,7 +341,7 @@ export async function getPendingSupervisorInvitation(email) {
 }
 
 const SEANCE_REASSIGN_HINT =
-  "عيّن مشرفاً آخر من صفحة المواسم، ثم أعد الحذف.";
+  "عيّن مشرفاً آخر من صفحة الحصص، ثم أعد الحذف.";
 
 function mapDeleteAccountError(raw) {
   const msg = String(raw || "");

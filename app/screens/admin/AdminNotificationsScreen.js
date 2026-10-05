@@ -161,7 +161,7 @@ export default function AdminNotificationsScreen({ navigation }) {
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="طلبات التسجيل"
+          accessibilityLabel="طلبات الانضمام والتسجيل"
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
         </TouchableOpacity>

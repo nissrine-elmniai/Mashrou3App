@@ -23,7 +23,10 @@ import {
   getActiveSeancesByGenre,
   formatSeanceScheduleLabel,
 } from "../lib/seancesApi";
-import { getActiveRegularSeason } from "../lib/seasonScope";
+import {
+  getActiveRegularSeason,
+  isSeasonRegistrationAvailable,
+} from "../lib/seasonScope";
 import { parseObjectifInput } from "../lib/objectifsApi";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
@@ -37,6 +40,15 @@ const YES_NO_OPTIONS = [
   { value: "نعم", label: "نعم" },
   { value: "لا", label: "لا" },
 ];
+
+/** Saison écrite dans member_applications.season_id pour une adhésion. */
+function joinSeasonId(seasons) {
+  const open = (seasons || []).filter((season) =>
+    isSeasonRegistrationAvailable(season)
+  );
+  if (open.length === 1) return open[0].id;
+  return getActiveRegularSeason(seasons)?.id || null;
+}
 
 const EMPTY_FORM = {
   fullName: "",
@@ -123,13 +135,10 @@ export default function RegisterScreen({ navigation }) {
       return undefined;
     }
     let cancelled = false;
-    const activeSeason = getActiveRegularSeason(seasons);
+    const seasonId = joinSeasonId(seasons);
     const load = async () => {
       setSeancesLoading(true);
-      const res = await getActiveSeancesByGenre(
-        form.gender,
-        activeSeason?.id || null
-      );
+      const res = await getActiveSeancesByGenre(form.gender, seasonId);
       if (!cancelled) {
         if (res.ok) setAvailableSeances(res.seances || []);
         else setAvailableSeances([]);
@@ -186,7 +195,7 @@ export default function RegisterScreen({ navigation }) {
       seanceName: selectedSeance
         ? formatSeanceScheduleLabel(selectedSeance)
         : "",
-      seasonId: getActiveRegularSeason(seasons)?.id || null,
+      seasonId: joinSeasonId(seasons),
       formAnswers,
     };
   };

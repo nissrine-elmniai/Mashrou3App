@@ -159,6 +159,7 @@ export default function MemberProfileScreen({ navigation }) {
       groupName: seance?.nom || null,
       jour: seance?.jour || null,
       heureDebut: seance?.heure_debut || null,
+      heureFin: seance?.heure_fin || null,
       seanceId,
       saisonId,
       registrationDate: inscription?.dateInscription || null,
@@ -302,6 +303,7 @@ export default function MemberProfileScreen({ navigation }) {
             groupName={sessionState.groupName}
             jour={sessionState.jour}
             heureDebut={sessionState.heureDebut}
+            heureFin={sessionState.heureFin}
             registrationDate={sessionState.registrationDate}
           />
 

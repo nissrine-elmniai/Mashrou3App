@@ -313,14 +313,12 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>
-          {isSummer
-            ? "طلبات التسجيل الصيفي"
-            : kindFilter === REGISTRATION_KIND.JOIN
-              ? "طلبات الانضمام"
-              : kindFilter === REGISTRATION_KIND.SEASON_RENEWAL
-                ? "إعادة تسجيل الموسم"
-                : "طلبات التسجيل"}
+        <Text
+          style={styles.topBarTitle}
+          numberOfLines={2}
+          ellipsizeMode="tail"
+        >
+          طلبات الانضمام والتسجيل
         </Text>
         <AdminTopBarAvatar
           currentUser={currentUser}
@@ -591,9 +589,10 @@ const styles = StyleSheet.create({
   },
   topBarTitle: {
     flex: 1,
+    flexShrink: 1,
     fontWeight: "bold",
     color: palette.textPrimary,
-    fontSize: 16,
+    fontSize: 15,
     ...rtlText,
   },
   topBarAvatar: {

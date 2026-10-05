@@ -17,21 +17,20 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
-import { Menu, Bell, Plus, X, SquarePen, Trash2 } from "lucide-react-native";
+import { Menu, Bell, Plus, X, SquarePen, Users } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import {
-  getActiveRegularSeason,
   filterSeancesForSeason,
   supervisorIdsForSeason,
 } from "../../lib/seasonScope";
+import { SEASON_TYPES, SEASON_TYPE_LABELS } from "../../constants/roles";
 import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
 import { displayProfileEmail } from "../../lib/authEmail";
 import {
   getAllSeances,
   createSeance,
   updateSeance,
-  archiveSeance,
   findOccupiedSeanceForSuperviseur,
   getAssignableSupervisors,
   excludeDuplicateSupervisorAccounts,
@@ -40,9 +39,13 @@ import {
   normalizePgTime,
 } from "../../lib/seancesApi";
 import { GENDER_OPTIONS } from "../../constants/roles";
-import { colors } from "../../constants/theme";
+import { colors, radii } from "../../constants/theme";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
+
+/** Chips genre : le thème n'a pas de rose, ni de bleu doux apparié à un texte foncé. */
+const GENRE_FEMALE_CHIP = { background: "#FDE8EF", text: "#9D174D" };
+const GENRE_MALE_CHIP = { background: "#E8F1FE", text: "#1D4ED8" };
 
 const palette = {
   primary: "#2E7D32",
@@ -94,11 +97,8 @@ function seasonDateToStorage(value) {
   return String(value).trim().replace(/\//g, "-").slice(0, 10);
 }
 
-function confirmSuperviseurSwap({ nomB, seanceAHasSuperviseur }) {
-  let message = `هذا المشرف مكلف حالياً بحصة «${nomB}». هل تريد تبديل المشرفين بين الحصتين؟`;
-  if (!seanceAHasSuperviseur) {
-    message += ` ستبقى حصة «${nomB}» بدون مشرف.`;
-  }
+function confirmSuperviseurSwap({ nomB }) {
+  const message = `هذا المشرف مكلف حالياً بحصة «${nomB}». هل تريد تبديل المشرفين بين الحصتين؟`;
   return new Promise((resolve) => {
     Alert.alert(
       "تبديل المشرفين",
@@ -110,6 +110,13 @@ function confirmSuperviseurSwap({ nomB, seanceAHasSuperviseur }) {
       { cancelable: true, onDismiss: () => resolve(false) }
     );
   });
+}
+
+/** Affichage court du genre, sans le préfixe « الجنس ». */
+function genreLineLabel(genre) {
+  if (genre === "أنثى") return "إناث";
+  if (genre === "ذكر") return "ذكور";
+  return "";
 }
 
 function cardSupervisor(profile) {
@@ -129,10 +136,38 @@ function cardSupervisor(profile) {
 export default function AdminSeasonsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "sessions");
   const { currentUser, stats, seasons } = useApp();
-  const activeSeason = getActiveRegularSeason(seasons);
+  const activeSeasons = useMemo(() => {
+    const list = (seasons || []).filter((season) => season?.active);
+    return [...list].sort((a, b) => {
+      const rank = (season) =>
+        season?.type === SEASON_TYPES.REGULAR
+          ? 0
+          : season?.type === SEASON_TYPES.SUMMER
+            ? 1
+            : 2;
+      return rank(a) - rank(b);
+    });
+  }, [seasons]);
+  const defaultSeasonId = useMemo(() => {
+    const regular = activeSeasons.find(
+      (season) => season.type === SEASON_TYPES.REGULAR
+    );
+    return regular?.id || activeSeasons[0]?.id || null;
+  }, [activeSeasons]);
+  const [selectedSeasonId, setSelectedSeasonId] = useState(null);
+  const activeSeason =
+    activeSeasons.find((season) => season.id === selectedSeasonId) ||
+    activeSeasons.find((season) => season.id === defaultSeasonId) ||
+    null;
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
   const fabBottom = Math.max(insets.bottom, 16) + 16;
+
+  useEffect(() => {
+    if (!activeSeasons.some((season) => season.id === selectedSeasonId)) {
+      setSelectedSeasonId(defaultSeasonId);
+    }
+  }, [activeSeasons, selectedSeasonId, defaultSeasonId]);
 
   const [seances, setSeances] = useState([]);
   const [supervisors, setSupervisors] = useState([]);
@@ -160,7 +195,9 @@ export default function AdminSeasonsScreen({ navigation }) {
     ]);
     if (seancesRes.ok) {
       const scoped = activeSeason?.id
-        ? filterSeancesForSeason(seancesRes.seances, activeSeason.id)
+        ? filterSeancesForSeason(seancesRes.seances, activeSeason.id).filter(
+            (seance) => seance.statut === "active"
+          )
         : [];
       setSeances(sortSeancesByJour(scoped));
     } else if (!silent) {
@@ -267,7 +304,7 @@ export default function AdminSeasonsScreen({ navigation }) {
       return;
     }
     if (!activeSeason?.id) {
-      Alert.alert("تنبيه", "أنشئ موسماً جديداً أولاً من لوحة التحكم");
+      Alert.alert("تنبيه", "أنشئ موسماً جديداً أولاً");
       return;
     }
 
@@ -297,10 +334,7 @@ export default function AdminSeasonsScreen({ navigation }) {
           );
           return;
         }
-        const accepted = await confirmSuperviseurSwap({
-          nomB,
-          seanceAHasSuperviseur: Boolean(current?.superviseur_id),
-        });
+        const accepted = await confirmSuperviseurSwap({ nomB });
         if (!accepted) return;
         swapPartner = occupiedRes.seance;
       }
@@ -398,38 +432,6 @@ export default function AdminSeasonsScreen({ navigation }) {
 
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const confirmArchive = (seance) => {
-    const sup = seance.superviseur || null;
-    const supName = sup
-      ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() ||
-        displayProfileEmail(sup)
-      : "";
-    const message = supName
-      ? `هذه الحصة مسندة حالياً إلى المشرف ${supName}. حذف الحصة سيُحرّر هذا المشرف ويمكن تعيينه لحصة أخرى. حسابه يبقى. الأعضاء والمجموعة والحضور والتقدم يبقون في أرشيف هذا الموسم. هل تريد المتابعة؟`
-      : `هل تريد حذف حصة «${seance.nom || "الحصة"}»؟ ستُؤرشف في هذا الموسم دون مسح الأعضاء أو السجل.`;
-    Alert.alert("حذف الحصة", message, [
-      { text: "إلغاء", style: "cancel" },
-      {
-        text: "حذف الحصة",
-        style: "destructive",
-        onPress: async () => {
-          const result = await archiveSeance(seance.id);
-          if (!result.ok) {
-            Alert.alert("خطأ", result.error || "تعذر أرشفة الحصة");
-            return;
-          }
-          Alert.alert(
-            "تمت الأرشفة",
-            supName
-              ? `أُرشفت الحصة وأصبح المشرف ${supName} متاحاً لحصة أخرى.`
-              : "أُرشفت الحصة. سجلّها بقي في هذا الموسم."
-          );
-          loadAll({ silent: true });
-        },
-      },
-    ]);
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
       <View style={styles.topBar}>
@@ -456,7 +458,7 @@ export default function AdminSeasonsScreen({ navigation }) {
           onPress={() => navigation.navigate("AdminRegistrations")}
           hitSlop={12}
           accessibilityRole="button"
-          accessibilityLabel="طلبات التسجيل"
+          accessibilityLabel="طلبات الانضمام والتسجيل"
         >
           <Bell size={24} color={palette.textSecondary} pointerEvents="none" />
         </TouchableOpacity>
@@ -470,12 +472,42 @@ export default function AdminSeasonsScreen({ navigation }) {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        {activeSeasons.length > 1 ? (
+          <View style={styles.seasonChipsRow}>
+            {activeSeasons.map((season) => {
+              const selected = season.id === activeSeason?.id;
+              const label =
+                SEASON_TYPE_LABELS[season.type] || season.name || season.type;
+              return (
+                <TouchableOpacity
+                  key={season.id}
+                  style={[
+                    styles.seasonChip,
+                    selected && styles.seasonChipActive,
+                  ]}
+                  onPress={() => setSelectedSeasonId(season.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                >
+                  <Text
+                    style={[
+                      styles.seasonChipText,
+                      selected && styles.seasonChipTextActive,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
         ) : !activeSeason ? (
-          <Text style={styles.emptyText}>أنشئ موسماً جديداً لإضافة الحصص</Text>
+          <Text style={styles.emptyText}>أنشئ موسماً جديداً أولاً</Text>
         ) : seances.length === 0 ? (
           <Text style={styles.emptyText}>
             لا توجد حصص لهذا الموسم — أضف حصة أولاً
@@ -490,14 +522,11 @@ export default function AdminSeasonsScreen({ navigation }) {
               ? `${sup.first_name || ""} ${sup.last_name || ""}`.trim() ||
                 displayProfileEmail(sup)
               : "";
-            const archived = seance.statut === "archivee";
+            const genreLabel = genreLineLabel(seance.genre);
             return (
               <TouchableOpacity
                 key={seance.id}
-                style={[
-                  styles.card,
-                  archived && { borderRightColor: palette.placeholder },
-                ]}
+                style={styles.card}
                 activeOpacity={0.85}
                 onPress={() =>
                   navigation.navigate("AdminSeanceDetail", { seance })
@@ -508,17 +537,6 @@ export default function AdminSeasonsScreen({ navigation }) {
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardTitle}>{seance.nom}</Text>
-                    <View style={styles.cardBadges}>
-                      {archived ? (
-                        <View style={styles.badgeArchived}>
-                          <Text style={styles.badgeArchivedText}>مؤرشفة</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.badgeActive}>
-                          <Text style={styles.badgeActiveText}>نشطة</Text>
-                        </View>
-                      )}
-                    </View>
                   </View>
                   <View style={styles.cardActions}>
                     <TouchableOpacity
@@ -527,13 +545,6 @@ export default function AdminSeasonsScreen({ navigation }) {
                       accessibilityLabel="تعديل الحصة"
                     >
                       <SquarePen size={18} color={palette.textSecondary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionBtn, styles.deleteBtn]}
-                      onPress={() => confirmArchive(seance)}
-                      accessibilityLabel="حذف الحصة"
-                    >
-                      <Trash2 size={18} color={palette.red} />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -546,19 +557,41 @@ export default function AdminSeasonsScreen({ navigation }) {
                 ) : null}
                 {seance.heure_debut || seance.heure_fin ? (
                   <Text style={styles.cardSup}>
-                    الوقت: {formatTimeDisplay(seance.heure_debut) || "—"} –{" "}
+                    التوقيت: {formatTimeDisplay(seance.heure_debut) || "—"} –{" "}
                     {formatTimeDisplay(seance.heure_fin) || "—"}
                   </Text>
                 ) : null}
-                {seance.genre ? (
-                  <Text style={styles.cardSup}>الجنس: {seance.genre}</Text>
-                ) : null}
-
                 <View style={styles.badgesRow}>
+                  {genreLabel ? (
+                    <View
+                      style={[
+                        styles.genreChip,
+                        {
+                          backgroundColor:
+                            seance.genre === "أنثى"
+                              ? GENRE_FEMALE_CHIP.background
+                              : GENRE_MALE_CHIP.background,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.genreChipText,
+                          {
+                            color:
+                              seance.genre === "أنثى"
+                                ? GENRE_FEMALE_CHIP.text
+                                : GENRE_MALE_CHIP.text,
+                          },
+                        ]}
+                      >
+                        {genreLabel}
+                      </Text>
+                    </View>
+                  ) : null}
                   <View style={styles.badgeMember}>
-                    <Text style={styles.badgeMemberText}>
-                      👥 {memberCount} عضو
-                    </Text>
+                    <Users size={14} color={colors.primary} />
+                    <Text style={styles.badgeMemberText}>{memberCount} عضو</Text>
                   </View>
                   <Ionicons
                     name={arrowForward}
@@ -867,6 +900,32 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
   },
+  seasonChipsRow: {
+    flexDirection: row,
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  seasonChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  seasonChipActive: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
+  },
+  seasonChipText: {
+    ...rtlText,
+    color: palette.textPrimary,
+    fontWeight: "600",
+  },
+  seasonChipTextActive: {
+    color: "#fff",
+  },
   emptyText: {
     ...rtlText,
     color: palette.textSecondary,
@@ -904,36 +963,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     ...rtlText,
   },
-  cardBadges: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6,
-  },
-  badgeActive: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    backgroundColor: palette.softGreen,
-    borderRadius: 10,
-  },
-  badgeActiveText: {
-    color: palette.primary,
-    fontSize: 11,
-    fontWeight: "600",
-    ...rtlText,
-  },
-  badgeArchived: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    backgroundColor: "#EEEEEE",
-    borderRadius: 10,
-  },
-  badgeArchivedText: {
-    color: palette.placeholder,
-    fontSize: 11,
-    fontWeight: "600",
-    ...rtlText,
-  },
   cardActions: {
     flexDirection: row,
     gap: 8,
@@ -945,9 +974,6 @@ const styles = StyleSheet.create({
   editBtn: {
     backgroundColor: "#F5F5F5",
   },
-  deleteBtn: {
-    backgroundColor: "#FFEBEE",
-  },
   cardSup: {
     color: palette.textSecondary,
     fontSize: 13,
@@ -956,16 +982,29 @@ const styles = StyleSheet.create({
   },
   badgesRow: {
     flexDirection: row,
+    alignItems: "center",
     gap: 8,
   },
+  genreChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: radii.pill,
+  },
+  genreChipText: {
+    fontSize: 13,
+    ...rtlText,
+  },
   badgeMember: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: "#E3F2FD",
-    borderRadius: 12,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radii.pill,
   },
   badgeMemberText: {
-    color: palette.blue,
+    color: colors.primary,
     fontSize: 12,
     ...rtlText,
   },
