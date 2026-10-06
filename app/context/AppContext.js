@@ -58,7 +58,6 @@ import {
   startNewSeasonRpc,
   syncSeasonsWithSupabase,
 } from "../lib/saisonsApi";
-import { snapshotBeforeNewSeason } from "../lib/seasonStatsApi";
 import { getActiveRegularSeason, isSeasonRegistrationAvailable } from "../lib/seasonScope";
 import { getPendingSupervisorInvitation, deleteSupervisorAccount } from "../lib/supervisorInvitationsApi";
 import { canonicalEmail } from "../lib/authEmail";
@@ -853,15 +852,7 @@ export function AppProvider({ children }) {
       return { ok: false, error: "Supabase غير مفعّل" };
     }
 
-    // Rien n'est supprimé si le snapshot échoue.
-    const snapRes = await snapshotBeforeNewSeason();
-    if (!snapRes.ok && !snapRes.skipped) {
-      return {
-        ok: false,
-        error: snapRes.error || "تعذر حفظ إحصائيات الموسم السابق",
-      };
-    }
-
+    // Le snapshot v2 est calculé dans la transaction de start_new_season.
     const rpcRes = await startNewSeasonRpc({
       name: seasonName,
       startDate: start,
@@ -2562,44 +2553,8 @@ export function AppProvider({ children }) {
         r.status === REGISTRATION_STATUS.PENDING &&
         (!activeSeason || !r.seasonId || r.seasonId === activeSeason.id)
     ).length;
-    const members = users.filter(
-      (u) =>
-        userHasRole(u, ROLES.MEMBER) &&
-        u.accountStatus !== ACCOUNT_STATUS.INVITED
-    ).length;
-    const supervisors = users.filter((u) =>
-      userHasRole(u, ROLES.SUPERVISOR)
-    ).length;
-    const groupsForSeason = activeSeason
-      ? groups.filter((g) => g.seasonId === activeSeason.id)
-      : groups;
-    const avgProgress =
-      progress.length === 0
-        ? 0
-        : Math.round(
-            progress.reduce(
-              (sum, p) =>
-                sum +
-                Math.min(
-                  100,
-                  Math.round(
-                    ((p.hifzPages || 0) / (p.targetPages || 1)) * 100
-                  )
-                ),
-              0
-            ) / progress.length
-          );
-    return {
-      pendingRegs,
-      members,
-      supervisors,
-      groups: groupsForSeason.length,
-      seasons: seasons.length,
-      avgProgress,
-      exams: exams.length,
-      activeSeasonId: activeSeason?.id || null,
-    };
-  }, [registrations, users, progress, groups, seasons, exams]);
+    return { pendingRegs };
+  }, [registrations, seasons]);
 
   const value = {
     hydrated,

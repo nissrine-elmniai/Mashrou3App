@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -209,13 +210,65 @@ function buildRecentActivities({
     }));
 }
 
-function DashboardHome({ navigation, stats, activities }) {
+function DashboardHome({ navigation, stats, activities, loading, error, onRetry, noSeason }) {
+  if (loading) {
+    return (
+      <View style={dhStyles.stateBox}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={dhStyles.stateText}>جاري تحميل الإحصائيات…</Text>
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View style={dhStyles.stateBox}>
+        <Text style={dhStyles.errorText}>{error}</Text>
+        <TouchableOpacity style={dhStyles.retryBtn} onPress={onRetry}>
+          <Text style={dhStyles.retryText}>إعادة المحاولة</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  if (noSeason) {
+    return (
+      <View style={dhStyles.wrapper}>
+        <Text style={dhStyles.activityEmpty}>لا يوجد موسم نشط</Text>
+        <View style={dhStyles.secondaryItem}>
+          <Text style={dhStyles.secondaryValue}>—</Text>
+          <Text style={dhStyles.secondaryLabel}>الاختبارات</Text>
+        </View>
+        <View style={dhStyles.actionsRow}>
+          {QUICK_ACTIONS.map((action) => {
+            const Icon = action.icon;
+            return (
+              <TouchableOpacity
+                key={action.key}
+                style={dhStyles.actionBtn}
+                onPress={() => navigation.navigate(action.route, action.params)}
+                activeOpacity={0.85}
+              >
+                <Icon size={20} color={colors.gold} pointerEvents="none" />
+                <Text style={dhStyles.actionLabel} numberOfLines={2}>
+                  {action.shortLabel}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    );
+  }
+
   const members = stats?.members ?? 0;
   // Hero = membres du saison. 1 → عضو مسجّل, sinon → أعضاء مسجّلون.
   const secondaryStats = [
     { key: "supervisors", label: "المشرفون", value: stats?.supervisors ?? 0 },
     { key: "seances", label: "الحصص", value: stats?.seances ?? 0 },
-    { key: "exams", label: "الاختبارات", value: stats?.exams ?? 0 },
+    {
+      key: "exams",
+      label: "الاختبارات",
+      value: stats?.exams == null ? "—" : stats.exams,
+    },
   ];
 
   return (
@@ -298,46 +351,54 @@ export default function AdminDashboard({ navigation }) {
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
   const activeSeason = getActiveRegularSeason(seasons);
-  const [seasonStats, setSeasonStats] = useState({
-    members: 0,
-    supervisors: 0,
-    seances: 0,
-  });
-  const [examCount, setExamCount] = useState(0);
+  const [seasonStats, setSeasonStats] = useState(null);
+  const [examCount, setExamCount] = useState(null);
   const [recentExams, setRecentExams] = useState([]);
+  const [dashLoading, setDashLoading] = useState(true);
+  const [dashError, setDashError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
+        setDashLoading(true);
+        setDashError(null);
         if (!activeSeason?.id) {
           if (!cancelled) {
-            setSeasonStats({ members: 0, supervisors: 0, seances: 0 });
+            setSeasonStats(null);
+            setExamCount(null);
+            setRecentExams([]);
+            setDashLoading(false);
           }
-        } else {
-          const res = await getSeasonDashboardStats(activeSeason.id);
-          if (!cancelled && res.ok) {
-            setSeasonStats({
-              members: res.members,
-              supervisors: res.supervisors,
-              seances: res.seances,
-            });
-          }
+          return;
         }
-        const [countRes, listRes] = await Promise.all([
-          countTestsAdmin(),
+        const [res, countRes, listRes] = await Promise.all([
+          getSeasonDashboardStats(activeSeason.id),
+          countTestsAdmin(null, activeSeason.id),
           listRecentTestsAdmin(8),
         ]);
         if (cancelled) return;
-        if (countRes.ok) setExamCount(countRes.count || 0);
-        if (listRes.ok) {
-          setRecentExams((listRes.tests || []).map(mapTestToDashboardExam));
+        if (!res.ok || !countRes.ok || !listRes.ok) {
+          setDashError(
+            res.error || countRes.error || listRes.error || "تعذر تحميل البيانات"
+          );
+          setDashLoading(false);
+          return;
         }
+        setSeasonStats({
+          members: res.members,
+          supervisors: res.supervisors,
+          seances: res.seances,
+        });
+        setExamCount(countRes.count ?? 0);
+        setRecentExams((listRes.tests || []).map(mapTestToDashboardExam));
+        setDashLoading(false);
       })();
       return () => {
         cancelled = true;
       };
-    }, [activeSeason?.id])
+    }, [activeSeason?.id, reloadKey])
   );
 
   const pendingRegs = useMemo(
@@ -351,10 +412,10 @@ export default function AdminDashboard({ navigation }) {
   );
 
   const derivedStats = {
-    members: seasonStats.members,
-    supervisors: seasonStats.supervisors,
-    seances: seasonStats.seances,
-    exams: examCount,
+    members: seasonStats?.members ?? 0,
+    supervisors: seasonStats?.supervisors ?? 0,
+    seances: seasonStats?.seances ?? 0,
+    exams: examCount ?? 0,
     pendingRegs: stats?.pendingRegs ?? pendingRegs,
   };
 
@@ -414,6 +475,10 @@ export default function AdminDashboard({ navigation }) {
           navigation={navigation}
           stats={derivedStats}
           activities={recentActivities}
+          loading={dashLoading}
+          error={dashError}
+          onRetry={() => setReloadKey((n) => n + 1)}
+          noSeason={!activeSeason?.id}
         />
       </ScrollView>
 
@@ -586,6 +651,33 @@ const dhStyles = StyleSheet.create({
     fontFamily: fonts.regular,
     textAlign: "center",
     paddingVertical: 12,
+    ...rtlText,
+  },
+  stateBox: {
+    padding: 32,
+    alignItems: "center",
+    gap: 12,
+  },
+  stateText: {
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  errorText: {
+    color: "#D32F2F",
+    textAlign: "center",
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  retryBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  retryText: {
+    color: "#fff",
+    fontFamily: fonts.bold,
     ...rtlText,
   },
 });

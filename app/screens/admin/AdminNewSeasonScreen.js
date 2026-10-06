@@ -228,7 +228,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
             <Text style={styles.fieldLabel}>اسم الموسم</Text>
             <TextInput
               style={styles.fieldInput}
-              placeholder="مثلاً: موسم 2026–2027"
+              placeholder="مثلاً: الموسم السابع  "
               placeholderTextColor={palette.placeholder}
               value={name}
               onChangeText={setName}

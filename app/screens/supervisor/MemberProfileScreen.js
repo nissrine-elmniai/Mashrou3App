@@ -3,9 +3,8 @@
  *
  * Décisions techniques actées (ne pas migrer vers le schéma CdC pour ces points) :
  * 1. Identité : profiles (legacy) via inscriptions → profiles FK, pas users+membres/superviseurs.
- * 2. Progression : colonnes réelles de la table (nb_hizb_completes, tumun_courant, notes,
- *    saison_id, date_saisie) — cf. migration 0041. juze n'est pas stocké, il est dérivé
- *    par computeProgressMetrics (ceil(nb_hizb_completes / 2)).
+ * 2. Progression : colonnes réelles (nb_hizb_completes, tumun_courant, notes, saison_id).
+ *    Le juz n'est pas stocké.
  *
  * Présence : table presences via presenceApi (pas AppContext.attendance mock).
  *
@@ -27,6 +26,9 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
+import { useApp } from "../../context/AppContext";
+import { ROLES, userHasRole } from "../../constants/roles";
+import MemberSeasonHistory from "../../components/admin/MemberSeasonHistory";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
 import {
@@ -197,6 +199,8 @@ function PresenceSectionContent({ presenceState, styles }) {
 
 export default function MemberProfileScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
+  const { currentUser } = useApp();
+  const isAdminAccount = userHasRole(currentUser, ROLES.ADMIN);
   const {
     memberId,
     firstName,
@@ -652,6 +656,12 @@ export default function MemberProfileScreen({ navigation, route }) {
         <View style={styles.cardSpacing}>
           <ProgressCard progressState={progressState} />
         </View>
+
+        {isAdminAccount ? (
+          <View style={styles.cardSpacing}>
+            <MemberSeasonHistory membreId={memberId} />
+          </View>
+        ) : null}
 
         <View style={[styles.card, adminTheme ? styles.cardAdmin : shadows.card, styles.cardSpacing]}>
           <Text style={styles.cardTitle}>

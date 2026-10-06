@@ -1,11 +1,21 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
-import { getAllAcceptedInscriptions } from "./seancesApi";
-import { computeProgressMetrics } from "./progressApi";
-import { getSeancePresenceOverview } from "./presenceApi";
-import { formatGenderLabel } from "./membersApi";
-import { displayProfileEmail } from "./authEmail";
 
 const SUPABASE_TIMEOUT_MS = 20000;
+
+const MONTHS_AR = [
+  "يناير",
+  "فبراير",
+  "مارس",
+  "أبريل",
+  "مايو",
+  "يونيو",
+  "يوليو",
+  "أغسطس",
+  "سبتمبر",
+  "أكتوبر",
+  "نوفمبر",
+  "ديسمبر",
+];
 
 function withTimeout(promise, ms, label) {
   return Promise.race([
@@ -30,842 +40,533 @@ function mapTableError(error, tableLabel) {
   return mapSupabaseAuthError(error);
 }
 
-function emptyTestStats() {
-  return { count: 0, gradedCount: 0, averageNote: null };
+function asNumber(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
-function emptyObjectifStats() {
-  return { fixedCount: 0, achievedCount: 0, achievementRate: null };
-}
-
-function emptyDetails() {
-  return {
-    bySeance: [],
-    bySupervisor: [],
-    progressTimeline: [],
-    tests: emptyTestStats(),
-    objectifs: emptyObjectifStats(),
-  };
-}
-
-function emptyStats(saisonId) {
-  return {
-    saisonId,
-    membersTotal: 0,
-    membersMale: 0,
-    membersFemale: 0,
-    seancesTotal: 0,
-    supervisorsTotal: 0,
-    avgProgressPct: 0,
-    avgPresencePct: 0,
-    source: "empty",
-    snapshotAt: null,
-    details: emptyDetails(),
-  };
-}
-
-function parseDetails(raw) {
-  if (!raw || typeof raw !== "object") return emptyDetails();
-  const tests = raw.tests && typeof raw.tests === "object" ? raw.tests : {};
-  const objectifs =
-    raw.objectifs && typeof raw.objectifs === "object" ? raw.objectifs : {};
-  return {
-    bySeance: Array.isArray(raw.bySeance) ? raw.bySeance : [],
-    bySupervisor: Array.isArray(raw.bySupervisor) ? raw.bySupervisor : [],
-    progressTimeline: Array.isArray(raw.progressTimeline)
-      ? raw.progressTimeline
-      : [],
-    tests: {
-      count: Number(tests.count) || 0,
-      gradedCount: Number(tests.gradedCount) || 0,
-      averageNote:
-        tests.averageNote == null || tests.averageNote === ""
-          ? null
-          : Number(tests.averageNote),
-    },
-    objectifs: {
-      fixedCount: Number(objectifs.fixedCount) || 0,
-      achievedCount: Number(objectifs.achievedCount) || 0,
-      achievementRate:
-        objectifs.achievementRate == null || objectifs.achievementRate === ""
-          ? null
-          : Number(objectifs.achievementRate),
-    },
-  };
-}
-
-function rowToStats(row) {
-  if (!row) return null;
-  return {
-    saisonId: row.saison_id,
-    membersTotal: Number(row.members_total) || 0,
-    membersMale: Number(row.members_male) || 0,
-    membersFemale: Number(row.members_female) || 0,
-    seancesTotal: Number(row.seances_total) || 0,
-    supervisorsTotal: Number(row.supervisors_total) || 0,
-    avgProgressPct: Math.round(Number(row.avg_progress_pct) || 0),
-    avgPresencePct: Math.round(Number(row.avg_presence_pct) || 0),
-    source: "snapshot",
-    snapshotAt: row.snapshot_at || null,
-    details: parseDetails(row.details),
-  };
-}
-
-function statsToRow(stats) {
-  return {
-    saison_id: stats.saisonId,
-    members_total: stats.membersTotal || 0,
-    members_male: stats.membersMale || 0,
-    members_female: stats.membersFemale || 0,
-    seances_total: stats.seancesTotal || 0,
-    supervisors_total: stats.supervisorsTotal || 0,
-    avg_progress_pct: stats.avgProgressPct || 0,
-    avg_presence_pct: stats.avgPresencePct || 0,
-    details: stats.details || emptyDetails(),
-    snapshot_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-}
-
-function monthKeyFromDate(value) {
-  if (!value) return null;
-  const s = String(value).slice(0, 10).replace(/\//g, "-");
-  if (s.length < 7) return null;
-  return s.slice(0, 7);
-}
-
-function formatMonthLabel(ym) {
-  if (!ym || ym.length < 7) return ym || "";
-  const [y, m] = ym.split("-");
-  const months = [
-    "يناير",
-    "فبراير",
-    "مارس",
-    "أبريل",
-    "مايو",
-    "يونيو",
-    "يوليو",
-    "أغسطس",
-    "سبتمبر",
-    "أكتوبر",
-    "نوفمبر",
-    "ديسمبر",
-  ];
+/** Libellé arabe d'une clé YYYY-MM. Une seule fonction pour toutes les courbes. */
+export function monthLabelAr(key) {
+  if (!key || String(key).length < 7) return key ? String(key) : "";
+  const [y, m] = String(key).split("-");
   const idx = Math.max(0, Math.min(11, Number(m) - 1));
-  return `${months[idx]} ${String(y).slice(2)}`;
+  const year = String(y || "");
+  return `${MONTHS_AR[idx]} ${year}`;
 }
 
-async function fetchSeasonSeances(saisonId) {
-  const { data, error } = await withTimeout(
-    supabase
-      .from("seances")
-      .select("id, nom, genre, superviseur_id, statut, saison_id")
-      .eq("saison_id", saisonId),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة حصص الموسم"
-  );
-  if (error) {
-    return { ok: false, error: mapTableError(error, "seances"), seances: [] };
-  }
-  return { ok: true, seances: data || [] };
-}
-
-async function fetchProfilesByIds(ids) {
-  const unique = [...new Set((ids || []).filter(Boolean))];
-  if (!unique.length) return {};
-  const { data, error } = await withTimeout(
-    supabase
-      .from("profiles")
-      .select("id, first_name, last_name, email, canonical_email")
-      .in("id", unique),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة المشرفين"
-  );
-  if (error) return {};
-  const map = {};
-  for (const p of data || []) {
-    const name =
-      `${p.first_name || ""} ${p.last_name || ""}`.trim() ||
-      displayProfileEmail(p) ||
-      "مشرف";
-    map[p.id] = name;
-  }
-  return map;
-}
-
-async function fetchLatestProgressForMembers(memberIds) {
-  if (!memberIds.length) return { ok: true, byMember: {}, rows: [] };
-
-  const { data, error } = await withTimeout(
-    supabase
-      .from("progression")
-      .select(
-        "membre_id, nb_hizb_completes, tumun_courant, juze, tumun, date_saisie, date, saison_id, id"
-      )
-      .in("membre_id", memberIds)
-      .order("date", { ascending: false })
-      .order("id", { ascending: false }),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة تقدم الأعضاء"
-  );
-
-  if (error) {
-    if (/column.*does not exist|date_saisie/i.test(error?.message || "")) {
-      const fb = await withTimeout(
-        supabase
-          .from("progression")
-          .select(
-            "membre_id, nb_hizb_completes, tumun_courant, juze, tumun, date, saison_id, id"
-          )
-          .in("membre_id", memberIds)
-          .order("date", { ascending: false })
-          .order("id", { ascending: false }),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة تقدم الأعضاء"
-      );
-      if (fb.error) {
-        return {
-          ok: false,
-          error: mapTableError(fb.error, "progression"),
-          byMember: {},
-          rows: [],
-        };
-      }
-      const rows = fb.data || [];
-      const byMember = {};
-      for (const row of rows) {
-        if (!byMember[row.membre_id]) byMember[row.membre_id] = row;
-      }
-      return { ok: true, byMember, rows };
-    }
+function mapMonthSeries(rows, { progression = false } = {}) {
+  if (!Array.isArray(rows)) return null;
+  return rows.map((row) => {
+    const value = progression
+      ? asNumber(row?.avgPct ?? row?.pct)
+      : asNumber(row?.pct ?? row?.avgPct);
     return {
-      ok: false,
-      error: mapTableError(error, "progression"),
-      byMember: {},
-      rows: [],
+      key: row?.key ?? null,
+      label: monthLabelAr(row?.key),
+      value,
+      avgPct: progression ? value : asNumber(row?.avgPct),
+      pct: progression ? asNumber(row?.pct) : value,
     };
-  }
-
-  const rows = data || [];
-  const byMember = {};
-  for (const row of rows) {
-    if (!byMember[row.membre_id]) byMember[row.membre_id] = row;
-  }
-  return { ok: true, byMember, rows };
+  });
 }
 
-async function fetchGenresFromApplications(memberIds, saisonId) {
-  if (!memberIds.length) return {};
-  try {
-    let query = supabase
-      .from("member_applications")
-      .select("user_id, genre, season_id, updated_at")
-      .in("user_id", memberIds)
-      .order("updated_at", { ascending: false });
-    if (saisonId) {
-      query = query.eq("season_id", saisonId);
-    }
-    const { data, error } = await withTimeout(
-      query,
-      SUPABASE_TIMEOUT_MS,
-      "قراءة جنس الأعضاء"
-    );
-    if (error) return {};
-    const byUser = {};
-    for (const row of data || []) {
-      if (!byUser[row.user_id] && row.genre) {
-        byUser[row.user_id] = formatGenderLabel(row.genre);
-      }
-    }
-    return byUser;
-  } catch {
-    return {};
-  }
+function mapCountSeries(rows) {
+  if (!Array.isArray(rows)) return null;
+  return rows.map((row) => ({
+    key: row?.key ?? null,
+    count: asNumber(row?.count),
+  }));
 }
 
-function buildProgressTimeline(rows, saisonId, memberIds) {
-  const memberSet = new Set(memberIds);
-  const byMonth = {};
-
-  for (const row of rows || []) {
-    if (!memberSet.has(row.membre_id)) continue;
-    if (saisonId && row.saison_id && row.saison_id !== saisonId) continue;
-    const mk = monthKeyFromDate(row.date_saisie || row.date);
-    if (!mk) continue;
-    const metrics = computeProgressMetrics(row);
-    if (!metrics) continue;
-    if (!byMonth[mk]) byMonth[mk] = {};
-    // dernière saisie du mois par membre (rows are desc if ordered)
-    if (byMonth[mk][row.membre_id] == null) {
-      byMonth[mk][row.membre_id] = metrics.globalPct || 0;
-    }
-  }
-
-  return Object.keys(byMonth)
-    .sort()
-    .map((mk) => {
-      const vals = Object.values(byMonth[mk]);
-      const avg =
-        vals.length === 0
-          ? 0
-          : Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-      return { key: mk, label: formatMonthLabel(mk), avgPct: avg };
-    });
+function isStatsRow(raw) {
+  return raw != null && (raw.saison_id != null || raw.members_total != null);
 }
 
 /**
- * Filtre les stats d'une saison selon حصة / مشرف (sans mélanger d'autres saisons).
+ * Un seul modèle de vue, que la source soit v2, v1 ou v1 rattrapé.
+ * Un bloc absent vaut null. effectifs.retires n'est jamais recopié.
  */
-export function applySeasonStatsFilters(stats, { seanceId = null, supervisorId = null } = {}) {
-  if (!stats) return emptyStats(null);
-  const details = stats.details || emptyDetails();
-  let seances = details.bySeance || [];
+export function normalizeSeasonStats(raw, meta = {}) {
+  const row = isStatsRow(raw) ? raw : null;
+  const details = row ? raw.details || {} : raw || {};
+  const season = meta.season || {};
+  const isV2 = Number(details.schemaVersion) === 2;
+  const rattrapage = details.rattrapage?.source === "progression";
 
-  if (supervisorId) {
-    seances = seances.filter((s) => s.supervisorId === supervisorId);
-  }
-  if (seanceId) {
-    seances = seances.filter((s) => s.id === seanceId);
-  }
-
-  if (!seanceId && !supervisorId) {
-    return stats;
-  }
-
-  const membersTotal = seances.reduce((n, s) => n + (s.membersCount || 0), 0);
-  const membersMale = seances.reduce((n, s) => n + (s.membersMale || 0), 0);
-  const membersFemale = seances.reduce((n, s) => n + (s.membersFemale || 0), 0);
-  const supervisorIds = new Set(seances.map((s) => s.supervisorId).filter(Boolean));
-
-  let weightProgress = 0;
-  let sumProgress = 0;
-  let weightPresence = 0;
-  let sumPresence = 0;
-  for (const s of seances) {
-    const mc = s.membersCount || 0;
-    if (mc > 0 && s.avgProgressPct != null) {
-      sumProgress += (s.avgProgressPct || 0) * mc;
-      weightProgress += mc;
-    }
-    const marked = s.presenceMarked || 0;
-    if (marked > 0 && s.presencePct != null) {
-      sumPresence += (s.presencePct || 0) * marked;
-      weightPresence += marked;
-    }
-  }
-
-  const supervisors =
-    details.bySupervisor?.filter((sup) => {
-      if (supervisorId) return sup.id === supervisorId;
-      return supervisorIds.has(sup.id);
-    }) || [];
+  const effectifs = buildEffectifs(details, row, isV2);
+  const presence = buildPresence(details, row, isV2);
+  const progression = buildProgression(details, row);
+  const tests = buildTests(details, isV2);
+  const objectifs = buildObjectifs(details, isV2);
+  const bySeance = isV2
+    ? Array.isArray(details.bySeance)
+      ? details.bySeance
+      : null
+    : normalizeV1Seances(details.bySeance);
+  const bySupervisor = Array.isArray(details.bySupervisor)
+    ? details.bySupervisor
+    : null;
 
   return {
-    ...stats,
-    membersTotal,
-    membersMale,
-    membersFemale,
-    seancesTotal: seances.length,
-    supervisorsTotal: supervisorIds.size,
-    avgProgressPct:
-      weightProgress > 0 ? Math.round(sumProgress / weightProgress) : 0,
-    avgPresencePct:
-      weightPresence > 0 ? Math.round(sumPresence / weightPresence) : 0,
-    details: {
-      ...details,
-      bySeance: seances,
-      bySupervisor: supervisors,
-    },
+    saisonId: season.id || row?.saison_id || details.saison?.id || null,
+    name: season.name || details.saison?.name || "",
+    type: season.type || details.saison?.type || null,
+    active: season.active != null ? !!season.active : !!details.saison?.active,
+    startDate: season.startDate || season.start_date || details.saison?.dateDebut || null,
+    empty: false,
+    source: meta.source || null,
+    snapshotAt: meta.snapshotAt || row?.snapshot_at || null,
+    rattrapage,
+    effectifs,
+    presence,
+    progression,
+    tests,
+    objectifs,
+    bySeance,
+    bySupervisor,
+    seancesTotal:
+      asNumber(row?.seances_total) ??
+      (Array.isArray(bySeance) ? bySeance.length : null),
+    supervisorsTotal:
+      asNumber(row?.supervisors_total) ??
+      (Array.isArray(bySupervisor) ? bySupervisor.length : null),
   };
 }
 
-/** Tests de la saison : nombre, invitations notées, moyenne des notes. */
-async function fetchSeasonTestStats(saisonId) {
-  const testsRes = await withTimeout(
-    supabase.from("tests").select("id").eq("saison_id", saisonId),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة اختبارات الموسم"
-  );
-  if (testsRes.error) {
-    return { ok: false, error: mapTableError(testsRes.error, "tests") };
-  }
-  const ids = (testsRes.data || []).map((row) => row.id).filter(Boolean);
-  if (ids.length === 0) {
-    return { ok: true, summary: emptyTestStats() };
-  }
-  const invRes = await withTimeout(
-    supabase
-      .from("test_invitations")
-      .select("statut, note")
-      .in("test_id", ids),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة درجات الاختبارات"
-  );
-  if (invRes.error) {
-    return { ok: false, error: mapTableError(invRes.error, "test_invitations") };
-  }
-  const graded = (invRes.data || []).filter(
-    (row) => row.statut === "note" && row.note != null && row.note !== ""
-  );
-  const averageNote =
-    graded.length === 0
-      ? null
-      : Math.round(
-          (graded.reduce((sum, row) => sum + Number(row.note), 0) / graded.length) *
-            10
-        ) / 10;
-  return {
-    ok: true,
-    summary: {
-      count: ids.length,
-      gradedCount: graded.length,
-      averageNote: Number.isFinite(averageNote) ? averageNote : null,
-    },
-  };
-}
-
-async function fetchSeasonObjectifRows(saisonId) {
-  const { data, error } = await withTimeout(
-    supabase
-      .from("objectifs")
-      .select("membre_id, nb_hizb_cible, nb_hizb_depart")
-      .eq("saison_id", saisonId),
-    SUPABASE_TIMEOUT_MS,
-    "قراءة أهداف الموسم"
-  );
-  if (error) {
-    return { ok: false, error: mapTableError(error, "objectifs"), rows: [] };
-  }
-  return { ok: true, rows: data || [] };
-}
-
-/**
- * Atteint si position actuelle − nb_hizb_depart ≥ nb_hizb_cible.
- * Position = dernier progression.nb_hizb_completes du membre (0 si aucune ligne).
- */
-function summarizeObjectifs(rows, progressByMember) {
-  let achievedCount = 0;
-  for (const row of rows || []) {
-    const cible = Number(row.nb_hizb_cible);
-    const depart = Number(row.nb_hizb_depart);
-    const raw = progressByMember[row.membre_id]?.nb_hizb_completes;
-    const position = Number.isFinite(Number(raw)) ? Number(raw) : 0;
-    const start = Number.isFinite(depart) ? depart : 0;
-    if (Number.isFinite(cible) && position - start >= cible) achievedCount += 1;
-  }
-  const fixedCount = (rows || []).length;
-  return {
-    fixedCount,
-    achievedCount,
-    achievementRate:
-      fixedCount === 0 ? null : Math.round((achievedCount / fixedCount) * 100),
-  };
-}
-
-/**
- * Calcule les statistiques live d'un musim (données actuelles en base).
- * Toutes les séances de la saison comptent, y compris statut = archivee :
- * le snapshot est pris avant la purge de fin de saison.
- */
-export async function computeSeasonStats(saisonId) {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Supabase غير مفعّل", stats: emptyStats(saisonId) };
-  }
-  if (!saisonId) {
-    return { ok: false, error: "معرّف الموسم مفقود", stats: emptyStats(saisonId) };
-  }
-
-  try {
-    const [seancesRes, inscRes] = await Promise.all([
-      fetchSeasonSeances(saisonId),
-      getAllAcceptedInscriptions({ saisonId }),
-    ]);
-
-    if (!seancesRes.ok) {
-      return { ok: false, error: seancesRes.error, stats: emptyStats(saisonId) };
-    }
-
-    const seances = seancesRes.seances || [];
-    const configuredSeances = seances;
-    const seanceById = Object.fromEntries(seances.map((s) => [s.id, s]));
-    const supervisorIds = [
-      ...new Set(configuredSeances.map((s) => s.superviseur_id).filter(Boolean)),
-    ];
-    const supervisorNames = await fetchProfilesByIds(supervisorIds);
-
-    const inscriptions = inscRes.ok ? inscRes.inscriptions || [] : [];
-    const memberIds = [
-      ...new Set(inscriptions.map((i) => i.membre_id).filter(Boolean)),
-    ];
-
-    const membersBySeance = {};
-    for (const s of configuredSeances) membersBySeance[s.id] = [];
-    for (const insc of inscriptions) {
-      if (!insc.seance_id) continue;
-      if (!membersBySeance[insc.seance_id]) membersBySeance[insc.seance_id] = [];
-      membersBySeance[insc.seance_id].push(insc.membre_id);
-    }
-
-    const appGenres = await fetchGenresFromApplications(memberIds, saisonId);
-    const genderByMember = {};
-    for (const insc of inscriptions) {
-      if (genderByMember[insc.membre_id]) continue;
-      const seanceGenre = formatGenderLabel(seanceById[insc.seance_id]?.genre);
-      const genre = seanceGenre || appGenres[insc.membre_id] || null;
-      if (genre) genderByMember[insc.membre_id] = genre;
-    }
-    let membersMale = 0;
-    let membersFemale = 0;
-    for (const mid of memberIds) {
-      const genre = genderByMember[mid];
-      if (genre === "ذكر") membersMale += 1;
-      else if (genre === "أنثى") membersFemale += 1;
-    }
-
-    const objectifsRes = await fetchSeasonObjectifRows(saisonId);
-    if (!objectifsRes.ok) {
-      return { ok: false, error: objectifsRes.error, stats: emptyStats(saisonId) };
-    }
-    const testsRes = await fetchSeasonTestStats(saisonId);
-    if (!testsRes.ok) {
-      return { ok: false, error: testsRes.error, stats: emptyStats(saisonId) };
-    }
-    const progressMemberIds = [
-      ...new Set([
-        ...memberIds,
-        ...objectifsRes.rows.map((row) => row.membre_id).filter(Boolean),
-      ]),
-    ];
-
-    const progRes = await fetchLatestProgressForMembers(progressMemberIds);
-    const progressByMember = progRes.ok ? progRes.byMember : {};
-    const progressPct = (id) => {
-      const m = computeProgressMetrics(progressByMember[id]);
-      return m ? m.globalPct || 0 : null;
-    };
-
-    let avgProgressPct = 0;
-    if (progRes.ok) {
-      const pcts = memberIds
-        .map((id) => progressPct(id))
-        .filter((v) => v != null);
-      avgProgressPct =
-        pcts.length === 0
-          ? 0
-          : Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
-    }
-
-    const presenceResults = await Promise.all(
-      configuredSeances.map((s) => getSeancePresenceOverview(s.id))
-    );
-
-    let totalPresent = 0;
-    let totalAbsent = 0;
-    const bySeance = configuredSeances.map((s, idx) => {
-      const memberList = [...new Set(membersBySeance[s.id] || [])];
-      let male = 0;
-      let female = 0;
-      const pcts = [];
-      for (const mid of memberList) {
-        const g = genderByMember[mid];
-        if (g === "ذكر") male += 1;
-        else if (g === "أنثى") female += 1;
-        const p = progressPct(mid);
-        if (p != null) pcts.push(p);
-      }
-      const presence = presenceResults[idx];
-      const presentCount = presence?.ok ? presence.presentCount || 0 : 0;
-      const absentCount = presence?.ok ? presence.absentCount || 0 : 0;
-      const marked = presentCount + absentCount;
-      totalPresent += presentCount;
-      totalAbsent += absentCount;
-
-      return {
-        id: s.id,
-        name: s.nom || "حصة",
-        genre: formatGenderLabel(s.genre) || null,
-        supervisorId: s.superviseur_id || null,
-        supervisorName: s.superviseur_id
-          ? supervisorNames[s.superviseur_id] || "مشرف"
-          : "—",
-        membersCount: memberList.length,
-        membersMale: male,
-        membersFemale: female,
-        avgProgressPct:
-          pcts.length === 0
-            ? 0
-            : Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length),
-        presencePct: marked > 0 ? Math.round((presentCount / marked) * 100) : 0,
-        presenceMarked: marked,
-        sessionCount: presence?.ok ? presence.sessionCount || 0 : 0,
-      };
-    });
-
-    const bySupervisorMap = {};
-    for (const s of bySeance) {
-      if (!s.supervisorId) continue;
-      if (!bySupervisorMap[s.supervisorId]) {
-        bySupervisorMap[s.supervisorId] = {
-          id: s.supervisorId,
-          name: s.supervisorName,
-          seancesCount: 0,
-          membersCount: 0,
-          progressWeighted: 0,
-          progressWeight: 0,
-          presenceWeighted: 0,
-          presenceWeight: 0,
-        };
-      }
-      const bucket = bySupervisorMap[s.supervisorId];
-      bucket.seancesCount += 1;
-      bucket.membersCount += s.membersCount || 0;
-      if ((s.membersCount || 0) > 0) {
-        bucket.progressWeighted += (s.avgProgressPct || 0) * s.membersCount;
-        bucket.progressWeight += s.membersCount;
-      }
-      if ((s.presenceMarked || 0) > 0) {
-        bucket.presenceWeighted += (s.presencePct || 0) * s.presenceMarked;
-        bucket.presenceWeight += s.presenceMarked;
-      }
-    }
-
-    const bySupervisor = Object.values(bySupervisorMap).map((b) => ({
-      id: b.id,
-      name: b.name,
-      seancesCount: b.seancesCount,
-      membersCount: b.membersCount,
-      avgProgressPct:
-        b.progressWeight > 0
-          ? Math.round(b.progressWeighted / b.progressWeight)
-          : 0,
-      avgPresencePct:
-        b.presenceWeight > 0
-          ? Math.round(b.presenceWeighted / b.presenceWeight)
-          : 0,
-    }));
-
-    const marked = totalPresent + totalAbsent;
-    const avgPresencePct =
-      marked > 0 ? Math.round((totalPresent / marked) * 100) : 0;
-
-    const progressTimeline = buildProgressTimeline(
-      progRes.rows || [],
-      saisonId,
-      memberIds
-    );
-
+function buildEffectifs(details, row, isV2) {
+  if (isV2) {
+    if (!details.effectifs || typeof details.effectifs !== "object") return null;
+    const src = details.effectifs;
+    const demandes =
+      src.demandes && typeof src.demandes === "object"
+        ? {
+            recues: asNumber(src.demandes.recues),
+            acceptees: asNumber(src.demandes.acceptees),
+            refusees: asNumber(src.demandes.refusees),
+            enAttente: asNumber(src.demandes.enAttente),
+          }
+        : null;
     return {
-      ok: true,
-      stats: {
-        saisonId,
-        membersTotal: memberIds.length,
-        membersMale,
-        membersFemale,
-        seancesTotal: configuredSeances.length,
-        supervisorsTotal: supervisorIds.length,
-        avgProgressPct,
-        avgPresencePct,
-        source: "live",
-        snapshotAt: null,
-        details: {
-          bySeance,
-          bySupervisor,
-          progressTimeline,
-          tests: testsRes.summary,
-          objectifs: summarizeObjectifs(objectifsRes.rows, progressByMember),
-        },
-      },
+      membres: asNumber(src.membres),
+      male: asNumber(src.male),
+      female: asNumber(src.female),
+      nonSpecifie: asNumber(src.nonSpecifie),
+      nouveaux: asNumber(src.nouveaux),
+      renouvellements: asNumber(src.renouvellements),
+      demandes,
+      tauxAcceptation: asNumber(src.tauxAcceptation),
     };
-  } catch (e) {
+  }
+  if (!row) return null;
+  const membres = asNumber(row.members_total);
+  const male = asNumber(row.members_male);
+  const female = asNumber(row.members_female);
+  return {
+    membres,
+    male,
+    female,
+    nonSpecifie:
+      membres == null || male == null || female == null
+        ? null
+        : Math.max(0, membres - male - female),
+    nouveaux: null,
+    renouvellements: null,
+    demandes: null,
+    tauxAcceptation: null,
+  };
+}
+
+function markedTotal(bySeance) {
+  if (!Array.isArray(bySeance) || bySeance.length === 0) return 0;
+  return bySeance.reduce(
+    (sum, seance) => sum + (Number(seance?.presenceMarked) || 0),
+    0
+  );
+}
+
+function normalizeV1Seances(bySeance) {
+  if (!Array.isArray(bySeance)) return null;
+  return bySeance.map((seance) => {
+    const marked = Number(seance?.presenceMarked) || 0;
+    if (marked > 0) return seance;
+    return { ...seance, presencePct: null };
+  });
+}
+
+function buildPresence(details, row, isV2) {
+  if (isV2) {
+    if (!details.presence || typeof details.presence !== "object") return null;
+    const src = details.presence;
+    const rep = src.repartition;
     return {
-      ok: false,
-      error: e?.message || "تعذر حساب الإحصائيات",
-      stats: emptyStats(saisonId),
+      pct: asNumber(src.pct),
+      present: asNumber(src.present),
+      absent: asNumber(src.absent),
+      jours: asNumber(src.jours),
+      parMois: mapMonthSeries(src.parMois, { progression: false }),
+      repartition:
+        rep && typeof rep === "object"
+          ? {
+              ge90: asNumber(rep.ge90),
+              p75_90: asNumber(rep.p75_90),
+              p50_75: asNumber(rep.p50_75),
+              lt50: asNumber(rep.lt50),
+              sansDonnees: asNumber(rep.sansDonnees),
+            }
+          : null,
     };
   }
+  if (!row) return null;
+  // L'ancien calcul client renvoyait 0 quand aucune présence n'était marquée.
+  // Sans séance, ou si la somme des marques est 0, le bloc reste absent :
+  // l'écran affiche « غير متوفر لهذا الموسم » au lieu d'un 0 %.
+  if (markedTotal(details.bySeance) === 0) return null;
+  return {
+    pct: asNumber(row.avg_presence_pct),
+    present: null,
+    absent: null,
+    jours: null,
+    parMois: null,
+    repartition: null,
+  };
 }
 
-/** Charge un snapshot figé (s'il existe). */
-export async function fetchSeasonStatsSnapshot(saisonId) {
-  if (!isSupabaseConfigured() || !saisonId) {
-    return { ok: true, stats: null };
-  }
-  try {
-    const { data, error } = await withTimeout(
-      supabase
-        .from("season_stats")
-        .select("*")
-        .eq("saison_id", saisonId)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة إحصائيات الموسم"
+function buildProgression(details, row) {
+  if (details.progression && typeof details.progression === "object") {
+    const src = details.progression;
+    const timeline = mapMonthSeries(
+      src.timeline || details.progressTimeline,
+      { progression: true }
     );
-    if (error) {
-      if (/relation.*does not exist|Could not find the table/i.test(error?.message || "")) {
-        return { ok: true, stats: null, tableMissing: true };
-      }
-      return { ok: false, error: mapTableError(error, "season_stats"), stats: null };
-    }
-    return { ok: true, stats: rowToStats(data) };
-  } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", stats: null };
+    return {
+      avgPositionPct: asNumber(src.avgPositionPct),
+      membresAvecDonnees: asNumber(src.membresAvecDonnees),
+      gainMoyenHizb: asNumber(src.gainMoyenHizb),
+      gainTotalHizb: asNumber(src.gainTotalHizb),
+      khatm: asNumber(src.khatm),
+      parTranche: mapCountSeries(src.parTranche),
+      timeline,
+    };
   }
+
+  const timeline = mapMonthSeries(details.progressTimeline, { progression: true });
+  const emptyTimeline = !timeline || timeline.length === 0;
+  const avg = asNumber(row?.avg_progress_pct);
+  // Bug historique : moyenne enregistrée à 0 sans aucune courbe. Ne pas l'afficher.
+  if ((avg == null || avg === 0) && emptyTimeline) return null;
+  return {
+    avgPositionPct: avg,
+    membresAvecDonnees: null,
+    gainMoyenHizb: null,
+    gainTotalHizb: null,
+    khatm: null,
+    parTranche: null,
+    timeline,
+  };
 }
 
-/** Enregistre / met à jour le snapshot d'un musim. */
-export async function saveSeasonStatsSnapshot(stats) {
+function buildTests(details, isV2) {
+  const src = details.tests;
+  if (!src || typeof src !== "object") return null;
+  if (isV2) {
+    return {
+      count: asNumber(src.count),
+      invites: asNumber(src.invites),
+      notes: asNumber(src.notes),
+      moyenne: asNumber(src.moyenne),
+      min: asNumber(src.min),
+      max: asNumber(src.max),
+      distribution: mapCountSeries(src.distribution),
+      parTest: Array.isArray(src.parTest) ? src.parTest : null,
+    };
+  }
+  return {
+    count: asNumber(src.count),
+    invites: null,
+    notes: asNumber(src.gradedCount),
+    moyenne: asNumber(src.averageNote),
+    min: null,
+    max: null,
+    distribution: null,
+    parTest: null,
+  };
+}
+
+function buildObjectifs(details, isV2) {
+  const src = details.objectifs;
+  if (!src || typeof src !== "object") return null;
+  if (isV2) {
+    return {
+      fixes: asNumber(src.fixes),
+      atteints: asNumber(src.atteints),
+      taux: asNumber(src.taux),
+      realisationMoyennePct: asNumber(src.realisationMoyennePct),
+    };
+  }
+  return {
+    fixes: asNumber(src.fixedCount),
+    atteints: asNumber(src.achievedCount),
+    taux: asNumber(src.achievementRate),
+    realisationMoyennePct: null,
+  };
+}
+
+function emptyView(season) {
+  return {
+    saisonId: season?.id || null,
+    name: season?.name || "",
+    type: season?.type || null,
+    active: !!season?.active,
+    startDate: season?.start_date || season?.startDate || null,
+    empty: true,
+    source: null,
+    snapshotAt: null,
+    rattrapage: false,
+    effectifs: null,
+    presence: null,
+    progression: null,
+    tests: null,
+    objectifs: null,
+    bySeance: null,
+    bySupervisor: null,
+    seancesTotal: null,
+    supervisorsTotal: null,
+  };
+}
+
+function seasonMeta(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    active: !!row.active,
+    startDate: row.start_date || null,
+  };
+}
+
+function chronoKey(view) {
+  return String(view.startDate || view.snapshotAt || "");
+}
+
+/** Calcul en direct. Seule RPC de statistiques autorisée pour l'application. */
+export async function fetchLiveSeasonStats(saisonId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
-  if (!stats?.saisonId) {
+  if (!saisonId) {
     return { ok: false, error: "معرّف الموسم مفقود" };
   }
   try {
-    const row = statsToRow(stats);
-    let { data, error } = await withTimeout(
-      supabase
-        .from("season_stats")
-        .upsert(row, { onConflict: "saison_id" })
-        .select("*")
-        .single(),
+    const { data, error } = await withTimeout(
+      supabase.rpc("compute_season_stats", { p_saison_id: saisonId }),
       SUPABASE_TIMEOUT_MS,
-      "حفظ إحصائيات الموسم"
+      "حساب إحصائيات الموسم"
     );
-
-    // Bases sans colonne details (migration 0044 non exécutée)
-    if (error && /details|column.*does not exist/i.test(error?.message || "")) {
-      const { details: _d, ...rowWithoutDetails } = row;
-      ({ data, error } = await withTimeout(
-        supabase
-          .from("season_stats")
-          .upsert(rowWithoutDetails, { onConflict: "saison_id" })
-          .select("*")
-          .single(),
-        SUPABASE_TIMEOUT_MS,
-        "حفظ إحصائيات الموسم"
-      ));
-    }
-
     if (error) {
-      return { ok: false, error: mapTableError(error, "season_stats") };
+      return { ok: false, error: mapTableError(error, "compute_season_stats") };
     }
-    return { ok: true, stats: rowToStats(data) };
+    if (data == null) {
+      return { ok: false, error: "تعذر حساب الإحصائيات" };
+    }
+    return { ok: true, data };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر حفظ الإحصائيات" };
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
-/**
- * Saison close : lecture du snapshot uniquement, jamais de recalcul.
- * Sans ligne season_stats → missing, aucun calcul en direct.
- */
-export async function getSeasonStats(
-  saisonId,
-  { preferLive = false, seasonActive = false } = {}
-) {
-  if (!saisonId) {
-    return { ok: false, error: "معرّف الموسم مفقود", stats: emptyStats(saisonId) };
+async function fetchSnapshotRow(saisonId) {
+  const { data, error } = await withTimeout(
+    supabase
+      .from("season_stats")
+      .select(
+        "saison_id, members_total, members_male, members_female, seances_total, supervisors_total, avg_progress_pct, avg_presence_pct, snapshot_at, details"
+      )
+      .eq("saison_id", saisonId)
+      .maybeSingle(),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة إحصائيات الموسم"
+  );
+  if (error) {
+    return { ok: false, error: mapTableError(error, "season_stats"), row: null };
   }
-
-  if (!preferLive && !seasonActive) {
-    const snap = await fetchSeasonStatsSnapshot(saisonId);
-    if (!snap.ok) {
-      return { ok: false, error: snap.error, stats: emptyStats(saisonId) };
-    }
-    if (!snap.stats) {
-      return {
-        ok: true,
-        missing: true,
-        stats: null,
-        error: "لا توجد إحصائيات محفوظة لهذا الموسم",
-      };
-    }
-    return { ok: true, stats: snap.stats };
-  }
-
-  return computeSeasonStats(saisonId);
+  return { ok: true, row: data || null };
 }
 
 /**
- * Fige les ids donnés. N'appelle pas cette fonction avec une saison déjà
- * close qui a déjà un snapshot : le recalcul écraserait l'historique.
+ * Saison active : calcul direct. Saison close : snapshot uniquement.
+ * Sans ligne pour une saison close : empty, jamais de zéros à la place d'une erreur.
  */
-export async function snapshotSeasonsBeforeClose(saisonIds = []) {
-  const ids = [...new Set((saisonIds || []).filter(Boolean))];
-  if (!ids.length) return { ok: true, saved: 0 };
-
-  let saved = 0;
-  const errors = [];
-  for (const id of ids) {
-    const live = await computeSeasonStats(id);
-    if (!live.ok) {
-      errors.push(live.error || id);
-      continue;
-    }
-    const save = await saveSeasonStatsSnapshot(live.stats);
-    if (save.ok) saved += 1;
-    else errors.push(save.error || id);
+export async function getSeasonStats(season) {
+  if (!season?.id) {
+    return { ok: false, error: "معرّف الموسم مفقود" };
   }
-  return {
-    ok: errors.length === 0,
-    saved,
-    error: errors.length ? errors.join(" — ") : null,
-  };
-}
-
-/**
- * Avant start_new_season :
- * - chaque saison active (regular et summer) ;
- * - chaque saison close qui a encore au moins une séance et aucune ligne
- *   season_stats (rattrapage unique, jamais une saison close déjà figée).
- */
-export async function snapshotBeforeNewSeason() {
   if (!isSupabaseConfigured()) {
-    return { ok: true, skipped: true, saved: 0 };
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+
+  if (season.active) {
+    const live = await fetchLiveSeasonStats(season.id);
+    if (!live.ok) return { ok: false, error: live.error };
+    return {
+      ok: true,
+      empty: false,
+      view: normalizeSeasonStats(live.data, {
+        source: "live",
+        season: {
+          id: season.id,
+          name: season.name,
+          type: season.type,
+          active: true,
+          startDate: season.startDate || season.start_date || null,
+        },
+      }),
+    };
+  }
+
+  try {
+    const snap = await fetchSnapshotRow(season.id);
+    if (!snap.ok) return { ok: false, error: snap.error };
+    if (!snap.row) return { ok: true, empty: true, view: null };
+    return {
+      ok: true,
+      empty: false,
+      view: normalizeSeasonStats(snap.row, {
+        source: "snapshot",
+        snapshotAt: snap.row.snapshot_at,
+        season: {
+          id: season.id,
+          name: season.name,
+          type: season.type,
+          active: false,
+          startDate: season.startDate || season.start_date || null,
+        },
+      }),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Saisons d'un type, avec snapshot, et le direct si la saison active est de ce type.
+ * Tri chronologique (start_date, sinon snapshot_at). Une saison sans ligne reste, empty.
+ */
+export async function listSeasonStatsByType(type) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!type) {
+    return { ok: false, error: "نوع الموسم مفقود" };
   }
   try {
-    const [seasonsRes, statsRes, seancesRes] = await Promise.all([
-      withTimeout(
-        supabase.from("saisons").select("id, active"),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة المواسم"
-      ),
-      withTimeout(
-        supabase.from("season_stats").select("saison_id"),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة إحصائيات المواسم"
-      ),
-      withTimeout(
-        supabase.from("seances").select("saison_id"),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة حصص المواسم"
-      ),
-    ]);
+    const seasonsRes = await withTimeout(
+      supabase
+        .from("saisons")
+        .select("id, name, type, active, start_date")
+        .eq("type", type),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة المواسم"
+    );
     if (seasonsRes.error) {
       return { ok: false, error: mapTableError(seasonsRes.error, "saisons") };
     }
-    if (statsRes.error) {
-      return { ok: false, error: mapTableError(statsRes.error, "season_stats") };
+    const seasons = seasonsRes.data || [];
+    const ids = seasons.map((s) => s.id).filter(Boolean);
+    let rows = [];
+    if (ids.length) {
+      const statsRes = await withTimeout(
+        supabase
+          .from("season_stats")
+          .select(
+            "saison_id, members_total, members_male, members_female, seances_total, supervisors_total, avg_progress_pct, avg_presence_pct, snapshot_at, details"
+          )
+          .in("saison_id", ids),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة إحصائيات المواسم"
+      );
+      if (statsRes.error) {
+        return { ok: false, error: mapTableError(statsRes.error, "season_stats") };
+      }
+      rows = statsRes.data || [];
     }
-    if (seancesRes.error) {
-      return { ok: false, error: mapTableError(seancesRes.error, "seances") };
+    const byId = new Map(rows.map((row) => [row.saison_id, row]));
+    const active = seasons.find((s) => s.active) || null;
+    let liveData = null;
+    if (active) {
+      const live = await fetchLiveSeasonStats(active.id);
+      if (!live.ok) return { ok: false, error: live.error };
+      liveData = live.data;
     }
 
-    const seasons = seasonsRes.data || [];
-    const haveStats = new Set(
-      (statsRes.data || []).map((row) => row.saison_id).filter(Boolean)
-    );
-    const withSeances = new Set(
-      (seancesRes.data || []).map((row) => row.saison_id).filter(Boolean)
-    );
-    const activeIds = seasons.filter((row) => row.active).map((row) => row.id);
-    const catchupIds = seasons
-      .filter(
-        (row) => !row.active && withSeances.has(row.id) && !haveStats.has(row.id)
-      )
-      .map((row) => row.id);
-    return snapshotSeasonsBeforeClose([...activeIds, ...catchupIds]);
+    const views = seasons.map((season) => {
+      const meta = seasonMeta(season);
+      if (season.active && liveData) {
+        return normalizeSeasonStats(liveData, { source: "live", season: meta });
+      }
+      const row = byId.get(season.id);
+      if (!row) return emptyView(meta);
+      return normalizeSeasonStats(row, {
+        source: "snapshot",
+        snapshotAt: row.snapshot_at,
+        season: meta,
+      });
+    });
+    views.sort((a, b) => chronoKey(a).localeCompare(chronoKey(b)));
+    return { ok: true, seasons: views };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر حفظ إحصائيات الموسم" };
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/** Historique membre : season_member_stats + nom / type / date de la saison. */
+export async function getMemberSeasonHistory(membreId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", rows: [] };
+  }
+  if (!membreId) {
+    return { ok: false, error: "معرّف العضو مفقود", rows: [] };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("season_member_stats")
+        .select(
+          "saison_id, seance_nom, superviseur_nom, presence_pct, pos_debut, pos_fin, gain_tumun, tests_invites, tests_notes, note_moyenne, objectif_cible, objectif_atteint, source, saisons(name, type, start_date)"
+        )
+        .eq("membre_id", membreId),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة سجل المواسم"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "season_member_stats"), rows: [] };
+    }
+    const rows = (data || [])
+      .map((row) => {
+        const season = row.saisons || {};
+        return {
+          saisonId: row.saison_id,
+          name: season.name || "",
+          type: season.type || null,
+          startDate: season.start_date || null,
+          seanceNom: row.seance_nom || null,
+          superviseurNom: row.superviseur_nom || null,
+          presencePct: asNumber(row.presence_pct),
+          posDebut: asNumber(row.pos_debut),
+          posFin: asNumber(row.pos_fin),
+          gainTumun: asNumber(row.gain_tumun),
+          testsInvites: asNumber(row.tests_invites),
+          testsNotes: asNumber(row.tests_notes),
+          noteMoyenne: asNumber(row.note_moyenne),
+          objectifCible: asNumber(row.objectif_cible),
+          objectifAtteint:
+            row.objectif_atteint == null ? null : !!row.objectif_atteint,
+          source: row.source || null,
+        };
+      })
+      .sort((a, b) => String(b.startDate || "").localeCompare(String(a.startDate || "")));
+    return { ok: true, rows };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", rows: [] };
   }
 }

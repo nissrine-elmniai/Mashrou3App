@@ -162,8 +162,7 @@ export async function getSeasonDashboardStats(saisonId) {
         supabase
           .from("seances")
           .select("id, superviseur_id")
-          .eq("saison_id", saisonId)
-          .eq("statut", "active"),
+          .eq("saison_id", saisonId),
         SUPABASE_TIMEOUT_MS,
         "قراءة الحصص"
       ),
@@ -172,15 +171,16 @@ export async function getSeasonDashboardStats(saisonId) {
     if (seancesRes.error) {
       return { ok: false, error: mapTableError(seancesRes.error, "seances") };
     }
+    if (!inscRes.ok) {
+      return { ok: false, error: inscRes.error || "تعذر قراءة التسجيلات" };
+    }
     const seances = seancesRes.data || [];
     const supervisorIds = new Set(
       seances.map((s) => s.superviseur_id).filter(Boolean)
     );
-    const members = inscRes.ok
-      ? new Set(
-          (inscRes.inscriptions || []).map((row) => row.membre_id).filter(Boolean)
-        ).size
-      : 0;
+    const members = new Set(
+      (inscRes.inscriptions || []).map((row) => row.membre_id).filter(Boolean)
+    ).size;
     return {
       ok: true,
       members,
