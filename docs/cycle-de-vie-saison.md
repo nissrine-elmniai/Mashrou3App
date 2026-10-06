@@ -19,7 +19,7 @@ toutes les données liées aux saisons précédentes sont supprimées, quel que 
 | `alerts`, `alert_acknowledgments`, `alert_reads`, `alertes`, `alerte_accuses` | |
 | `chat_groups`, `chat_group_members`, `chat_group_messages`, `chat_group_reads`, `messages` | |
 | `objectifs`, `member_programs` | |
-| `notifications` | |
+| `notifications` | `season_member_stats` (historique par membre, jamais purgé) |
 
 Profils mixtes membre + superviseur : le rôle `supervisor` est retiré, le compte et ses données membre sont conservés.
 Profils admin : jamais touchés.
@@ -35,16 +35,15 @@ Profils admin : jamais touchés.
    - même utilisateur vérifié, `supabaseSession` mis à jour ;
    - 3 échecs → « تم إلغاء العملية بعد 3 محاولات فاشلة ».
 4. `AppContext.startNewSeason` :
-   1. snapshot `season_stats` des saisons actives (regular + summer) et rattrapage des saisons closes qui ont encore des séances sans snapshot ;
-   2. RPC `start_new_season(p_name, p_start_date, p_version, p_type)` ;
-   3. suppression de chaque superviseur via l'Edge Function `delete-user` (boucle séquentielle, échecs collectés) → « تم حذف X من أصل Y مشرفين » ;
-   4. rechargement de l'état (saisons, registrations, notifications, users).
+   1. RPC `start_new_season` : le snapshot v2 est calculé **dans la transaction**, avant tout `DELETE` (`0124`). Le client n'écrit plus de snapshot et ne vérifie plus sa fraîcheur.
+   2. suppression de chaque superviseur via l'Edge Function `delete-user` (boucle séquentielle, échecs collectés) → « تم حذف X من أصل Y مشرفين » ;
+   3. rechargement de l'état (saisons, registrations, notifications, users).
 
 L'ancien écran `AdminSummerSchoolScreen` est **obsolète et non routé** : il contourne le reset, ne pas le rebrancher.
 
 ---
 
-## 3. RPC `public.start_new_season` (migrations `0105`, remplacée par `0106`)
+## 3. RPC `public.start_new_season` (migrations `0105`, puis `0106`, corps repris par `0124`)
 
 - Signature : `(p_name text, p_start_date date, p_version integer, p_type text default 'regular')`.
 - `SECURITY DEFINER`, `search_path = ''`, `revoke` public/anon, `grant` authenticated.
@@ -54,7 +53,7 @@ Ordre (imposé par les FK et les triggers) :
 
 | # | Étape |
 |---|---|
-| 0 | Garde-fous : `private.is_admin()` + prédicat 0097 (role / roles), entrées valides, `p_type in ('regular','summer')`, `pg_advisory_xact_lock`, snapshot présent pour toute saison avec séances, snapshot < 15 min (et non nul) pour les saisons actives |
+| 0 | Garde-fous : `private.is_admin()` + prédicat 0097 (role / roles), entrées valides, `p_type in ('regular','summer')`, `pg_advisory_xact_lock`, puis `snapshot_season` pour chaque saison active et pour chaque saison close encore peuplée de séances sans ligne `season_stats`. Plus de contrôle des 15 minutes. `season_stats` et `season_member_stats` ne sont pas purgées (`0124`) |
 | 1 | `member_applications` (avant `seances` : FK `SET NULL` → triggers guard/notify) |
 | 2 | `supervisor_invitations` |
 | 3 | `test_invitations` → `test_dates` → `tests` |
@@ -76,10 +75,13 @@ La RPC ne fait **pas** de `DELETE` sur `auth.users` : `storage.objects` le bloqu
 
 ## 4. Statistiques
 
-- `season_stats` est figé **avant** le reset, puis jamais recalculé pour une saison close.
-- `computeSeasonStats` inclut toutes les séances (y compris `archivee`) et ajoute `details.tests` (nb tests, nb notés, moyenne) et `details.objectifs` (fixés, atteints, taux).
-- `getSeasonStats` : saison close → lecture du snapshot uniquement ; sans snapshot → « لا توجد إحصائيات محفوظة لهذا الموسم ».
-- Tri de la dernière progression : `date desc, id desc` (jamais `date_saisie`).
+Détail du calcul et du JSON : `docs/statistiques.md`.
+
+- Depuis `0124`, le snapshot est calculé **côté serveur** dans `start_new_season` (`public.snapshot_season`), dans la même transaction, avant les suppressions. La règle des 15 minutes est supprimée.
+- `season_stats` et `season_member_stats` sont conservés. Une saison close n'est pas recalculée par un snapshot ultérieur.
+- Dérogation unique (`0125`) : les saisons closes dont `avg_progress_pct = 0` alors que `progression` contient leur `saison_id` voient **seulement** le bloc progression réécrit (`details.rattrapage.source = 'progression'`). `snapshot_at` et `schemaVersion` ne bougent pas.
+- Le client n'appelle que `compute_season_stats` pour la saison active. Une saison close est lue depuis `season_stats`. Aucun écran ne propose de recalcul.
+- Tri de la position courante : `date desc, id desc` (jamais `date_saisie`).
 
 ---
 
@@ -163,6 +165,7 @@ Colonnes réelles : `id uuid`, `membre_id`, `saison_id text`, `date timestamptz`
 | `0107_member_programs_saison.sql` | `saison_id` sur `member_programs` + trigger | Exécutée après le reset |
 | `0108_progression_require_enrollment.sql` | Verrou progression | Exécutée |
 | `0109_objectifs_require_enrollment.sql` | Verrou objectifs | À confirmer |
+| `0121` → `0126` | `season_stats` versionnée, `season_member_stats`, calcul serveur, snapshot dans `start_new_season`, rattrapage progression, versionnement rétroactif de `genre` et de `inscriptions_membre_id_saison_id_key` | Écrites, à exécuter dans le SQL Editor |
 
 Sauvegarde avant reset : schéma privé `backup_20261004` (copie des tables + `auth.users` / `auth.identities`). À supprimer après validation : `drop schema backup_20261004 cascade;`.
 

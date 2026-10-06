@@ -103,7 +103,6 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
       displayProfileEmail(supervisor)
     : null;
   const schedule = formatSeanceScheduleLabel(seance);
-  const archived = seance?.statut === "archivee";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -245,20 +244,8 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
         <View style={styles.card}>
           <View style={styles.titleRow}>
             <Text style={styles.seanceName}>{seance.nom}</Text>
-            <View
-              style={[
-                styles.statusPill,
-                archived ? styles.statusArchived : styles.statusActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.statusText,
-                  archived ? styles.statusArchivedText : styles.statusActiveText,
-                ]}
-              >
-                {archived ? "مؤرشفة" : "نشطة"}
-              </Text>
+            <View style={[styles.statusPill, styles.statusActive]}>
+              <Text style={[styles.statusText, styles.statusActiveText]}>نشطة</Text>
             </View>
           </View>
 
@@ -482,10 +469,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   statusActive: { backgroundColor: palette.softGreen },
-  statusArchived: { backgroundColor: "#EEEEEE" },
   statusText: { fontSize: 12, fontWeight: "600", ...rtlText },
   statusActiveText: { color: palette.primary },
-  statusArchivedText: { color: palette.muted },
   infoRow: {
     flexDirection: row,
     alignItems: "center",

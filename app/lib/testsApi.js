@@ -555,13 +555,14 @@ export function mapMemberTestToExam(row) {
  * Compteur admin (head request).
  * statut optionnel : sans argument, tous les tests (tableau de bord).
  */
-export async function countTestsAdmin(statut = null) {
+export async function countTestsAdmin(statut = null, saisonId = null) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل", count: 0 };
   }
   try {
     let query = supabase.from("tests").select("id", { count: "exact", head: true });
     if (statut) query = query.eq("statut", statut);
+    if (saisonId) query = query.eq("saison_id", saisonId);
     const { count, error } = await withTimeout(
       query,
       SUPABASE_TIMEOUT_MS,

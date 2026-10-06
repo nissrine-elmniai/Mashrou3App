@@ -1,9 +1,29 @@
-import React, { useMemo } from "react";
-import { View, Text, StyleSheet } from "react-native";
-import Svg, { Path, Circle, Polyline, Line } from "react-native-svg";
+import React, { useMemo, useState } from "react";
+import { View, Text, StyleSheet, I18nManager } from "react-native";
+import Svg, { Path, Circle, Polyline, Line, Text as SvgText } from "react-native-svg";
 import { rtlText, row } from "../../constants/rtl";
 
 const DEFAULT_COLORS = ["#2E7D32", "#81C784", "#A5D6A7", "#C8E6C9", "#FBC02D"];
+
+/** Trait jaune sous un titre, sur 60 % de la largeur du texte, aligné à droite. */
+export function UnderlinedTitle({ children, style }) {
+  const [textWidth, setTextWidth] = useState(0);
+  return (
+    <View style={styles.underlinedTitle}>
+      <Text
+        style={style}
+        onTextLayout={(event) => {
+          const lines = event.nativeEvent.lines || [];
+          const width = lines.reduce((max, line) => Math.max(max, line.width || 0), 0);
+          if (width > 0 && Math.abs(width - textWidth) > 0.5) setTextWidth(width);
+        }}
+      >
+        {children}
+      </Text>
+      <View style={[styles.titleUnderline, { width: textWidth * 0.6 }]} />
+    </View>
+  );
+}
 
 function polarToCartesian(cx, cy, r, angleDeg) {
   const rad = ((angleDeg - 90) * Math.PI) / 180;
@@ -43,15 +63,18 @@ export function DonutChart({
       .map((s, i) => {
         const value = Number(s.value) || 0;
         const sweep = (value / total) * 360;
+        // Un arc de 360° a le même point de départ et d'arrivée : SVG ne le trace pas.
+        const full = sweep >= 359.99;
         const start = angle;
-        const end = angle + Math.max(sweep, 0.5);
+        const end = angle + (full ? sweep : Math.max(sweep, 0.5));
         angle += sweep;
         return {
           key: s.key || s.label || String(i),
           label: s.label,
           value,
           color: s.color || colors[i % colors.length],
-          d: describeArc(cx, cy, r, start, end),
+          full,
+          d: full ? null : describeArc(cx, cy, r, start, end),
         };
       });
   }, [segments, total, cx, cy, r, colors]);
@@ -68,16 +91,28 @@ export function DonutChart({
             strokeWidth={stroke}
             fill="none"
           />
-          {arcs.map((a) => (
-            <Path
-              key={a.key}
-              d={a.d}
-              stroke={a.color}
-              strokeWidth={stroke}
-              fill="none"
-              strokeLinecap="butt"
-            />
-          ))}
+          {arcs.map((a) =>
+            a.full ? (
+              <Circle
+                key={a.key}
+                cx={cx}
+                cy={cy}
+                r={r}
+                stroke={a.color}
+                strokeWidth={stroke}
+                fill="none"
+              />
+            ) : (
+              <Path
+                key={a.key}
+                d={a.d}
+                stroke={a.color}
+                strokeWidth={stroke}
+                fill="none"
+                strokeLinecap="butt"
+              />
+            )
+          )}
         </Svg>
         <View style={styles.donutCenter}>
           {total <= 0 ? (
@@ -125,44 +160,131 @@ export function BarChart({
   items = [],
   height = 140,
   barColor = "#2E7D32",
+  trackColor = "#F0F0F0",
+  valueColor = "#2E7D32",
+  negativeColor = "#D32F2F",
   valueSuffix = "",
+  hideZeroFill = false,
+  hideNonPositive = false,
+  formatValue,
+  barWidth,
+  barGap,
+  paddingTop = 0,
   emptyLabel = "لا بيانات للمقارنة",
 }) {
-  const max = Math.max(1, ...items.map((i) => Number(i.value) || 0));
+  const numeric = items
+    .map((i) => i.value)
+    .filter((v) => v != null && v !== "" && Number.isFinite(Number(v)) && Number(v) > 0);
+  const max = Math.max(1, ...numeric.map((v) => Number(v)));
 
   if (!items.length) {
     return <Text style={styles.chartEmpty}>{emptyLabel}</Text>;
   }
 
   return (
-    <View style={[styles.barChart, { height: height + 36 }]}>
+    <View
+      style={[
+        styles.barChart,
+        barWidth ? { height: undefined, justifyContent: "flex-start", alignItems: "flex-start", paddingTop, gap: 0 } : { height: height + 48 },
+        !barWidth && barGap != null ? { gap: barGap } : null,
+      ]}
+    >
       {items.map((item, index) => {
-        const value = Number(item.value) || 0;
-        const h = Math.max(4, Math.round((value / max) * height));
+        const missing = item.value == null || item.value === "";
+        const value = missing ? null : Number(item.value);
+        const finite = Number.isFinite(value);
+        const noFill =
+          !finite ||
+          (hideZeroFill && value === 0) ||
+          (hideNonPositive && value <= 0);
+        const h = noFill
+          ? 0
+          : barWidth
+            ? Math.round((value / max) * height)
+            : Math.max(4, Math.round((value / max) * height));
+        const shown = formatValue
+          ? formatValue(finite ? value : null)
+          : !finite
+            ? "—"
+            : `${value}${valueSuffix}`;
+        const slot = barWidth ? barWidth + (barGap || 0) : undefined;
         return (
-          <View key={item.key || item.label || index} style={styles.barCol}>
-            <Text style={styles.barValue}>
-              {value}
-              {valueSuffix}
-            </Text>
-            <View style={[styles.barTrack, { height }]}>
-              <View
+          <View
+            key={item.key || item.label || index}
+            style={[
+              styles.barCol,
+              slot
+                ? { width: slot, flex: 0, minWidth: slot, alignItems: "center" }
+                : null,
+            ]}
+          >
+            <View style={slot ? styles.barValueSlot : null}>
+              <Text
+                numberOfLines={slot ? 1 : undefined}
                 style={[
-                  styles.barFill,
-                  {
-                    height: h,
-                    backgroundColor: item.color || barColor,
-                  },
+                  styles.barValue,
+                  { color: finite && value < 0 ? negativeColor : valueColor },
+                  slot ? { textAlign: "center", marginBottom: 0, width: slot } : null,
                 ]}
-              />
+              >
+                {shown}
+              </Text>
             </View>
-            <Text style={styles.barLabel} numberOfLines={2}>
-              {item.label}
-            </Text>
+            <View
+              style={[
+                styles.barTrack,
+                { height, backgroundColor: trackColor },
+                barWidth ? { width: barWidth, maxWidth: barWidth } : null,
+              ]}
+            >
+              {h > 0 ? (
+                <View
+                  style={[
+                    styles.barFill,
+                    {
+                      height: h,
+                      backgroundColor: item.color || barColor,
+                    },
+                  ]}
+                />
+              ) : null}
+            </View>
+            {slot ? (
+              <View style={[styles.barLabelSlot, { width: slot }]}>
+                <Text
+                  style={[styles.barLabel, styles.barLabelInSlot]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {item.label}
+                </Text>
+                <Text style={styles.barCaption} numberOfLines={1}>
+                  {item.caption || ""}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.barLabel} numberOfLines={2}>
+                {item.label}
+              </Text>
+            )}
           </View>
         );
       })}
     </View>
+  );
+}
+
+/** Répartition en barres : même style pour présence, progression et notes. */
+export function DistributionBarChart(props) {
+  return (
+    <BarChart
+      barColor="#2E7D32"
+      trackColor="#F0F0F0"
+      valueColor="#333333"
+      valueSuffix=" عضو"
+      hideZeroFill
+      {...props}
+    />
   );
 }
 
@@ -172,6 +294,7 @@ export function LineChart({
   width = 300,
   height = 160,
   color = "#2E7D32",
+  pointSuffix = null,
   emptyLabel = "لا بيانات زمنية بعد",
 }) {
   if (!points.length) {
@@ -180,25 +303,44 @@ export function LineChart({
 
   const padL = 28;
   const padR = 8;
-  const padT = 16;
+  const padT = pointSuffix == null ? 16 : 28;
   const padB = 28;
   const chartW = width - padL - padR;
   const chartH = height - padT - padB;
-  const values = points.map((p) => Number(p.value) || 0);
+  const values = points
+    .map((p) => (p.value == null || p.value === "" ? null : Number(p.value)))
+    .filter((v) => v != null && Number.isFinite(v));
+  if (!values.length) {
+    return <Text style={styles.chartEmpty}>{emptyLabel}</Text>;
+  }
   const max = Math.max(100, ...values, 1);
   const min = 0;
 
   const coords = points.map((p, i) => {
+    const missing = p.value == null || p.value === "" || !Number.isFinite(Number(p.value));
+    const value = missing ? null : Number(p.value);
     const x =
       points.length === 1
         ? padL + chartW / 2
         : padL + (i / (points.length - 1)) * chartW;
-    const y =
-      padT + chartH - ((Number(p.value) || 0) - min) / (max - min) * chartH;
-    return { x, y, ...p };
+    const y = missing
+      ? null
+      : padT + chartH - ((value - min) / (max - min)) * chartH;
+    return { x, y, value, ...p };
   });
 
-  const polyline = coords.map((c) => `${c.x},${c.y}`).join(" ");
+  // Un trou (valeur null) coupe la courbe : on ne relie pas à travers.
+  const segments = [];
+  let current = [];
+  for (const c of coords) {
+    if (c.y == null) {
+      if (current.length) segments.push(current);
+      current = [];
+    } else {
+      current.push(c);
+    }
+  }
+  if (current.length) segments.push(current);
 
   return (
     <View>
@@ -217,21 +359,44 @@ export function LineChart({
             />
           );
         })}
-        <Polyline
-          points={polyline}
-          fill="none"
-          stroke={color}
-          strokeWidth={2.5}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {coords.map((c, i) => (
-          <Circle key={i} cx={c.x} cy={c.y} r={4} fill={color} />
-        ))}
+        {segments.map((seg, si) =>
+          seg.length < 2 ? null : (
+            <Polyline
+              key={si}
+              points={seg.map((c) => `${c.x},${c.y}`).join(" ")}
+              fill="none"
+              stroke={color}
+              strokeWidth={2.5}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          )
+        )}
+        {coords.map((c, i) =>
+          c.y == null ? null : (
+            <Circle key={i} cx={c.x} cy={c.y} r={4} fill={color} />
+          )
+        )}
+        {pointSuffix == null
+          ? null
+          : coords.map((c, i) =>
+              c.y == null ? null : (
+                <SvgText
+                  key={`v-${i}`}
+                  x={c.x}
+                  y={c.y - 10}
+                  fontSize={11}
+                  fill="#333333"
+                  textAnchor="middle"
+                >
+                  {`${c.value}${pointSuffix}`}
+                </SvgText>
+              )
+            )}
       </Svg>
       <View style={[styles.lineLabels, { paddingLeft: padL, paddingRight: padR }]}>
         {points.map((p, i) => (
-          <Text key={p.key || i} style={styles.lineLabel} numberOfLines={1}>
+          <Text key={p.key || i} style={styles.lineLabel} numberOfLines={2}>
             {p.label}
           </Text>
         ))}
@@ -244,15 +409,30 @@ export function LineChart({
 export function ProgressMeter({
   label,
   value = 0,
+  hint = null,
   color = "#2E7D32",
   trackColor = "#E8F5E9",
 }) {
+  if (value == null || value === "") {
+    return (
+      <View style={styles.meterWrap}>
+        <View style={styles.meterHeader}>
+          <Text style={styles.meterLabel}>{label}</Text>
+          <Text style={[styles.meterValue, { color }]}>—</Text>
+        </View>
+        <View style={[styles.meterTrack, { backgroundColor: trackColor }]} />
+      </View>
+    );
+  }
   const clamped = Math.max(0, Math.min(100, Number(value) || 0));
   return (
     <View style={styles.meterWrap}>
       <View style={styles.meterHeader}>
         <Text style={styles.meterLabel}>{label}</Text>
-        <Text style={[styles.meterValue, { color }]}>{clamped}%</Text>
+        <View style={styles.meterValueGroup}>
+          <Text style={[styles.meterValue, { color }]}>{clamped}%</Text>
+          {hint ? <Text style={styles.meterHint}>{hint}</Text> : null}
+        </View>
       </View>
       <View style={[styles.meterTrack, { backgroundColor: trackColor }]}>
         <View
@@ -267,6 +447,16 @@ export function ProgressMeter({
 }
 
 const styles = StyleSheet.create({
+  underlinedTitle: {
+    alignSelf: "stretch",
+    alignItems: I18nManager.isRTL ? "flex-start" : "flex-end",
+  },
+  titleUnderline: {
+    height: 3,
+    marginTop: 4,
+    borderRadius: 2,
+    backgroundColor: "#FFD666",
+  },
   donutWrap: {
     flexDirection: row,
     alignItems: "center",
@@ -359,8 +549,30 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 10,
     color: "#666",
-    textAlign: "center",
     ...rtlText,
+    textAlign: "center",
+  },
+  barValueSlot: {
+    height: 24,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  barLabelSlot: {
+    height: 40,
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
+  barLabelInSlot: {
+    marginTop: 0,
+    width: "100%",
+    textAlign: "center",
+  },
+  barCaption: {
+    fontSize: 10,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 2,
+    width: "100%",
   },
   chartEmpty: {
     textAlign: "center",
@@ -387,6 +599,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
+  meterValueGroup: { flexDirection: row, alignItems: "baseline", gap: 6 },
+  meterHint: { fontSize: 12, color: "#666666" },
   meterLabel: {
     fontSize: 13,
     color: "#666",
