@@ -16,7 +16,7 @@ toutes les données liées aux saisons précédentes sont supprimées, quel que 
 | `seances`, `inscriptions`, `presences`, `presence_rappels` | `progression` (position réelle dans le Coran) |
 | `member_applications` (tous kinds / statuts) | Lignes `saisons` (passées `active = false`) |
 | `tests`, `test_dates`, `test_invitations` (notes comprises) | `season_stats` (statistiques des saisons passées) |
-| `alerts`, `alert_acknowledgments`, `alert_reads`, `alertes`, `alerte_accuses` | |
+| `alerts`, `alert_acknowledgments` | |
 | `chat_groups`, `chat_group_members`, `chat_group_messages`, `chat_group_reads`, `messages` | |
 | `objectifs`, `member_programs` | |
 | `notifications` | `season_member_stats` (historique par membre, jamais purgé) |
@@ -43,7 +43,7 @@ L'ancien écran `AdminSummerSchoolScreen` est **obsolète et non routé** : il c
 
 ---
 
-## 3. RPC `public.start_new_season` (migrations `0105`, puis `0106`, corps repris par `0124`)
+## 3. RPC `public.start_new_season` (migrations `0105`, puis `0106`, corps repris par `0124`, puis par `0130`)
 
 - Signature : `(p_name text, p_start_date date, p_version integer, p_type text default 'regular')`.
 - `SECURITY DEFINER`, `search_path = ''`, `revoke` public/anon, `grant` authenticated.
@@ -57,7 +57,7 @@ Ordre (imposé par les FK et les triggers) :
 | 1 | `member_applications` (avant `seances` : FK `SET NULL` → triggers guard/notify) |
 | 2 | `supervisor_invitations` |
 | 3 | `test_invitations` → `test_dates` → `tests` |
-| 4 | `alert_acknowledgments`, `alert_reads`, `alerts`, `alerte_accuses`, `alertes` |
+| 4 | `alert_acknowledgments`, `alerts`. `0130` retire `alert_reads`, `alerte_accuses` et `alertes` : ces tables sont supprimées, la RPC ne les vide plus |
 | 5 | groupes de chat puis `messages` (FK `messages → profiles` sans `ON DELETE`) |
 | 6 | `objectifs`, `member_programs` |
 | 7 | `presences`, `presence_rappels`, `inscriptions`, puis `seances` (avant les superviseurs) |
@@ -181,7 +181,7 @@ Sauvegarde avant reset : schéma privé `backup_20261004` (copie des tables + `a
 - Test à blanc fiable : bloc `DO` qui simule l'admin (`set_config('request.jwt.claims', …)`), appelle la RPC, puis **lève une exception** contenant les résultats → tout est annulé, résultats visibles.
 - Le SQL Editor exécute un script en une transaction : une erreur annule tout le fichier.
 - Ne jamais deviner un nom de colonne : `information_schema.columns` d'abord (ex. `progression` n'a pas `created_at`).
-- Plusieurs tables, triggers et fonctions existent en base mais pas dans `supabase/migrations/` (`alertes`, `alerte_accuses`, `alert_reads`, `season_stats`, `profiles_sync_roles`, `deactivate_supervisors_for_saisons`, `account_status`).
+- Plusieurs tables, triggers et fonctions existent en base mais pas dans `supabase/migrations/` (`season_stats`, `profiles_sync_roles`, `deactivate_supervisors_for_saisons`, `account_status`). `alertes`, `alerte_accuses` et `alert_reads` sont dans ce cas jusqu'à l'exécution de `0130`, qui les supprime.
 - **Synchronisation montante** (« distant vide → pousser le cache local ») : à proscrire, elle annule les purges serveur.
 - **Anciennes versions de l'app** : le serveur doit se protéger seul (colonnes `NOT NULL` sans défaut, triggers). Distribuer la nouvelle version **avant** d'accepter les réinscriptions.
 
