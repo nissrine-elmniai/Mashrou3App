@@ -292,7 +292,8 @@ export function AdminChatFab({ navigation, hidden = false }) {
   );
 }
 
-export function useAdminSidebar(navigation, activeItem = "home") {
+export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
+  const registrationsBadge = options?.registrationsBadge;
   const [isOpen, setIsOpen] = useState(false);
   const {
     currentUser,
@@ -335,14 +336,17 @@ export function useAdminSidebar(navigation, activeItem = "home") {
       if (n > 0) mapped[menuId] = n;
     });
     if (plannedTestsCount > 0) mapped.tests = plannedTestsCount;
-    const pendingRegs = Number(stats?.pendingRegs) || 0;
+    const pendingRegs =
+      registrationsBadge === undefined
+        ? Number(stats?.pendingRegs) || 0
+        : Number(registrationsBadge) || 0;
     if (pendingRegs > 0) {
       mapped.registrations = pendingRegs;
     } else {
       delete mapped.registrations;
     }
     return mapped;
-  }, [currentUser, getMenuBadgeCounts, notifications, stats?.pendingRegs, plannedTestsCount]);
+  }, [currentUser, getMenuBadgeCounts, notifications, stats?.pendingRegs, plannedTestsCount, registrationsBadge]);
 
   // Ouvrir une section (y compris via navigation hors sidebar) → marquer lue.
   // Les tests ne sont plus une catégorie de notifications locales.

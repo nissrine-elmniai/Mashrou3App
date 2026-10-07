@@ -146,7 +146,7 @@ export default function MemberSeasonHistory({ membreId }) {
       {loading ? (
         <View style={styles.state}>
           <ActivityIndicator color={palette.primary} />
-          <Text style={styles.stateText}>{STATS_LABELS.loading}</Text>
+          <Text style={styles.stateText}>{STATS_LABELS.loadingData}</Text>
         </View>
       ) : error ? (
         <View style={styles.state}>

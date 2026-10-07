@@ -87,12 +87,8 @@ export function mapMemberApplicationRow(row) {
     freeTimes: Array.isArray(answers.freeTimes) ? answers.freeTimes : [],
     status,
     inviteToken: null,
-    createdAt: row.created_at
-      ? String(row.created_at).slice(0, 10)
-      : "",
-    acceptedAt: row.accepted_at
-      ? String(row.accepted_at).slice(0, 10)
-      : undefined,
+    createdAt: row.created_at ? String(row.created_at) : "",
+    acceptedAt: row.accepted_at ? String(row.accepted_at) : undefined,
   };
 }
 
@@ -136,6 +132,36 @@ export async function listMemberApplications() {
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/** Dix demandes les plus récentes de la saison, tous statuts et tous kind. */
+export async function listRecentMemberApplications(saisonId, limit = 10) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", applications: [] };
+  }
+  if (!saisonId) return { ok: true, applications: [] };
+  const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("member_applications")
+        .select("*")
+        .eq("season_id", saisonId)
+        .order("created_at", { ascending: false })
+        .limit(take),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة آخر الطلبات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "member_applications"), applications: [] };
+    }
+    return {
+      ok: true,
+      applications: (data || []).map(mapMemberApplicationRow).filter(Boolean),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", applications: [] };
   }
 }
 
@@ -544,19 +570,22 @@ function getRegistrationKindSafe(reg) {
 }
 
 /**
- * (Admin) Nombre de demandes d'inscription en attente (statistiques).
+ * (Admin) Demandes pending. saisonId limite à la saison affichée.
+ * Sans saisonId : toutes les saisons (appel historique).
  * @returns { ok, count }
  */
-export async function countPendingApplications() {
+export async function countPendingApplications(saisonId = null) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
+    let query = supabase
+      .from("member_applications")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    if (saisonId) query = query.eq("season_id", saisonId);
     const { count, error } = await withTimeout(
-      supabase
-        .from("member_applications")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending"),
+      query,
       SUPABASE_TIMEOUT_MS,
       "قراءة الطلبات المعلقة"
     );

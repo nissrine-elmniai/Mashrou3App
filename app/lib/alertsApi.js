@@ -701,6 +701,42 @@ export async function getAllAlertsAdmin(options = {}) {
   }
 }
 
+/** Alertes récentes de la saison (table alerts, colonne saison_id). */
+export async function listRecentAlertsAdmin(saisonId, limit = 10) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", alerts: [] };
+  }
+  if (!saisonId) return { ok: true, alerts: [] };
+  const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
+  try {
+    const { data, error } = await withTimeout(
+      supabase
+        .from("alerts")
+        .select("id, title, message, body, created_at, saison_id")
+        .eq("saison_id", saisonId)
+        .order("created_at", { ascending: false })
+        .limit(take),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة آخر التنبيهات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "alerts"), alerts: [] };
+    }
+    return {
+      ok: true,
+      alerts: (data || []).map((row) => ({
+        id: row.id,
+        title: row.title || "",
+        message: row.message || row.body || row.title || "",
+        createdAt: row.created_at || null,
+        saisonId: row.saison_id || null,
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", alerts: [] };
+  }
+}
+
 /**
  * Alertes visibles (RLS + saison + date d'inscription).
  */

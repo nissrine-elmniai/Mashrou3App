@@ -759,6 +759,61 @@ export async function getSupervisorProfiles() {
 }
 
 /**
+ * Profils qui ont le rôle superviseur (colonne role ou tableau roles).
+ * Les invitations supervisor_invitations ne sont pas des profils : elles
+ * ne sont pas lues ici.
+ */
+export async function listSupervisorRoleProfiles() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  const withRoles =
+    "id, first_name, last_name, email, canonical_email, role, roles, account_status";
+  const roleOnly =
+    "id, first_name, last_name, email, canonical_email, role, account_status";
+  try {
+    let { data, error } = await withTimeout(
+      supabase.from("profiles").select(withRoles).or("role.eq.supervisor,roles.cs.{supervisor}"),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة المشرفين"
+    );
+    if (error && /roles|canonical_email|column/i.test(error.message || "")) {
+      ({ data, error } = await withTimeout(
+        supabase.from("profiles").select(roleOnly).eq("role", "supervisor"),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة المشرفين"
+      ));
+    }
+    if (error) {
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+    return { ok: true, supervisors: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * Compteur accueil : séances actives de la saison, plus les comptes
+ * superviseur actifs même sans séance. Un inactif ne compte que s'il
+ * tient encore une séance active (même règle que l'onglet « الكل »).
+ */
+export function dashboardSupervisorIds(profiles, seances, saisonId) {
+  const assigned = supervisorIdsForSeason(seances, saisonId);
+  const visible = excludeDuplicateSupervisorAccounts(
+    (profiles || []).filter((profile) => {
+      const status = profile?.account_status || "active";
+      if (status === "inactive") return assigned.has(profile.id);
+      return status === "active";
+    }),
+    assigned
+  );
+  const ids = new Set(visible.map((profile) => profile.id).filter(Boolean));
+  assigned.forEach((id) => ids.add(id));
+  return ids;
+}
+
+/**
  * Superviseurs affichés par l'admin : role = 'supervisor' ET affectés à une
  * séance active (statut = active) de la saison demandée.
  * Même règle que l'écran « المشرفون » et le picker « المشرف ».
@@ -914,11 +969,9 @@ export async function getAllAcceptedInscriptions({ saisonId = null } = {}) {
     let rows = data || [];
     if (saisonId != null && String(saisonId) !== "") {
       const wanted = String(saisonId);
-      rows = rows.filter(
-        (row) =>
-          String(row.saison_id || "") === wanted ||
-          String(row.seance?.saison_id || "") === wanted
-      );
+      // Inscrit de CETTE saison : inscriptions.saison_id seul.
+      // La séance peut porter un autre id sans faire entrer la ligne.
+      rows = rows.filter((row) => String(row.saison_id || "") === wanted);
     }
     return { ok: true, inscriptions: rows };
   } catch (e) {

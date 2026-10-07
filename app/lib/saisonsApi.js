@@ -1,5 +1,11 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
-import { getAllAcceptedInscriptions } from "./seancesApi";
+import {
+  getAllAcceptedInscriptions,
+  getAllSeances,
+  listSupervisorRoleProfiles,
+  dashboardSupervisorIds,
+} from "./seancesApi";
+import { filterSeancesForSeason } from "./seasonScope";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -78,6 +84,7 @@ function rowToSeason(row) {
     registrationOpen: !!row.registration_open,
     active: !!row.active,
     remote: !!row.remote,
+    createdAt: row.created_at || null,
   };
 }
 
@@ -154,38 +161,47 @@ export async function syncSeasonsWithSupabase(localSeasons = []) {
 /** (Admin) Compteurs tableau de bord pour un musim donné. */
 export async function getSeasonDashboardStats(saisonId) {
   if (!isSupabaseConfigured() || !saisonId) {
-    return { ok: true, members: 0, supervisors: 0, seances: 0 };
+    return { ok: false, error: "تعذر تحميل البيانات" };
   }
   try {
-    const [seancesRes, inscRes] = await Promise.all([
-      withTimeout(
-        supabase
-          .from("seances")
-          .select("id, superviseur_id")
-          .eq("saison_id", saisonId),
-        SUPABASE_TIMEOUT_MS,
-        "قراءة الحصص"
-      ),
+    const [seancesRes, inscRes, profilesRes] = await Promise.all([
+      getAllSeances({ lite: true }),
       getAllAcceptedInscriptions({ saisonId }),
+      listSupervisorRoleProfiles(),
     ]);
-    if (seancesRes.error) {
-      return { ok: false, error: mapTableError(seancesRes.error, "seances") };
+    if (seancesRes.error || !seancesRes.ok) {
+      return { ok: false, error: seancesRes.error || "تعذر قراءة الحصص" };
     }
     if (!inscRes.ok) {
       return { ok: false, error: inscRes.error || "تعذر قراءة التسجيلات" };
     }
-    const seances = seancesRes.data || [];
-    const supervisorIds = new Set(
-      seances.map((s) => s.superviseur_id).filter(Boolean)
+    if (!profilesRes.ok) {
+      return { ok: false, error: profilesRes.error || "تعذر قراءة المشرفين" };
+    }
+    // Même filtre que l'écran الحصص : saison (ou saison_id vide) et statut active.
+    const activeSeances = filterSeancesForSeason(seancesRes.seances, saisonId).filter(
+      (seance) => seance.statut === "active"
     );
+    const wanted = String(saisonId);
     const members = new Set(
-      (inscRes.inscriptions || []).map((row) => row.membre_id).filter(Boolean)
+      (inscRes.inscriptions || [])
+        .filter((row) => {
+          if (String(row.saison_id || "") !== wanted) return false;
+          const statut = row.seance?.statut;
+          return !!statut && statut !== "archivee";
+        })
+        .map((row) => row.membre_id)
+        .filter(Boolean)
     ).size;
     return {
       ok: true,
       members,
-      supervisors: supervisorIds.size,
-      seances: seances.length,
+      supervisors: dashboardSupervisorIds(
+        profilesRes.supervisors,
+        seancesRes.seances,
+        saisonId
+      ).size,
+      seances: activeSeances.length,
     };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };

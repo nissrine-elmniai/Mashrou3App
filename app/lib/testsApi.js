@@ -587,20 +587,22 @@ export function countPlannedTestsAdmin() {
 }
 
 /** Derniers tests pour le fil d'activité admin. */
-export async function listRecentTestsAdmin(limit = 10) {
+export async function listRecentTestsAdmin(limit = 10, saisonId = null) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل", tests: [] };
   }
   const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
   try {
+    let query = supabase
+      .from("tests")
+      .select(
+        "id, titre, statut, created_at, saison_id, test_dates(date_proposee), invitations:test_invitations!test_invitations_test_id_fkey(statut)"
+      )
+      .order("created_at", { ascending: false })
+      .limit(take);
+    if (saisonId) query = query.eq("saison_id", saisonId);
     const { data, error } = await withTimeout(
-      supabase
-        .from("tests")
-        .select(
-          "id, titre, statut, created_at, saison_id, test_dates(date_proposee), invitations:test_invitations!test_invitations_test_id_fkey(statut)"
-        )
-        .order("created_at", { ascending: false })
-        .limit(take),
+      query,
       SUPABASE_TIMEOUT_MS,
       "قراءة آخر الاختبارات"
     );

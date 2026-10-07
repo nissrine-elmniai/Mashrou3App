@@ -15,25 +15,28 @@ import {
   UserPlus,
   CalendarPlus,
   ClipboardPlus,
+  ClipboardList,
+  FileText,
   Megaphone,
-  Activity,
+  RefreshCw,
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getActiveRegularSeason } from "../../lib/seasonScope";
+import { pickDisplayedActiveSeason } from "../../lib/seasonScope";
 import { getSeasonDashboardStats } from "../../lib/saisonsApi";
+import { STATS_LABELS } from "../../lib/statsLabels";
+import {
+  countPendingApplications,
+  listRecentMemberApplications,
+} from "../../lib/memberApplicationsApi";
+import { listRecentAlertsAdmin } from "../../lib/alertsApi";
 import {
   countTestsAdmin,
   listRecentTestsAdmin,
   mapTestToDashboardExam,
 } from "../../lib/testsApi";
-import {
-  ROLES,
-  userHasRole,
-  REGISTRATION_STATUS,
-  ACCOUNT_STATUS,
-} from "../../constants/roles";
+import { REGISTRATION_KIND, REGISTRATION_STATUS } from "../../constants/roles";
 import { rtlText, rtlTextCenter, row, fonts } from "../../constants/rtl";
 import { colors, radii } from "../../constants/theme";
 import { SectionCard } from "../../components/ui";
@@ -118,16 +121,18 @@ function formatRelativeTime(date) {
 function buildRecentActivities({
   registrations = [],
   exams = [],
-  users = [],
-  notifications = [],
+  alerts = [],
 }) {
   const items = [];
 
   registrations.forEach((r) => {
     const name = r.fullName || r.email || "مترشح";
+    const icon =
+      r.kind === REGISTRATION_KIND.SEASON_RENEWAL ? RefreshCw : FileText;
     if (r.status === REGISTRATION_STATUS.PENDING) {
       items.push({
         id: `reg-pending-${r.id}`,
+        icon,
         color: colors.gold,
         text: `طلب تسجيل جديد: ${name}`,
         at: parseActivityDate(r.createdAt) || new Date(0),
@@ -138,6 +143,7 @@ function buildRecentActivities({
     ) {
       items.push({
         id: `reg-accepted-${r.id}`,
+        icon,
         color: colors.primary,
         text: `تم قبول طلب: ${name}`,
         at:
@@ -148,6 +154,7 @@ function buildRecentActivities({
     } else if (r.status === REGISTRATION_STATUS.ACTIVATED) {
       items.push({
         id: `reg-activated-${r.id}`,
+        icon,
         color: colors.primary,
         text: `تم إنشاء حساب العضو: ${name}`,
         at:
@@ -158,6 +165,7 @@ function buildRecentActivities({
     } else if (r.status === REGISTRATION_STATUS.REJECTED) {
       items.push({
         id: `reg-rejected-${r.id}`,
+        icon,
         color: colors.red,
         text: `تم رفض طلب: ${name}`,
         at: parseActivityDate(r.createdAt) || new Date(0),
@@ -170,32 +178,21 @@ function buildRecentActivities({
     if (!display) return;
     items.push({
       id: `exam-${display.key}-${exam.id}`,
+      icon: ClipboardList,
       color: display.color,
       text: `${display.label}: ${exam.title || "اختبار"}`,
       at: parseActivityDate(exam.createdAt) || parseActivityDate(exam.date) || new Date(0),
     });
   });
 
-  users.forEach((u) => {
-    if (!userHasRole(u, ROLES.SUPERVISOR)) return;
-    if (u.accountStatus !== ACCOUNT_STATUS.INVITED) return;
-    const name = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email;
+  alerts.forEach((alert) => {
+    const text = alert.message || alert.title || "تنبيه";
     items.push({
-      id: `sup-invite-${u.id}`,
-      color: colors.gold,
-      text: `تعيين مشرف جديد: ${name}`,
-      at: parseActivityDate(u.createdAt) || new Date(0),
-    });
-  });
-
-  notifications.forEach((n) => {
-    const title = String(n.title || "");
-    if (!title.includes("تنبيه")) return;
-    items.push({
-      id: `notif-${n.id}`,
+      id: `alert-${alert.id}`,
+      icon: Bell,
       color: colors.red,
-      text: n.body ? `${title}: ${n.body}` : title,
-      at: parseActivityDate(n.createdAt) || new Date(0),
+      text,
+      at: parseActivityDate(alert.createdAt) || new Date(0),
     });
   });
 
@@ -204,18 +201,28 @@ function buildRecentActivities({
     .slice(0, 10)
     .map((item) => ({
       id: item.id,
+      icon: item.icon,
       color: item.color,
       text: item.text,
       time: formatRelativeTime(item.at),
     }));
 }
 
-function DashboardHome({ navigation, stats, activities, loading, error, onRetry, noSeason }) {
+function DashboardHome({
+  navigation,
+  stats,
+  activities,
+  loading,
+  error,
+  onRetry,
+  noSeason,
+  multipleActive,
+}) {
   if (loading) {
     return (
       <View style={dhStyles.stateBox}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={dhStyles.stateText}>جاري تحميل الإحصائيات…</Text>
+        <Text style={dhStyles.stateText}>{STATS_LABELS.loadingData}</Text>
       </View>
     );
   }
@@ -278,6 +285,9 @@ function DashboardHome({ navigation, stats, activities, loading, error, onRetry,
           <Text style={dhStyles.heroValue}>{members}</Text>
           <Text style={dhStyles.heroLabel}>{membersLabel(members)}</Text>
         </View>
+        {multipleActive ? (
+          <Text style={dhStyles.multiWarning}>يوجد أكثر من موسم نشط</Text>
+        ) : null}
         <View style={dhStyles.statDivider} />
         <View style={dhStyles.secondaryRow}>
           {secondaryStats.map((stat) => (
@@ -316,14 +326,14 @@ function DashboardHome({ navigation, stats, activities, loading, error, onRetry,
         {activities.length === 0 ? (
           <Text style={dhStyles.activityEmpty}>لا يوجد نشاط بعد</Text>
         ) : (
-          activities.map((activity) => (
+          activities.map((activity) => {
+            const Icon = activity.icon;
+            return (
             <View key={activity.id} style={dhStyles.activityRow}>
               <View style={dhStyles.activityIconWrap}>
-                <Activity
-                  size={16}
-                  color={colors.muted}
-                  pointerEvents="none"
-                />
+                {Icon ? (
+                  <Icon size={16} color={colors.muted} pointerEvents="none" />
+                ) : null}
               </View>
               <Text style={dhStyles.activityText} numberOfLines={2}>
                 {activity.text}
@@ -332,7 +342,8 @@ function DashboardHome({ navigation, stats, activities, loading, error, onRetry,
                 <Text style={dhStyles.activityWhen}>{activity.time}</Text>
               ) : null}
             </View>
-          ))
+            );
+          })
         )}
       </SectionCard>
     </View>
@@ -340,23 +351,25 @@ function DashboardHome({ navigation, stats, activities, loading, error, onRetry,
 }
 
 export default function AdminDashboard({ navigation }) {
-  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "home");
   const {
-    stats,
     currentUser,
     seasons,
-    registrations,
-    notifications,
   } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
-  const activeSeason = getActiveRegularSeason(seasons);
+  const { season: activeSeason, multiple: multipleActive } = pickDisplayedActiveSeason(seasons);
   const [seasonStats, setSeasonStats] = useState(null);
   const [examCount, setExamCount] = useState(null);
   const [recentExams, setRecentExams] = useState([]);
+  const [recentApplications, setRecentApplications] = useState([]);
+  const [recentAlerts, setRecentAlerts] = useState([]);
+  const [pendingApplications, setPendingApplications] = useState(null);
   const [dashLoading, setDashLoading] = useState(true);
   const [dashError, setDashError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "home", {
+    registrationsBadge: pendingApplications,
+  });
 
   useFocusEffect(
     useCallback(() => {
@@ -364,24 +377,44 @@ export default function AdminDashboard({ navigation }) {
       (async () => {
         setDashLoading(true);
         setDashError(null);
+        setPendingApplications(null);
         if (!activeSeason?.id) {
           if (!cancelled) {
             setSeasonStats(null);
             setExamCount(null);
             setRecentExams([]);
+            setRecentApplications([]);
+            setRecentAlerts([]);
+            setPendingApplications(0);
             setDashLoading(false);
           }
           return;
         }
-        const [res, countRes, listRes] = await Promise.all([
+        const [res, countRes, listRes, pendingRes, appsRes, alertsRes] = await Promise.all([
           getSeasonDashboardStats(activeSeason.id),
           countTestsAdmin(null, activeSeason.id),
-          listRecentTestsAdmin(8),
+          listRecentTestsAdmin(8, activeSeason.id),
+          countPendingApplications(activeSeason.id),
+          listRecentMemberApplications(activeSeason.id, 10),
+          listRecentAlertsAdmin(activeSeason.id, 10),
         ]);
         if (cancelled) return;
-        if (!res.ok || !countRes.ok || !listRes.ok) {
+        if (
+          !res.ok ||
+          !countRes.ok ||
+          !listRes.ok ||
+          !pendingRes.ok ||
+          !appsRes.ok ||
+          !alertsRes.ok
+        ) {
           setDashError(
-            res.error || countRes.error || listRes.error || "تعذر تحميل البيانات"
+            res.error ||
+              countRes.error ||
+              listRes.error ||
+              pendingRes.error ||
+              appsRes.error ||
+              alertsRes.error ||
+              "تعذر تحميل البيانات"
           );
           setDashLoading(false);
           return;
@@ -393,6 +426,9 @@ export default function AdminDashboard({ navigation }) {
         });
         setExamCount(countRes.count ?? 0);
         setRecentExams((listRes.tests || []).map(mapTestToDashboardExam));
+        setRecentApplications(appsRes.applications || []);
+        setRecentAlerts(alertsRes.alerts || []);
+        setPendingApplications(pendingRes.count ?? 0);
         setDashLoading(false);
       })();
       return () => {
@@ -401,38 +437,24 @@ export default function AdminDashboard({ navigation }) {
     }, [activeSeason?.id, reloadKey])
   );
 
-  const pendingRegs = useMemo(
-    () =>
-      registrations.filter(
-        (r) =>
-          r.status === REGISTRATION_STATUS.PENDING &&
-          (!activeSeason || !r.seasonId || r.seasonId === activeSeason.id)
-      ).length,
-    [registrations, activeSeason]
-  );
-
   const derivedStats = {
     members: seasonStats?.members ?? 0,
     supervisors: seasonStats?.supervisors ?? 0,
     seances: seasonStats?.seances ?? 0,
     exams: examCount ?? 0,
-    pendingRegs: stats?.pendingRegs ?? pendingRegs,
   };
 
   const recentActivities = useMemo(
     () =>
       buildRecentActivities({
-        registrations: activeSeason
-          ? registrations.filter(
-              (r) => !r.seasonId || r.seasonId === activeSeason.id
-            )
-          : registrations,
+        registrations: recentApplications,
         exams: recentExams,
-        users: [],
-        notifications,
+        alerts: recentAlerts,
       }),
-    [registrations, recentExams, notifications, activeSeason]
+    [recentApplications, recentExams, recentAlerts]
   );
+
+  const barTitle = activeSeason?.name || "";
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -445,7 +467,13 @@ export default function AdminDashboard({ navigation }) {
         >
           <Menu size={24} color={colors.text} pointerEvents="none" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>الرئيسية</Text>
+        <Text
+          style={styles.topBarTitle}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
+          {barTitle}
+        </Text>
         <AdminTopBarAvatar
           currentUser={currentUser}
           onPress={() => navigation.navigate("AdminProfile")}
@@ -479,6 +507,7 @@ export default function AdminDashboard({ navigation }) {
           error={dashError}
           onRetry={() => setReloadKey((n) => n + 1)}
           noSeason={!activeSeason?.id}
+          multipleActive={multipleActive}
         />
       </ScrollView>
 
@@ -515,22 +544,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     ...rtlText,
   },
-  bellBadge: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    width: 16,
-    height: 16,
-    backgroundColor: colors.primary,
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  bellBadgeText: {
-    color: colors.card,
-    fontSize: 10,
-    fontFamily: fonts.bold,
-  },
 });
 
 const dhStyles = StyleSheet.create({
@@ -554,16 +567,10 @@ const dhStyles = StyleSheet.create({
     fontFamily: fonts.medium,
     ...rtlText,
   },
-  pendingBadge: {
-    alignSelf: "center",
-    backgroundColor: colors.primarySoft,
-    borderRadius: radii.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  pendingBadgeText: {
-    color: colors.primary,
-    fontSize: 12,
+  multiWarning: {
+    marginTop: 8,
+    color: "#8D6E00",
+    fontSize: 13,
     fontFamily: fonts.semiBold,
     ...rtlText,
   },

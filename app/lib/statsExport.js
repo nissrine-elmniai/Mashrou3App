@@ -4,6 +4,8 @@ import { STATS_LABELS } from "./statsLabels";
 import { monthLabelAr } from "./seasonStatsApi";
 
 const PRIMARY = "#2E7D32";
+const PRIMARY_SOFT = "#81C784";
+const GOLD = "#FBC02D";
 const YELLOW = "#FFD666";
 const TRACK = "#F0F0F0";
 const RED = "#D32F2F";
@@ -92,14 +94,16 @@ function hizbFromTumun(tumun) {
 function formatDate(value) {
   if (value == null || value === "") return "—";
   const text = String(value).slice(0, 10);
-  return text || "—";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return text || "—";
+  return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
 function todayStamp() {
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
+  return `${day}/${month}/${now.getFullYear()}`;
 }
 
 function seasonTypeLabel(type) {
@@ -114,8 +118,13 @@ function unavailable() {
   return `<p class="muted">${esc(STATS_LABELS.unavailable)}</p>`;
 }
 
-function section(title, body) {
-  return `<section class="block"><h2>${esc(title)}</h2>${body}</section>`;
+function section(title, body, extraClass) {
+  const cls = extraClass ? `block ${extraClass}` : "block";
+  return `<section class="${cls}"><h2>${esc(title)}</h2>${body}</section>`;
+}
+
+function chartBlock(title, body) {
+  return `<div class="chart-block"><h3>${esc(title)}</h3>${body}</div>`;
 }
 
 function factsHtml(rows) {
@@ -165,6 +174,59 @@ function barsHtml(items, { color = PRIMARY, formatValue } = {}) {
   return `<div class="bars">${cols}</div>`;
 }
 
+function polar(cx, cy, r, angleDeg) {
+  const rad = ((angleDeg - 90) * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function donutArc(cx, cy, r, startAngle, endAngle) {
+  const start = polar(cx, cy, r, endAngle);
+  const end = polar(cx, cy, r, startAngle);
+  const large = endAngle - startAngle <= 180 ? 0 : 1;
+  const n = (value) => value.toFixed(2);
+  return `M ${n(start.x)} ${n(start.y)} A ${r} ${r} 0 ${large} 0 ${n(end.x)} ${n(end.y)}`;
+}
+
+function genderDonutHtml(segments) {
+  const size = 140;
+  const stroke = 22;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = (size - stroke) / 2;
+  const total = segments.reduce((sum, segment) => sum + (Number(segment.value) || 0), 0);
+  const ring = `<circle cx="${cx}" cy="${cy}" r="${r}" stroke="#E8E8E8" stroke-width="${stroke}" fill="none"/>`;
+  let arcs = "";
+  if (total > 0) {
+    let angle = 0;
+    arcs = segments
+      .filter((segment) => (Number(segment.value) || 0) > 0)
+      .map((segment) => {
+        const value = Number(segment.value) || 0;
+        const sweep = (value / total) * 360;
+        const full = sweep >= 359.99;
+        const start = angle;
+        angle += sweep;
+        if (full) {
+          return `<circle cx="${cx}" cy="${cy}" r="${r}" stroke="${segment.color}" stroke-width="${stroke}" fill="none"/>`;
+        }
+        return `<path d="${donutArc(cx, cy, r, start, start + sweep)}" stroke="${segment.color}" stroke-width="${stroke}" fill="none"/>`;
+      })
+      .join("");
+  }
+  const center =
+    total <= 0
+      ? `<div class="donut-empty">لا بيانات</div>`
+      : `<div class="donut-value">${esc(total)}</div><div class="donut-sub">${esc(STATS_LABELS.memberUnit)}</div>`;
+  const legend = segments
+    .map((segment) => {
+      const value = Number(segment.value) || 0;
+      const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+      return `<div class="legend-row"><span class="legend-dot" style="background:${segment.color}"></span><span class="legend-label">${esc(segment.label)}</span><span class="legend-value">${esc(value)} · ${pct}%</span></div>`;
+    })
+    .join("");
+  return `<div class="donut"><div class="donut-ring"><svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${ring}${arcs}</svg><div class="donut-center">${center}</div></div><div class="donut-legend">${legend}</div></div>`;
+}
+
 function seriesBars(series, suffix) {
   return barsHtml(
     (series || []).map((point) => ({
@@ -195,21 +257,19 @@ function seanceNamesForSupervisor(bySeance, supervisorId) {
 
 function effectifsHtml(effectifs) {
   if (effectifs == null) return unavailable();
+  const genderColor = { male: PRIMARY, female: PRIMARY_SOFT, other: GOLD };
   const segments = [
     { key: "male", label: STATS_LABELS.male, value: effectifs.male },
     { key: "female", label: STATS_LABELS.female, value: effectifs.female },
     { key: "other", label: STATS_LABELS.unspecified, value: effectifs.nonSpecifie },
-  ].filter((segment) => {
-    if (segment.value == null) return false;
-    if (segment.key === "other" && Number(segment.value) === 0) return false;
-    return true;
-  });
-  const chart = segments.length
-    ? countBars(
-        segments.map((segment) => ({ label: segment.label, value: segment.value })),
-        PRIMARY
-      )
-    : "";
+  ]
+    .filter((segment) => {
+      if (segment.value == null) return false;
+      if (segment.key === "other" && Number(segment.value) === 0) return false;
+      return true;
+    })
+    .map((segment) => ({ ...segment, color: genderColor[segment.key] }));
+  const chart = segments.length ? genderDonutHtml(segments) : "";
   return (
     factsHtml([{ label: STATS_LABELS.total, value: dash(effectifs.membres) }]) +
     chart +
@@ -236,17 +296,17 @@ function presenceHtml(presence) {
   const curve =
     presence.parMois == null
       ? unavailable()
-      : `<h3>${esc(STATS_LABELS.presenceCurve)}</h3>${seriesBars(presence.parMois, STATS_LABELS.unitPercent)}`;
+      : chartBlock(STATS_LABELS.presenceCurve, seriesBars(presence.parMois, STATS_LABELS.unitPercent));
   const bands =
     presence.repartition == null
       ? unavailable()
-      : `<h3>${esc(STATS_LABELS.presenceDistribution)}</h3>${countBars(
+      : chartBlock(STATS_LABELS.presenceDistribution, countBars(
           PRESENCE_BANDS.map((band) => ({
             label: band.label,
             value: presence.repartition[band.key],
           })),
           YELLOW
-        )}`;
+        ));
   return facts + curve + bands;
 }
 
@@ -271,17 +331,17 @@ function progressionHtml(stats) {
   const curve =
     progression.timeline == null
       ? unavailable()
-      : `<h3>${esc(STATS_LABELS.progressCurve)}</h3>${seriesBars(progression.timeline, STATS_LABELS.unitPercent)}`;
+      : chartBlock(STATS_LABELS.progressCurve, seriesBars(progression.timeline, STATS_LABELS.unitPercent));
   const bands =
     progression.parTranche == null
       ? unavailable()
-      : `<h3>${esc(STATS_LABELS.juzDistribution)}</h3>${countBars(
+      : chartBlock(STATS_LABELS.juzDistribution, countBars(
           progression.parTranche.map((band) => ({
             label: JUZ_BAND_LABELS[band.key] || band.key || "",
             value: band.count,
           })),
           YELLOW
-        )}`;
+        ));
   return `${note}${gauge}<h3>${esc(STATS_LABELS.gainDuringSeason)}</h3>${facts}${curve}${bands}`;
 }
 
@@ -298,16 +358,19 @@ function testsHtml(tests) {
   const chart =
     tests.distribution == null
       ? ""
-      : `<h3>${esc(STATS_LABELS.gradesDistribution)}</h3>${countBars(
-          tests.distribution.map((band) => ({
-            label: band.key || "",
-            value: band.count,
-          })),
-          YELLOW
-        )}`;
+      : chartBlock(
+          STATS_LABELS.gradesDistribution,
+          countBars(
+            tests.distribution.map((band) => ({
+              label: band.key || "",
+              value: band.count,
+            })),
+            YELLOW
+          )
+        );
   const list = (tests.parTest || [])
     .map((test) => {
-      const date = test.date ? String(test.date).slice(0, 10) : "—";
+      const date = formatDate(test.date);
       return `<p class="line"><strong>${esc(test.titre || STATS_LABELS.testFallback)}</strong><br>${esc(date)} · ${esc(STATS_LABELS.invitedShort)} ${esc(dash(test.invites))} · ${esc(STATS_LABELS.gradedShort)} ${esc(dash(test.notes))} · ${esc(STATS_LABELS.averageShort)} ${esc(dash(test.moyenne))}</p>`;
     })
     .join("");
@@ -327,14 +390,16 @@ function objectifsHtml(objectifs) {
 function seancesHtml(stats) {
   const bySeance = stats?.bySeance;
   if (bySeance == null) return unavailable();
-  const chartTitle = `<h3>${esc(STATS_LABELS.seanceHeadcount)}</h3>`;
   const chart = bySeance.length
-    ? barsHtml(
-        bySeance.map((seance) => ({
-          label: seance.name || "",
-          value: seance.membersCount,
-        })),
-        { color: PRIMARY, formatValue: (n) => `${Math.round(n)}${STATS_LABELS.memberSuffix}` }
+    ? chartBlock(
+        STATS_LABELS.seanceHeadcount,
+        barsHtml(
+          bySeance.map((seance) => ({
+            label: seance.name || "",
+            value: seance.membersCount,
+          })),
+          { color: PRIMARY, formatValue: (n) => `${Math.round(n)}${STATS_LABELS.memberSuffix}` }
+        )
       )
     : `<p class="muted">${esc(STATS_LABELS.noSeances)}</p>`;
   const lines = bySeance
@@ -343,7 +408,7 @@ function seancesHtml(stats) {
         `<p class="line"><strong>${esc(seance.name || "—")}</strong><br>${esc(STATS_LABELS.members)} ${esc(dash(seance.membersCount))} · ${esc(STATS_LABELS.presence)} ${esc(dashPct(seance.presencePct))} · ${esc(STATS_LABELS.gainDuringSeason)} ${esc(formatHizbOne(seance.gainMoyenHizb))} · ${esc(STATS_LABELS.daysCount)} ${esc(dash(seance.sessionCount))}</p>`
     )
     .join("");
-  return chartTitle + chart + lines;
+  return chart + lines;
 }
 
 function supervisorsHtml(stats) {
@@ -520,7 +585,7 @@ function comparisonDocument(type, seasons) {
             return n < 0 ? `\u200E${text}` : text;
           }
         : (n) => `${n}${indicator.suffix}`;
-    return section(indicator.label, barsHtml(items, { color: PRIMARY, formatValue }));
+    return section(indicator.label, barsHtml(items, { color: PRIMARY, formatValue }), "chart-block");
   }).join("");
   return pageHtml(`${header}${table}${charts}`, STATS_LABELS.compareTitle);
 }
@@ -535,14 +600,15 @@ function pageHtml(body, footerName) {
   * { box-sizing: border-box; }
   body { margin: 0; padding: 0 0 22px; font-family: Tahoma, Arial, sans-serif; color: #333; font-size: 12px; }
   h1 { font-size: 18px; margin: 0 0 6px; }
-  h2 { font-size: 15px; margin: 0 0 8px; }
+  h2 { font-size: 15px; margin: 0; }
+  h2::after { content: ""; display: block; width: 32px; height: 3px; margin-top: 6px; margin-bottom: 8px; margin-left: auto; background: #FFD666; border-radius: 2px; }
   h3 { font-size: 13px; margin: 12px 0 6px; }
+  .chart-block { page-break-inside: avoid; break-inside: avoid; }
   p { margin: 0 0 4px; }
   .app { font-weight: 800; color: ${PRIMARY}; }
   .muted, .note { color: ${MUTED}; }
   .head { margin-bottom: 12px; }
   .block { margin: 0 0 14px; }
-  .block:not(.members) { page-break-inside: avoid; break-inside: avoid; }
   .members { page-break-before: always; break-before: page; }
   .kpis { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
   .kpi { width: calc(33.33% - 6px); border: 1px solid ${BORDER}; border-radius: 8px; padding: 8px; page-break-inside: avoid; break-inside: avoid; }
@@ -555,13 +621,21 @@ function pageHtml(body, footerName) {
   .delta.eq { color: ${MUTED}; }
   .facts { margin-bottom: 6px; }
   .fact { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid #f2f2f2; }
-  .bars { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
-  .bar-col { flex: 1 1 48px; max-width: 88px; text-align: center; }
+  .bars { display: flex; justify-content: center; align-items: flex-end; flex-wrap: nowrap; margin: 8px 0; }
+  .bar-col { width: 64px; flex: 0 0 64px; text-align: center; }
   .bar-value { font-size: 10px; font-weight: 700; min-height: 14px; }
-  .track { height: 90px; background: ${TRACK}; border-radius: 4px; display: flex; align-items: flex-end; overflow: hidden; }
+  .track { width: 44px; height: 150px; margin: 0 auto; background: ${TRACK}; border-radius: 4px; display: flex; align-items: flex-end; overflow: hidden; }
   .fill { width: 100%; }
-  .bar-label, .bar-caption { font-size: 9px; margin-top: 3px; word-wrap: break-word; }
+  .bar-label, .bar-caption { width: 64px; font-size: 10px; text-align: center; margin-top: 3px; word-wrap: break-word; }
   .bar-caption { color: ${MUTED}; }
+  .donut { display: flex; flex-direction: column; align-items: center; margin: 8px 0; }
+  .donut-ring { position: relative; width: 140px; height: 140px; }
+  .donut-center { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .donut-value { font-size: 18px; font-weight: 700; line-height: 1.1; }
+  .donut-sub, .donut-empty { font-size: 11px; color: ${MUTED}; text-align: center; }
+  .donut-legend { margin-top: 8px; }
+  .legend-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 4px; flex: 0 0 8px; }
   .neg { color: ${RED}; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   thead { display: table-header-group; }
@@ -569,13 +643,12 @@ function pageHtml(body, footerName) {
   th { background: ${SOFT}; font-weight: 800; }
   th.name, td.name { text-align: right; background: ${SOFT}; border-left: 1px solid ${BORDER}; width: 22%; }
   tr, .line { page-break-inside: avoid; break-inside: avoid; }
-  .footer { position: fixed; bottom: 0; left: 0; right: 0; font-size: 10px; color: ${MUTED}; display: flex; justify-content: space-between; }
-  .footer-page::after { content: counter(page); }
+  .footer { position: fixed; bottom: 0; left: 0; right: 0; font-size: 10px; color: ${MUTED}; text-align: center; }
 </style>
 </head>
 <body>
 ${body}
-<div class="footer"><span>${esc(footerName || "")}</span><span class="footer-page"></span></div>
+<div class="footer">${esc(footerName || "")}</div>
 </body>
 </html>`;
 }
