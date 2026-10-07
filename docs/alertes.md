@@ -122,11 +122,11 @@ Fichier `supabase/migrations/0129_alerts_send_alert_et_corps_notification.sql`. 
 
 1. `drop function if exists public.send_alert(text, text)`.
 2. `create or replace` de `private.notify_alerte_nouvelle` : même corps que `0085`, coalesce du corps en `message` → `body` → `title`.
-3. `alerts_sync_legacy_columns`, les policies et les tables `alertes` / `alerte_accuses` / `alert_reads` ne sont pas touchés.
+3. `alerts_sync_legacy_columns`, les policies et les tables `alertes` / `alerte_accuses` / `alert_reads` ne sont pas touchés par `0129`. Leur suppression est `0130` (écrite, non exécutée).
 
 ## Hors périmètre
 
-- `alertes`, `alerte_accuses` et `alert_reads` : aucun `CREATE` versionné, 0 ligne, aucun appel client. `start_new_season` les vide encore. À retirer avec cette fonction, plus tard.
+- `alertes`, `alerte_accuses` et `alert_reads` : aucun `CREATE` versionné, aucun appel client. `0130` les supprime et retire leurs `DELETE` de `start_new_season`. La catégorie `notifications.category = 'alertes'` reste.
 - Policies `admin_insert`, `admin_select`, `alerts_user_select`, et la colonne `target_user_id` : présentes en base, absentes de `supabase/migrations/`.
 - Le `CHECK` d'audience versionné (`0014`, `0020`) ne contient que `all`, `members`, `supervisors`. Le `CHECK` vivant accepte aussi `user` et `admin`. L'application n'envoie pas ces deux valeurs.
 - Formulation de l'école d'été : si la saison s'appelle `المدرسة الصيفية`, le texte devient `انطلاق المدرسة الصيفية: «المدرسة الصيفية» — …`. Le modèle de `0124` n'est pas modifié.
