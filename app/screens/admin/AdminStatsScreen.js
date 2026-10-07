@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,13 +21,16 @@ import {
   Target,
   CalendarDays,
   GitCompare,
+  Share2,
 } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { SEASON_TYPES } from "../../constants/roles";
+import { ROLES, SEASON_TYPES, userHasRole } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
-import { listSeasonStatsByType } from "../../lib/seasonStatsApi";
+import { getSeasonMemberRows, listSeasonStatsByType } from "../../lib/seasonStatsApi";
+import { STATS_LABELS } from "../../lib/statsLabels";
+import { alertForExportResult, exportSeasonPdf } from "../../lib/statsExport";
 import SeasonsCompareView from "../../components/admin/SeasonsCompareView";
 import {
   DonutChart,
@@ -51,20 +55,20 @@ const palette = {
 };
 
 const JUZ_BAND_LABELS = {
-  "0-5": "0–5 أجزاء",
-  "5-10": "5–10",
-  "10-15": "10–15",
-  "15-20": "15–20",
-  "20-25": "20–25",
-  "25-30": "25–30",
+  "0-5": STATS_LABELS.juz0_5,
+  "5-10": STATS_LABELS.juz5_10,
+  "10-15": STATS_LABELS.juz10_15,
+  "15-20": STATS_LABELS.juz15_20,
+  "20-25": STATS_LABELS.juz20_25,
+  "25-30": STATS_LABELS.juz25_30,
 };
 
 const PRESENCE_BANDS = [
-  { key: "ge90", label: "90% فأكثر" },
-  { key: "p75_90", label: "75–90%" },
-  { key: "p50_75", label: "50–75%" },
-  { key: "lt50", label: "أقل من 50%" },
-  { key: "sansDonnees", label: "بدون بيانات" },
+  { key: "ge90", label: STATS_LABELS.band90 },
+  { key: "p75_90", label: STATS_LABELS.band75 },
+  { key: "p50_75", label: STATS_LABELS.band50 },
+  { key: "lt50", label: STATS_LABELS.bandUnder50 },
+  { key: "sansDonnees", label: STATS_LABELS.bandNoData },
 ];
 
 function dash(value) {
@@ -75,7 +79,7 @@ function formatHizbOne(value) {
   if (value == null || value === "") return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-  return `${(Math.round(n * 10) / 10).toFixed(1)} حزب`;
+  return `${(Math.round(n * 10) / 10).toFixed(1)} ${STATS_LABELS.unitHizb}`;
 }
 
 function seanceNamesForSupervisor(bySeance, supervisorId) {
@@ -90,11 +94,11 @@ function positionHizbHint(pct) {
   const n = Number(pct);
   if (!Number.isFinite(n)) return null;
   const hizb = ((n * 60) / 100).toFixed(1);
-  return `(≈ ${hizb} حزب من 60)`;
+  return STATS_LABELS.positionHint.replace("{value}", hizb);
 }
 
 function dashPct(value) {
-  return value == null ? "—" : `${value}%`;
+  return value == null ? "—" : `${value}${STATS_LABELS.unitPercent}`;
 }
 
 function oneDecimal(value) {
@@ -118,7 +122,7 @@ function seasonYear(startDate) {
 
 function seasonLabel(view) {
   const year = seasonYear(view?.startDate);
-  const name = view?.name || "موسم";
+  const name = view?.name || STATS_LABELS.seasonFallback;
   return year ? `${name} · ${year}` : name;
 }
 
@@ -210,7 +214,7 @@ function SectionCard({ title, children }) {
 }
 
 function Unavailable() {
-  return <Text style={styles.unavailable}>غير متوفر لهذا الموسم</Text>;
+  return <Text style={styles.unavailable}>{STATS_LABELS.unavailable}</Text>;
 }
 
 function Fact({ label, value }) {
@@ -224,7 +228,8 @@ function Fact({ label, value }) {
 
 export default function AdminStatsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "stats");
-  const { seasons } = useApp();
+  const { seasons, currentUser } = useApp();
+  const isAdmin = userHasRole(currentUser, ROLES.ADMIN);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -245,6 +250,15 @@ export default function AdminStatsScreen({ navigation }) {
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [compareExport, setCompareExport] = useState({
+    disabled: true,
+    busy: false,
+    run: null,
+  });
+  const onCompareExportState = useCallback((state) => {
+    setCompareExport(state);
+  }, []);
 
   useEffect(() => {
     if (typeTouched.current) return;
@@ -266,7 +280,7 @@ export default function AdminStatsScreen({ navigation }) {
     setLoading(false);
     if (!res.ok) {
       setViews([]);
-      setError(res.error || "تعذر تحميل الإحصائيات");
+      setError(res.error || STATS_LABELS.loadError);
       return;
     }
     const list = res.seasons || [];
@@ -299,6 +313,46 @@ export default function AdminStatsScreen({ navigation }) {
     setLoading(true);
   };
 
+  const exportDisabled = exporting || loading || !selected || selected.empty;
+  const fabBusy = mode === "compare" ? compareExport.busy : exporting;
+  const fabDisabled =
+    mode === "compare"
+      ? compareExport.disabled || compareExport.busy || !compareExport.run
+      : exportDisabled;
+
+  const exportSelected = async () => {
+    if (exportDisabled || !selected) return;
+    setExporting(true);
+    try {
+      const seasonRow = (seasons || []).find((item) => item.id === selected.saisonId) || {};
+      const members = await getSeasonMemberRows({
+        id: selected.saisonId,
+        active: !!selected.active,
+      });
+      if (!members.ok) {
+        Alert.alert(STATS_LABELS.exportFailed);
+        return;
+      }
+      const result = await exportSeasonPdf(
+        {
+          id: selected.saisonId,
+          name: selected.name || seasonRow.name,
+          type: selected.type || seasonRow.type,
+          active: !!selected.active,
+          startDate: selected.startDate || seasonRow.startDate || null,
+          endDate: seasonRow.endDate || null,
+        },
+        { ...selected, previousKpi },
+        members.rows
+      );
+      alertForExportResult(result);
+    } catch {
+      Alert.alert(STATS_LABELS.exportFailed);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const monthPoints = (series) =>
     (series || []).map((point) => ({
       key: point.key,
@@ -317,7 +371,7 @@ export default function AdminStatsScreen({ navigation }) {
         >
           <Menu size={24} color={palette.textPrimary} pointerEvents="none" />
         </TouchableOpacity>
-        <Text style={styles.topBarTitle}>الإحصائيات</Text>
+        <Text style={styles.topBarTitle}>{STATS_LABELS.screenTitle}</Text>
         <InboxHeaderButton
           navigation={navigation}
           color={palette.textSecondary}
@@ -349,7 +403,7 @@ export default function AdminStatsScreen({ navigation }) {
                 mode === "stats" && type === SEASON_TYPES.REGULAR && styles.segmentTextOn,
               ]}
             >
-              المواسم العادية
+              {STATS_LABELS.seasonsRegular}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -362,7 +416,7 @@ export default function AdminStatsScreen({ navigation }) {
                 mode === "stats" && type === SEASON_TYPES.SUMMER && styles.segmentTextOn,
               ]}
             >
-              المدارس الصيفية
+              {STATS_LABELS.seasonsSummer}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -372,22 +426,22 @@ export default function AdminStatsScreen({ navigation }) {
             <View style={styles.segmentInner}>
               <GitCompare
                 size={14}
-                color={mode === "compare" ? palette.primary : palette.textSecondary}
+                color={mode === "compare" ? "#000000" : palette.textSecondary}
                 pointerEvents="none"
               />
               <Text style={[styles.segmentText, mode === "compare" && styles.segmentTextOn]}>
-                مقارنة المواسم
+                {STATS_LABELS.compareTitle}
               </Text>
             </View>
           </TouchableOpacity>
         </View>
 
         {mode === "compare" ? (
-          <SeasonsCompareView initialType={type} />
+          <SeasonsCompareView initialType={type} onExportState={onCompareExportState} />
         ) : (
           <>
         {!loading && !error && chips.length === 0 ? (
-          <Text style={styles.emptyHint}>لا توجد مواسم من هذا النوع</Text>
+          <Text style={styles.emptyHint}>{STATS_LABELS.noSeasonsOfType}</Text>
         ) : (
           <ScrollView
             horizontal
@@ -406,7 +460,7 @@ export default function AdminStatsScreen({ navigation }) {
                     {seasonLabel(view)}
                   </Text>
                   {view.active ? (
-                    <Text style={[styles.badge, on && styles.badgeOn]}>جاري</Text>
+                    <Text style={[styles.badge, on && styles.badgeOn]}>{STATS_LABELS.active}</Text>
                   ) : null}
                 </TouchableOpacity>
               );
@@ -417,121 +471,121 @@ export default function AdminStatsScreen({ navigation }) {
         {loading ? (
           <View style={styles.stateBox}>
             <ActivityIndicator size="large" color={palette.primary} />
-            <Text style={styles.stateText}>جاري تحميل الإحصائيات…</Text>
+            <Text style={styles.stateText}>{STATS_LABELS.loading}</Text>
           </View>
         ) : error ? (
           <View style={styles.stateBox}>
             <Text style={styles.errorText}>{error}</Text>
             <TouchableOpacity style={styles.retryBtn} onPress={() => load(type)}>
-              <Text style={styles.retryText}>إعادة المحاولة</Text>
+              <Text style={styles.retryText}>{STATS_LABELS.retry}</Text>
             </TouchableOpacity>
           </View>
         ) : !selected ? null : selected.empty ? (
-          <Text style={styles.emptyHint}>لا توجد إحصائيات محفوظة لهذا الموسم</Text>
+          <Text style={styles.emptyHint}>{STATS_LABELS.noSavedStats}</Text>
         ) : (
           <>
             <View style={styles.metricsGrid}>
               <MetricCard
                 icon={Users}
-                label="الأعضاء"
+                label={STATS_LABELS.members}
                 value={wholeNumber(currentKpi.members)}
                 width={cardWidth}
                 delta={<Delta current={currentKpi.members} previous={previousKpi.members} />}
               />
               <MetricCard
                 icon={UserCheck}
-                label="نسبة الحضور"
+                label={STATS_LABELS.presenceRate}
                 value={wholeNumber(currentKpi.presence)}
-                unit="%"
+                unit={STATS_LABELS.unitPercent}
                 width={cardWidth}
                 delta={<Delta current={currentKpi.presence} previous={previousKpi.presence} />}
               />
               <MetricCard
                 icon={TrendingUp}
-                label="متوسط الحفظ هذا الموسم"
+                label={STATS_LABELS.gainSeasonAvg}
                 value={oneDecimal(currentKpi.gain)}
-                unit="حزب"
+                unit={STATS_LABELS.unitHizb}
                 width={cardWidth}
                 delta={<Delta current={currentKpi.gain} previous={previousKpi.gain} />}
               />
               <MetricCard
                 icon={ClipboardList}
-                label="معدل الاختبارات"
+                label={STATS_LABELS.testsAverage}
                 value={oneDecimal(currentKpi.tests)}
-                unit="/20"
+                unit={STATS_LABELS.unitScore}
                 width={cardWidth}
                 delta={<Delta current={currentKpi.tests} previous={previousKpi.tests} />}
               />
               <MetricCard
                 icon={Target}
-                label="نسبة الأعضاء الذين حققوا أهدافهم"
+                label={STATS_LABELS.objectifsRate}
                 value={wholeNumber(currentKpi.objectifs)}
-                unit="%"
+                unit={STATS_LABELS.unitPercent}
                 width={cardWidth}
                 delta={<Delta current={currentKpi.objectifs} previous={previousKpi.objectifs} />}
               />
               <MetricCard
                 icon={CalendarDays}
-                label="الحصص"
+                label={STATS_LABELS.seances}
                 value={wholeNumber(currentKpi.seances)}
                 width={cardWidth}
                 delta={<Delta current={currentKpi.seances} previous={previousKpi.seances} />}
               />
             </View>
 
-            <SectionCard title="الأعضاء">
+            <SectionCard title={STATS_LABELS.members}>
               {selected.effectifs == null ? (
                 <Unavailable />
               ) : (
                 <>
-                  <Fact label="المجموع" value={dash(selected.effectifs.membres)} />
+                  <Fact label={STATS_LABELS.total} value={dash(selected.effectifs.membres)} />
                   <DonutChart
                     segments={[
-                      { key: "male", label: "ذكور", value: selected.effectifs.male, color: palette.primary },
-                      { key: "female", label: "إناث", value: selected.effectifs.female, color: palette.primarySoft },
-                      { key: "other", label: "غير محدد", value: selected.effectifs.nonSpecifie, color: palette.gold },
+                      { key: "male", label: STATS_LABELS.male, value: selected.effectifs.male, color: palette.primary },
+                      { key: "female", label: STATS_LABELS.female, value: selected.effectifs.female, color: palette.primarySoft },
+                      { key: "other", label: STATS_LABELS.unspecified, value: selected.effectifs.nonSpecifie, color: palette.gold },
                     ].filter((segment) => {
                       if (segment.value == null) return false;
                       if (segment.key === "other" && Number(segment.value) === 0) return false;
                       return true;
                     })}
                     centerLabel={dash(selected.effectifs.membres)}
-                    centerSub="أعضاء"
+                    centerSub={STATS_LABELS.membersWord}
                     size={148}
                   />
-                  <Fact label="أعضاء جدد" value={dash(selected.effectifs.nouveaux)} />
-                  <Fact label="تجديدات" value={dash(selected.effectifs.renouvellements)} />
-                  <Fact label="طلبات مستلمة" value={dash(selected.effectifs.demandes?.recues)} />
-                  <Fact label="طلبات مقبولة" value={dash(selected.effectifs.demandes?.acceptees)} />
-                  <Fact label="طلبات مرفوضة" value={dash(selected.effectifs.demandes?.refusees)} />
-                  <Fact label=" طلبات قيد الانتظار" value={dash(selected.effectifs.demandes?.enAttente)} />
-                  <Fact label="نسبة القبول للطلبات" value={dashPct(selected.effectifs.tauxAcceptation)} />
+                  <Fact label={STATS_LABELS.newMembers} value={dash(selected.effectifs.nouveaux)} />
+                  <Fact label={STATS_LABELS.renewals} value={dash(selected.effectifs.renouvellements)} />
+                  <Fact label={STATS_LABELS.requestsReceived} value={dash(selected.effectifs.demandes?.recues)} />
+                  <Fact label={STATS_LABELS.requestsAccepted} value={dash(selected.effectifs.demandes?.acceptees)} />
+                  <Fact label={STATS_LABELS.requestsRejected} value={dash(selected.effectifs.demandes?.refusees)} />
+                  <Fact label={STATS_LABELS.requestsPending} value={dash(selected.effectifs.demandes?.enAttente)} />
+                  <Fact label={STATS_LABELS.acceptanceRate} value={dashPct(selected.effectifs.tauxAcceptation)} />
                 </>
               )}
             </SectionCard>
 
-            <SectionCard title="الحضور">
+            <SectionCard title={STATS_LABELS.presence}>
               {selected.presence == null ? (
                 <Unavailable />
               ) : (
                 <>
                   <View style={styles.presenceStack}>
                     <View style={styles.presenceFacts}>
-                      <Fact label="  نسبة الحضور" value={dashPct(selected.presence.pct)} />
-                      <Fact label="عدد الأيام" value={dash(selected.presence.jours)} />
-                      <Fact label=" الحضور " value={dash(selected.presence.present)} />
-                      <Fact label=" الغياب  " value={dash(selected.presence.absent)} />
+                      <Fact label={STATS_LABELS.presenceRateFact} value={dashPct(selected.presence.pct)} />
+                      <Fact label={STATS_LABELS.daysCount} value={dash(selected.presence.jours)} />
+                      <Fact label={STATS_LABELS.present} value={dash(selected.presence.present)} />
+                      <Fact label={STATS_LABELS.absent} value={dash(selected.presence.absent)} />
                     </View>
                     {selected.presence.parMois == null ? (
                       <Unavailable />
                     ) : (
                       <View style={styles.chartBlock}>
-                        <UnderlinedTitle style={styles.chartTitle}>  تطور نسبة الحضور خلال الشهور </UnderlinedTitle>
+                        <UnderlinedTitle style={styles.chartTitle}>{STATS_LABELS.presenceCurve}</UnderlinedTitle>
                         <LineChart
                           points={monthPoints(selected.presence.parMois)}
                           width={chartWidth}
                           height={170}
-                          pointSuffix="%"
+                          pointSuffix={STATS_LABELS.unitPercent}
                         />
                       </View>
                     )}
@@ -539,7 +593,7 @@ export default function AdminStatsScreen({ navigation }) {
                       <Unavailable />
                     ) : (
                       <View style={styles.chartBlock}>
-                        <UnderlinedTitle style={styles.chartTitle}>توزيع الأعضاء حسب نسبة الحضور </UnderlinedTitle>
+                        <UnderlinedTitle style={styles.chartTitle}>{STATS_LABELS.presenceDistribution}</UnderlinedTitle>
                         <DistributionBarChart
                           items={PRESENCE_BANDS.map((band) => ({
                             key: band.key,
@@ -555,9 +609,9 @@ export default function AdminStatsScreen({ navigation }) {
               )}
             </SectionCard>
 
-            <SectionCard title="التقدم">
+            <SectionCard title={STATS_LABELS.progress}>
               {selected.rattrapage ? (
-                <Text style={styles.rattrapageNote}>بيانات التقدم أعيد حسابها من سجل الحفظ</Text>
+                <Text style={styles.rattrapageNote}>{STATS_LABELS.rattrapageNote}</Text>
               ) : null}
               {selected.progression == null ? (
                 <Unavailable />
@@ -567,24 +621,24 @@ export default function AdminStatsScreen({ navigation }) {
                     <ProgressMeter
                       label={
                         selected.rattrapage
-                          ? "الموقع في نهاية الموسم"
-                          : "متوسط المحفوظ من القرآن"
+                          ? STATS_LABELS.positionEnd
+                          : STATS_LABELS.avgQuran
                       }
                       value={selected.progression.avgPositionPct}
                       hint={positionHizbHint(selected.progression.avgPositionPct)}
                     />
-                    <UnderlinedTitle style={styles.blockLabel}>مقدار الحفظ خلال الموسم</UnderlinedTitle>
+                    <UnderlinedTitle style={styles.blockLabel}>{STATS_LABELS.gainDuringSeason}</UnderlinedTitle>
                     <Fact
-                      label="متوسط الحفظ  الجديد"
+                      label={STATS_LABELS.gainNew}
                       value={formatHizbOne(selected.progression.gainMoyenHizb)}
                     />
                     <Fact
-                      label="  الأحزاب المكتمل حفظها في المجموع"
+                      label={STATS_LABELS.gainTotal}
                       value={formatHizbOne(selected.progression.gainTotalHizb)}
                     />
-                    <Fact label="عدد الختمات" value={dash(selected.progression.khatm)} />
+                    <Fact label={STATS_LABELS.khatmCount} value={dash(selected.progression.khatm)} />
                     <Fact
-                      label="عدد الأعضاء المسجَّل تقدّمهم"
+                      label={STATS_LABELS.membersWithProgress}
                       value={dash(selected.progression.membresAvecDonnees)}
                     />
                   </View>
@@ -592,12 +646,12 @@ export default function AdminStatsScreen({ navigation }) {
                     <Unavailable />
                   ) : (
                     <View style={styles.chartBlock}>
-                      <UnderlinedTitle style={styles.chartTitle}>تطور متوسط الحفظ حسب الشهر </UnderlinedTitle>
+                      <UnderlinedTitle style={styles.chartTitle}>{STATS_LABELS.progressCurve}</UnderlinedTitle>
                       <LineChart
                         points={monthPoints(selected.progression.timeline)}
                         width={chartWidth}
                         height={170}
-                        pointSuffix="%"
+                        pointSuffix={STATS_LABELS.unitPercent}
                       />
                     </View>
                   )}
@@ -605,7 +659,7 @@ export default function AdminStatsScreen({ navigation }) {
                     <Unavailable />
                   ) : (
                     <View style={styles.chartBlock}>
-                      <UnderlinedTitle style={styles.chartTitle}>توزيع الأعضاء حسب المحفوظ (بالأجزاء)</UnderlinedTitle>
+                      <UnderlinedTitle style={styles.chartTitle}>{STATS_LABELS.juzDistribution}</UnderlinedTitle>
                       <DistributionBarChart
                         items={selected.progression.parTranche.map((band) => ({
                           key: band.key,
@@ -620,20 +674,20 @@ export default function AdminStatsScreen({ navigation }) {
               )}
             </SectionCard>
 
-            <SectionCard title="الاختبارات">
+            <SectionCard title={STATS_LABELS.tests}>
               {selected.tests == null ? (
                 <Unavailable />
               ) : (
                 <>
-                  <Fact label="عدد الاختبارات" value={dash(selected.tests.count)} />
-                  <Fact label="المدعوون" value={dash(selected.tests.invites)} />
-                  <Fact label="المقيَّمون" value={dash(selected.tests.notes)} />
-                  <Fact label="المعدل /20" value={dash(selected.tests.moyenne)} />
-                  <Fact label="الأدنى /20" value={dash(selected.tests.min)} />
-                  <Fact label="الأعلى /20" value={dash(selected.tests.max)} />
+                  <Fact label={STATS_LABELS.testsCount} value={dash(selected.tests.count)} />
+                  <Fact label={STATS_LABELS.invited} value={dash(selected.tests.invites)} />
+                  <Fact label={STATS_LABELS.graded} value={dash(selected.tests.notes)} />
+                  <Fact label={STATS_LABELS.averageOutOf20} value={dash(selected.tests.moyenne)} />
+                  <Fact label={STATS_LABELS.minOutOf20} value={dash(selected.tests.min)} />
+                  <Fact label={STATS_LABELS.maxOutOf20} value={dash(selected.tests.max)} />
                   {selected.tests.distribution == null ? null : (
                     <View style={styles.chartBlock}>
-                      <UnderlinedTitle style={styles.chartTitle}>توزيع النقاط </UnderlinedTitle>
+                      <UnderlinedTitle style={styles.chartTitle}>{STATS_LABELS.gradesDistribution}</UnderlinedTitle>
                       <DistributionBarChart
                         items={selected.tests.distribution.map((band) => ({
                           key: band.key,
@@ -646,12 +700,15 @@ export default function AdminStatsScreen({ navigation }) {
                   )}
                   {(selected.tests.parTest || []).map((test) => (
                     <View key={test.id || test.titre} style={styles.testRow}>
-                      <Text style={styles.testTitle}>{test.titre || "اختبار"}</Text>
+                      <Text style={styles.testTitle}>{test.titre || STATS_LABELS.testFallback}</Text>
                       <Text style={styles.testMeta}>
                         {test.date ? String(test.date).slice(0, 10) : "—"}
-                        {" · "}مدعوون {dash(test.invites)}
-                        {" · "}مقيَّمون {dash(test.notes)}
-                        {" · "}المعدل {dash(test.moyenne)}
+                        {" · "}
+                        {STATS_LABELS.invitedShort} {dash(test.invites)}
+                        {" · "}
+                        {STATS_LABELS.gradedShort} {dash(test.notes)}
+                        {" · "}
+                        {STATS_LABELS.averageShort} {dash(test.moyenne)}
                       </Text>
                     </View>
                   ))}
@@ -659,19 +716,19 @@ export default function AdminStatsScreen({ navigation }) {
               )}
             </SectionCard>
 
-            <SectionCard title="الأهداف">
+            <SectionCard title={STATS_LABELS.objectifs}>
               {selected.objectifs == null ? (
                 <Unavailable />
               ) : (
                 <>
-                  <Fact label="أهداف محددة" value={dash(selected.objectifs.fixes)} />
-                  <Fact label="أهداف محققة" value={dash(selected.objectifs.atteints)} />
+                  <Fact label={STATS_LABELS.objectifsFixed} value={dash(selected.objectifs.fixes)} />
+                  <Fact label={STATS_LABELS.objectifsAchieved} value={dash(selected.objectifs.atteints)} />
                   <Fact
-                    label="نسبة الأعضاء الذين حققوا أهدافهم"
+                    label={STATS_LABELS.objectifsRate}
                     value={dashPct(selected.objectifs.taux)}
                   />
                   <Fact
-                    label="متوسط إنجاز الأهداف"
+                    label={STATS_LABELS.objectifsAvg}
                     value={dashPct(selected.objectifs.realisationMoyennePct)}
                   />
                 </>
@@ -679,14 +736,14 @@ export default function AdminStatsScreen({ navigation }) {
             </SectionCard>
 
             <SectionCard
-              title={`الحصص: ${dash(selected.seancesTotal ?? selected.bySeance?.length)}`}
+              title={`${STATS_LABELS.seances}: ${dash(selected.seancesTotal ?? selected.bySeance?.length)}`}
             >
               {selected.bySeance == null ? (
                 <Unavailable />
               ) : (
                 <>
                   <View style={styles.chartBlock}>
-                    <Text style={styles.chartTitle}>عدد الأعضاء في كل حصة</Text>
+                    <Text style={styles.chartTitle}>{STATS_LABELS.seanceHeadcount}</Text>
                     <BarChart
                       items={selected.bySeance.map((seance) => ({
                         key: seance.id,
@@ -694,18 +751,21 @@ export default function AdminStatsScreen({ navigation }) {
                         value: seance.membersCount,
                       }))}
                       height={120}
-                      valueSuffix=" عضو"
-                      emptyLabel="لا حصص"
+                      valueSuffix={STATS_LABELS.memberSuffix}
+                      emptyLabel={STATS_LABELS.noSeances}
                     />
                   </View>
                   {selected.bySeance.map((seance) => (
                     <View key={seance.id} style={styles.testRow}>
                       <Text style={styles.testTitle}>{seance.name}</Text>
                       <Text style={styles.testMeta}>
-                        الأعضاء {dash(seance.membersCount)}
-                        {" · "}الحضور {dashPct(seance.presencePct)}
-                        {" · "}مقدار الحفظ {formatHizbOne(seance.gainMoyenHizb)}
-                        {" · "}عدد الأيام {dash(seance.sessionCount)}
+                        {STATS_LABELS.members} {dash(seance.membersCount)}
+                        {" · "}
+                        {STATS_LABELS.presence} {dashPct(seance.presencePct)}
+                        {" · "}
+                        {STATS_LABELS.gainDuringSeason} {formatHizbOne(seance.gainMoyenHizb)}
+                        {" · "}
+                        {STATS_LABELS.daysCount} {dash(seance.sessionCount)}
                       </Text>
                     </View>
                   ))}
@@ -714,7 +774,7 @@ export default function AdminStatsScreen({ navigation }) {
             </SectionCard>
 
             <SectionCard
-              title={`المشرفون: ${dash(selected.supervisorsTotal ?? selected.bySupervisor?.length)}`}
+              title={`${STATS_LABELS.supervisors}: ${dash(selected.supervisorsTotal ?? selected.bySupervisor?.length)}`}
             >
               {selected.bySupervisor == null ? (
                 <Unavailable />
@@ -729,7 +789,7 @@ export default function AdminStatsScreen({ navigation }) {
                       </Text>
                       {names.length === 1 ? null : (
                         <Text style={styles.testMeta}>
-                          {names.length > 1 ? `الحصص: ${names.join("، ")}` : "—"}
+                          {names.length > 1 ? `${STATS_LABELS.seances}: ${names.join(STATS_LABELS.listSeparator)}` : "—"}
                         </Text>
                       )}
                     </View>
@@ -742,6 +802,27 @@ export default function AdminStatsScreen({ navigation }) {
         )}
       </ScrollView>
       {messagesFab}
+      {isAdmin ? (
+        <TouchableOpacity
+          style={[
+            styles.exportFab,
+            { bottom: Math.max(insets.bottom, 16) + 16 },
+            fabDisabled && !fabBusy && styles.exportFabDisabled,
+          ]}
+          disabled={fabDisabled}
+          onPress={mode === "compare" ? compareExport.run : exportSelected}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={STATS_LABELS.exportFab}
+        >
+          {fabBusy ? (
+            <ActivityIndicator size="small" color="#000000" />
+          ) : (
+            <Share2 size={16} color="#000000" pointerEvents="none" />
+          )}
+          <Text style={styles.exportFabText}>{STATS_LABELS.exportFab}</Text>
+        </TouchableOpacity>
+      ) : null}
       {sidebar}
     </SafeAreaView>
   );
@@ -793,6 +874,31 @@ const styles = StyleSheet.create({
   },
   segmentTextOn: { color: "#000000" },
   chips: { gap: 8, paddingVertical: 2 },
+  exportFab: {
+    position: "absolute",
+    end: 16,
+    flexDirection: "row",
+    direction: "ltr",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FFD666",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    zIndex: 10,
+  },
+  exportFabDisabled: { opacity: 0.5 },
+  exportFabText: {
+    color: "#000000",
+    fontSize: 14,
+    fontWeight: "700",
+    textAlign: "center",
+  },
   chip: {
     height: 36,
     flexDirection: row,

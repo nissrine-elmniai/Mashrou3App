@@ -519,6 +519,90 @@ export async function listSeasonStatsByType(type) {
   }
 }
 
+function memberDisplayName(profile) {
+  const name = `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim();
+  return name || "";
+}
+
+function mapSeasonMemberRow(row, profile) {
+  return {
+    membreId: row?.membre_id || null,
+    name: memberDisplayName(profile),
+    seanceNom: row?.seance_nom || null,
+    presencePct: asNumber(row?.presence_pct),
+    posDebut: asNumber(row?.pos_debut),
+    posFin: asNumber(row?.pos_fin),
+    gainTumun: asNumber(row?.gain_tumun),
+    testsNotes: asNumber(row?.tests_notes),
+    noteMoyenne: asNumber(row?.note_moyenne),
+    objectifAtteint: row?.objectif_atteint == null ? null : !!row.objectif_atteint,
+    source: row?.source || null,
+  };
+}
+
+/**
+ * Lignes membres d'une saison, en lecture seule.
+ * Saison active : RPC compute_season_member_stats. Saison close : season_member_stats.
+ * Les noms viennent de profiles, en une seule requête. Tri séance puis nom.
+ */
+export async function getSeasonMemberRows(season) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!season?.id) {
+    return { ok: false, error: "معرّف الموسم مفقود" };
+  }
+  try {
+    let rawRows = null;
+    if (season.active) {
+      const { data, error } = await withTimeout(
+        supabase.rpc("compute_season_member_stats", { p_saison_id: season.id }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة أعضاء الموسم"
+      );
+      if (error) {
+        return { ok: false, error: mapTableError(error, "compute_season_member_stats") };
+      }
+      rawRows = Array.isArray(data) ? data : [];
+    } else {
+      const { data, error } = await withTimeout(
+        supabase.from("season_member_stats").select("*").eq("saison_id", season.id),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة أعضاء الموسم"
+      );
+      if (error) {
+        return { ok: false, error: mapTableError(error, "season_member_stats") };
+      }
+      rawRows = Array.isArray(data) ? data : [];
+    }
+
+    const ids = [...new Set(rawRows.map((row) => row?.membre_id).filter(Boolean))];
+    let profiles = [];
+    if (ids.length) {
+      const { data, error } = await withTimeout(
+        supabase.from("profiles").select("id, first_name, last_name").in("id", ids),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة أسماء الأعضاء"
+      );
+      if (error) {
+        return { ok: false, error: mapTableError(error, "profiles") };
+      }
+      profiles = data || [];
+    }
+    const byId = new Map(profiles.map((profile) => [profile.id, profile]));
+    const rows = rawRows
+      .map((row) => mapSeasonMemberRow(row, byId.get(row?.membre_id)))
+      .sort((a, b) => {
+        const bySeance = String(a.seanceNom || "").localeCompare(String(b.seanceNom || ""), "ar");
+        if (bySeance !== 0) return bySeance;
+        return String(a.name || "").localeCompare(String(b.name || ""), "ar");
+      });
+    return { ok: true, rows };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
 /** Historique membre : season_member_stats + nom / type / date de la saison. */
 export async function getMemberSeasonHistory(membreId) {
   if (!isSupabaseConfigured()) {

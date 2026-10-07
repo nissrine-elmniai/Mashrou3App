@@ -6,11 +6,14 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SEASON_TYPES } from "../../constants/roles";
 import { rtlText, row } from "../../constants/rtl";
 import { listSeasonStatsByType } from "../../lib/seasonStatsApi";
+import { STATS_LABELS } from "../../lib/statsLabels";
+import { alertForExportResult, exportComparisonPdf } from "../../lib/statsExport";
 import { BarChart, UnderlinedTitle } from "../stats/StatsCharts";
 
 const palette = {
@@ -24,11 +27,11 @@ const palette = {
 };
 
 const INDICATORS = [
-  { key: "members", label: "الأعضاء", suffix: "" },
-  { key: "presence", label: "الحضور %", suffix: "" },
-  { key: "gain", label: "متوسط الحفظ", suffix: " حزب" },
-  { key: "tests", label: "معدل الاختبارات /20", suffix: "" },
-  { key: "objectifs", label: "تحقيق الأهداف", suffix: "" },
+  { key: "members", label: STATS_LABELS.members, suffix: "" },
+  { key: "presence", label: STATS_LABELS.comparePresence, suffix: "" },
+  { key: "gain", label: STATS_LABELS.compareGain, suffix: ` ${STATS_LABELS.unitHizb}` },
+  { key: "tests", label: STATS_LABELS.compareTests, suffix: "" },
+  { key: "objectifs", label: STATS_LABELS.compareObjectifs, suffix: "" },
 ];
 
 const BAR_WIDTH = 56;
@@ -41,7 +44,7 @@ function seasonYear(startDate) {
 
 function seasonLabel(view) {
   const year = seasonYear(view?.startDate);
-  const name = view?.name || "موسم";
+  const name = view?.name || STATS_LABELS.seasonFallback;
   return year ? `${name} · ${year}` : name;
 }
 
@@ -63,7 +66,7 @@ function cell(value, indicator) {
   if (indicator.key !== "gain") return `${value}${indicator.suffix}`;
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
-  const text = `${n.toFixed(1)} حزب`;
+  const text = `${n.toFixed(1)} ${STATS_LABELS.unitHizb}`;
   return n < 0 ? `\u200E${text}` : text;
 }
 
@@ -71,7 +74,7 @@ function formatChartValue(indicator) {
   if (indicator.key !== "gain") return undefined;
   return (value) => {
     if (value == null || !Number.isFinite(value)) return "—";
-    const text = `${value.toFixed(1)} حزب`;
+    const text = `${value.toFixed(1)} ${STATS_LABELS.unitHizb}`;
     return value < 0 ? `\u200E${text}` : text;
   };
 }
@@ -87,7 +90,7 @@ function orderedViews(views) {
   return [...closed, ...active];
 }
 
-export default function SeasonsCompareView({ initialType }) {
+export default function SeasonsCompareView({ initialType, onExportState }) {
   const requestId = useRef(0);
   const typeTouched = useRef(false);
   const [type, setType] = useState(
@@ -96,6 +99,7 @@ export default function SeasonsCompareView({ initialType }) {
   const [views, setViews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (typeTouched.current) return;
@@ -111,7 +115,7 @@ export default function SeasonsCompareView({ initialType }) {
     setLoading(false);
     if (!res.ok) {
       setViews([]);
-      setError(res.error || "تعذر تحميل الإحصائيات");
+      setError(res.error || STATS_LABELS.loadError);
       return;
     }
     setViews(orderedViews(res.seasons || []));
@@ -131,6 +135,25 @@ export default function SeasonsCompareView({ initialType }) {
     setLoading(true);
   };
 
+  const exportDisabled = exporting || loading || !!error;
+
+  const exportComparison = async () => {
+    if (exportDisabled) return;
+    setExporting(true);
+    try {
+      const result = await exportComparisonPdf(type, views);
+      alertForExportResult(result);
+    } catch {
+      Alert.alert(STATS_LABELS.exportFailed);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  useEffect(() => {
+    onExportState?.({ disabled: exportDisabled, busy: exporting, run: exportComparison });
+  }, [onExportState, exportDisabled, exporting, type, views]);
+
   return (
     <View style={styles.wrap}>
       <View style={styles.switchRow}>
@@ -139,7 +162,7 @@ export default function SeasonsCompareView({ initialType }) {
           onPress={() => pickType(SEASON_TYPES.REGULAR)}
         >
           <Text style={[styles.switchText, type === SEASON_TYPES.REGULAR && styles.switchTextOn]}>
-            عادية
+            {STATS_LABELS.typeRegularShort}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -147,7 +170,7 @@ export default function SeasonsCompareView({ initialType }) {
           onPress={() => pickType(SEASON_TYPES.SUMMER)}
         >
           <Text style={[styles.switchText, type === SEASON_TYPES.SUMMER && styles.switchTextOn]}>
-            صيفية
+            {STATS_LABELS.typeSummerShort}
           </Text>
         </TouchableOpacity>
       </View>
@@ -155,17 +178,17 @@ export default function SeasonsCompareView({ initialType }) {
       {loading ? (
         <View style={styles.stateBox}>
           <ActivityIndicator size="large" color={palette.primary} />
-          <Text style={styles.stateText}>جاري تحميل الإحصائيات…</Text>
+          <Text style={styles.stateText}>{STATS_LABELS.loading}</Text>
         </View>
       ) : error ? (
         <View style={styles.stateBox}>
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={() => load(type)}>
-            <Text style={styles.retryText}>إعادة المحاولة</Text>
+            <Text style={styles.retryText}>{STATS_LABELS.retry}</Text>
           </TouchableOpacity>
         </View>
       ) : views.length < 2 ? (
-        <Text style={styles.emptyHint}>لا توجد مواسم كافية للمقارنة</Text>
+        <Text style={styles.emptyHint}>{STATS_LABELS.compareNotEnough}</Text>
       ) : (
         <>
           {INDICATORS.map((indicator) => (
@@ -180,7 +203,7 @@ export default function SeasonsCompareView({ initialType }) {
                 <BarChart
                   items={views.map((view) => ({
                     key: view.saisonId,
-                    label: view.name || "موسم",
+                    label: view.name || STATS_LABELS.seasonFallback,
                     caption: seasonYear(view.startDate),
                     value: kpiOf(view)[indicator.key],
                   }))}
@@ -200,7 +223,7 @@ export default function SeasonsCompareView({ initialType }) {
             <View style={styles.nameCol}>
               <View style={styles.headName}>
                 <Text style={styles.headText} numberOfLines={1}>
-                  الموسم
+                  {STATS_LABELS.seasonColumn}
                 </Text>
               </View>
               {views.map((view) => (
