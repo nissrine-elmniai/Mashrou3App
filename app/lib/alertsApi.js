@@ -617,9 +617,11 @@ export async function sendAlert(message, audience, options = {}) {
 
     if (!insertError) return { ok: true };
 
-    const rpcArgs = saisonId
-      ? { p_message: text, p_audience: target, p_saison_id: saisonId }
-      : { p_message: text, p_audience: target };
+    const rpcArgs = {
+      p_message: text,
+      p_audience: target,
+      p_saison_id: saisonId,
+    };
     const { error: rpcError } = await withTimeout(
       supabase.rpc("send_alert", rpcArgs),
       SUPABASE_TIMEOUT_MS,

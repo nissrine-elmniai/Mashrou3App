@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,67 +8,106 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { Menu, Bell } from "lucide-react-native";
 import { colors } from "../../constants/theme";
-import { rtlTextBold, row, fonts } from "../../constants/rtl";
+import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getAssignableSupervisors } from "../../lib/seancesApi";
+import { getAdminChatSupervisors } from "../../lib/seancesApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import { mergeInboxRows } from "../../lib/messagesApi";
+import {
+  adminInboxContactRole,
+  filterAdminInboxRows,
+  mergeInboxRows,
+} from "../../lib/messagesApi";
 import { initials } from "../supervisor/supervisorHelpers";
 import { displayProfileEmail } from "../../lib/authEmail";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
 
 export default function AdminChatScreen({ navigation }) {
-  const { currentUser, stats, seasons } = useApp();
+  const { currentUser, seasons } = useApp();
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
-  const { openSidebar, sidebar, messagesFab, threads, threadsLoading } = useAdminSidebar(
-    navigation,
-    "chat"
-  );
+  const {
+    openSidebar,
+    sidebar,
+    messagesFab,
+    threads,
+    threadsLoading,
+    threadsError,
+    reloadThreads,
+  } = useAdminSidebar(navigation, "chat");
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactsError, setContactsError] = useState(null);
+  const [retrying, setRetrying] = useState(false);
+  const requestRef = useRef(0);
 
-  const pendingCount = stats?.pendingRegs ?? 0;
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setContactsLoading(true);
-      const sRes = await getAssignableSupervisors({ saisonId: activeSeasonId });
-      if (cancelled) return;
-      const list = [];
-      if (sRes.ok) {
-        for (const p of sRes.supervisors || []) {
-          const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
-          const shownEmail = displayProfileEmail(p);
-          list.push({
-            id: p.id,
-            name: name || shownEmail,
-            role: "supervisor",
-            avatarLetter: initials(p.first_name || name || shownEmail),
-            avatarUrl: p.avatar_url || null,
-          });
-        }
-      }
-      setContacts(list);
+  const loadContacts = useCallback(async () => {
+    const requestId = ++requestRef.current;
+    if (!activeSeasonId) {
+      setContacts([]);
+      setContactsError(null);
       setContactsLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
+      return;
+    }
+    setContactsLoading(true);
+    const sRes = await getAdminChatSupervisors({ saisonId: activeSeasonId });
+    if (requestId !== requestRef.current) return;
+    if (!sRes.ok) {
+      setContactsError(sRes.error || "تعذر تحميل المحادثات");
+      setContactsLoading(false);
+      return;
+    }
+    const list = [];
+    for (const p of sRes.supervisors || []) {
+      const name = `${p.first_name || ""} ${p.last_name || ""}`.trim();
+      const shownEmail = displayProfileEmail(p);
+      list.push({
+        id: p.id,
+        name: name || shownEmail,
+        role: p.role || "supervisor",
+        roles: Array.isArray(p.roles) ? p.roles : [],
+        account_status: p.account_status || null,
+        avatarLetter: initials(p.first_name || name || shownEmail),
+        avatarUrl: p.avatar_url || null,
+      });
+    }
+    setContacts(list);
+    setContactsError(null);
+    setContactsLoading(false);
   }, [activeSeasonId]);
 
-  const rows = useMemo(() => {
-    const merged = mergeInboxRows(contacts, threads);
-    return merged.filter((r) => r.role !== "member");
-  }, [contacts, threads]);
+  // Recharge à chaque focus et quand la saison active change.
+  // Pas de useEffect en plus : le premier montage ne lance qu'un appel.
+  useFocusEffect(
+    useCallback(() => {
+      loadContacts();
+      return () => {
+        requestRef.current += 1;
+      };
+    }, [loadContacts])
+  );
 
-  const loading = contactsLoading || threadsLoading;
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      await Promise.all([loadContacts(), reloadThreads()]);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const rows = useMemo(
+    () => filterAdminInboxRows(mergeInboxRows(contacts, threads)),
+    [contacts, threads]
+  );
+
+  const loading = retrying || contactsLoading || threadsLoading;
+  const failed = !loading && (contactsError || threadsError);
 
   const openThread = (row) => {
     navigation.navigate("ChatConversation", {
@@ -76,7 +115,7 @@ export default function AdminChatScreen({ navigation }) {
       contactName: row.name,
       contactAvatarLetter: row.avatarLetter,
       contactAvatarUrl: row.avatarUrl || null,
-      contactRole: row.role || "supervisor",
+      contactRole: adminInboxContactRole(row),
     });
   };
 
@@ -113,6 +152,18 @@ export default function AdminChatScreen({ navigation }) {
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : failed ? (
+        <View style={styles.errorWrap}>
+          <Text style={styles.errorText}>تعذر تحميل المحادثات</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={retry}
+            accessibilityRole="button"
+            accessibilityLabel="إعادة المحاولة"
+          >
+            <Text style={styles.retryText}>إعادة المحاولة</Text>
+          </TouchableOpacity>
         </View>
       ) : rows.length === 0 ? (
         <EmptyState text="لا يوجد مشرفون بعد" />
@@ -158,34 +209,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     ...rtlTextBold,
   },
-  topBarAvatar: {
-    width: 32,
-    height: 32,
-    backgroundColor: colors.primarySoft,
-    borderRadius: 16,
+  loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
+  errorWrap: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    gap: 12,
+    padding: 24,
   },
-  topBarAvatarText: {
-    color: colors.primary,
+  errorText: {
+    color: "#D32F2F",
+    textAlign: "center",
+    fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  retryBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  retryText: {
+    color: "#fff",
     fontFamily: fonts.bold,
     fontSize: 14,
   },
-  bellBadge: {
-    position: "absolute",
-    top: -4,
-    right: -4,
-    width: 16,
-    height: 16,
-    backgroundColor: "#D32F2F",
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  bellBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "bold",
-  },
-  loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center" },
 });

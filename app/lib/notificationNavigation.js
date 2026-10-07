@@ -1,4 +1,5 @@
 import { markNotificationRead } from "./notificationsApi";
+import { emitAlertGateRefresh } from "./alertGateEvents";
 
 /** Écrans autorisés pour la navigation au tap (payload.screen). */
 const ALLOWED_SCREENS = new Set([
@@ -119,6 +120,9 @@ export function navigateFromNotificationPayload(navigation, payload) {
     return false;
   }
   const eventType = String(payload.event_type || "").trim();
+  if (eventType === "alerte_nouvelle") {
+    emitAlertGateRefresh();
+  }
   const dedicated = dedicatedScreenFor(payload);
   const dedicatedParams =
     payload.params && typeof payload.params === "object" ? payload.params : {};

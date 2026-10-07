@@ -2404,33 +2404,6 @@ export function AppProvider({ children }) {
     setNotifications((prev) => [item, ...prev].slice(0, 100));
   }
 
-  const sendAlert = (text, audience = "all") => {
-    const body = (text || "").trim();
-    if (!body) return { ok: false, error: "اكتب نص التنبيه أولاً" };
-    const allowed = ["all", "members", "supervisors"];
-    const target = allowed.includes(audience) ? audience : "all";
-    const titleByAudience = {
-      all: "تنبيه من الإدارة",
-      members: "تنبيه للأعضاء",
-      supervisors: "تنبيه للمشرفين",
-    };
-    const activeSeason =
-      seasons.find((s) => s.active && s.type === SEASON_TYPES.REGULAR) ||
-      seasons.find((s) => s.active) ||
-      null;
-    pushNotification({
-      title: titleByAudience[target] || "تنبيه من الإدارة",
-      body,
-      audience: target,
-      saisonId: activeSeason?.id || null,
-      category:
-        target === "admin"
-          ? NOTIF_CATEGORY.NOTIFICATIONS
-          : NOTIF_CATEGORY.ALERTS,
-    });
-    return { ok: true, audience: target };
-  };
-
   const getNotificationsForUser = (user = currentUser, options = {}) => {
     if (!user) return [];
     const scopeSeasonId =
@@ -2608,7 +2581,6 @@ export function AppProvider({ children }) {
     createExam,
     cancelExam,
     markExamCompleted,
-    sendAlert,
     getNotificationsForUser,
     getMenuBadgeCounts,
     markNotificationRead,

@@ -898,6 +898,61 @@ export async function getAssignableSupervisors({ saisonId = null } = {}) {
 }
 
 /**
+ * Superviseurs de la liste de chat admin.
+ * D2 : role = 'supervisor' OU roles contient 'supervisor'
+ * (même idée que private.profile_has_role).
+ * Sans saison active : liste vide, comme getAssignableSupervisors.
+ * Le statut de compte n'est pas filtré ici (filterAdminInboxRows).
+ * Fonction dédiée : ne pas élargir getSupervisorProfiles, qui alimente
+ * aussi l'affectation de séance (AdminSeasonsScreen).
+ * @param {{ saisonId?: string|null }} options
+ * @returns { ok, supervisors }
+ */
+export async function getAdminChatSupervisors({ saisonId = null } = {}) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!saisonId) {
+    return { ok: true, supervisors: [] };
+  }
+  try {
+    const selectWithCanonical =
+      "id, first_name, last_name, email, canonical_email, role, roles, account_status, avatar_url, created_at";
+    const selectWithoutCanonical =
+      "id, first_name, last_name, email, role, roles, account_status, avatar_url, created_at";
+    let { data, error } = await withTimeout(
+      supabase
+        .from("profiles")
+        .select(selectWithCanonical)
+        .or("role.eq.supervisor,roles.cs.{supervisor}")
+        .order("created_at", { ascending: true }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة المشرفين"
+    );
+    if (
+      error &&
+      /column .*canonical_email|canonical_email .*does not exist/i.test(error.message || "")
+    ) {
+      ({ data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .select(selectWithoutCanonical)
+          .or("role.eq.supervisor,roles.cs.{supervisor}")
+          .order("created_at", { ascending: true }),
+        SUPABASE_TIMEOUT_MS,
+        "قراءة المشرفين"
+      ));
+    }
+    if (error) {
+      return { ok: false, error: mapTableError(error, "profiles") };
+    }
+    return { ok: true, supervisors: data || [] };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
  * (Admin) Profils des membres (exclut les comptes 'invited' sans compte).
  * RLS : profiles_select_admin.
  * @returns { ok, members }

@@ -545,12 +545,20 @@ function otherParty(message, myUserId) {
   };
 }
 
+const INBOX_PROFILE_EMBED =
+  "id, first_name, last_name, email, canonical_email, role, avatar_url";
+const INBOX_PROFILE_EMBED_WITH_STATUS =
+  "id, first_name, last_name, email, canonical_email, role, roles, account_status, avatar_url";
+
 /**
  * Dernier message de chaque conversation du compte connecté, plus récent
  * d'abord. Sert aux boîtes de réception (admin, superviseur, membre).
+ * includeStatus ajoute roles et account_status sur les profils embarqués.
+ * Réservé à la liste admin : les autres inbox gardent le select court.
+ * @param {{ includeStatus?: boolean }} [options]
  * @returns { ok, threads }
  */
-export async function getInboxThreads() {
+export async function getInboxThreads({ includeStatus = false } = {}) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -559,15 +567,21 @@ export async function getInboxThreads() {
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
+  const profileEmbed = includeStatus
+    ? INBOX_PROFILE_EMBED_WITH_STATUS
+    : INBOX_PROFILE_EMBED;
+
   try {
     const { data, error } = await withTimeout(
       supabase
         .from("messages")
         .select(
-          "id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(id, first_name, last_name, email, canonical_email, role, avatar_url), recipient:profiles!messages_recipient_id_fkey(id, first_name, last_name, email, canonical_email, role, avatar_url)"
+          `id, seance_id, sender_id, recipient_id, contenu, created_at, read_at, sender:profiles!messages_sender_id_fkey(${profileEmbed}), recipient:profiles!messages_recipient_id_fkey(${profileEmbed})`
         )
         .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
         .order("created_at", { ascending: false })
+        // Aperçu et non-lus calculés sur les 300 derniers messages du compte.
+        // La table messages est purgée à chaque nouvelle saison (start_new_season).
         .limit(300),
       SUPABASE_TIMEOUT_MS,
       "قراءة صندوق الرسائل"
@@ -591,7 +605,7 @@ export async function getInboxThreads() {
       if (seen.has(other.id)) continue;
       seen.add(other.id);
       const p = other.profile || {};
-      threads.push({
+      const thread = {
         otherId: other.id,
         firstName: p.first_name || "",
         lastName: p.last_name || "",
@@ -604,7 +618,12 @@ export async function getInboxThreads() {
         seanceId: m.seance_id || null,
         unread: false,
         unreadCount: 0,
-      });
+      };
+      if (includeStatus) {
+        thread.roles = Array.isArray(p.roles) ? p.roles : [];
+        thread.account_status = p.account_status || null;
+      }
+      threads.push(thread);
     }
     for (const t of threads) {
       const n = unreadCountByOther.get(t.otherId) || 0;
@@ -649,6 +668,8 @@ export function subscribeMyMessages(onMessage) {
  * Fusionne une liste de contacts avec les derniers messages (inbox).
  * Les conversations récentes passent en tête pour répondre tout de suite.
  * unread : au moins un message entrant avec read_at null (calculé dans getInboxThreads).
+ * roles et account_status sont recopiés tels quels (liste admin). Les autres
+ * inbox ne les lisent pas : le tri, le texte et les non-lus ne changent pas.
  * @param {object} [options]
  * @param {boolean} [options.appendUnknown=true] hors-contacts (autres threads)
  */
@@ -662,6 +683,8 @@ export function mergeInboxRows(contacts, threads, options = {}) {
       id: c.id,
       name: c.name,
       role: c.role || t?.role || "",
+      roles: c.roles ?? t?.roles ?? null,
+      account_status: c.account_status ?? t?.account_status ?? null,
       avatarLetter: c.avatarLetter,
       avatarUrl: c.avatarUrl || t?.avatarUrl || null,
       avatarPrimary: !!c.avatarPrimary,
@@ -684,6 +707,8 @@ export function mergeInboxRows(contacts, threads, options = {}) {
         id: t.otherId,
         name,
         role: t.role || "",
+        roles: t.roles ?? null,
+        account_status: t.account_status ?? null,
         avatarLetter: (t.firstName || name).trim().charAt(0) || "؟",
         avatarUrl: t.avatarUrl || null,
         avatarPrimary: t.role === "admin",
@@ -705,6 +730,39 @@ export function mergeInboxRows(contacts, threads, options = {}) {
     return (a.name || "").localeCompare(b.name || "", "ar");
   });
   return rows;
+}
+
+function rowHasRole(row, roleName) {
+  const wanted = String(roleName || "").toLowerCase();
+  if (!wanted) return false;
+  if (String(row?.role || "").toLowerCase() === wanted) return true;
+  const roles = row?.roles;
+  if (!Array.isArray(roles)) return false;
+  return roles.some((item) => String(item || "").toLowerCase() === wanted);
+}
+
+/**
+ * Liste et badge du chat admin.
+ * Retire un membre sans rôle superviseur (D4), et tout compte dont
+ * account_status est renseigné et différent de active (D3).
+ * Un statut vide ou absent reste visible. Accepte les lignes fusionnées
+ * ou les fils bruts qui portent role, roles et account_status.
+ */
+export function filterAdminInboxRows(rows) {
+  return (rows || []).filter((row) => {
+    if (rowHasRole(row, "member") && !rowHasRole(row, "supervisor")) return false;
+    const status = row?.account_status;
+    if (status != null && String(status).trim() !== "" && String(status) !== "active") {
+      return false;
+    }
+    return true;
+  });
+}
+
+/** Rôle passé à ChatConversation : un profil D2 s'ouvre comme superviseur. */
+export function adminInboxContactRole(row) {
+  if (rowHasRole(row, "supervisor")) return "supervisor";
+  return row?.role || "supervisor";
 }
 
 /**
