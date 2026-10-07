@@ -8,10 +8,10 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { SEASON_TYPES } from "../../constants/roles";
-import { rtlText } from "../../constants/rtl";
+import { row, rtlText } from "../../constants/rtl";
 import { getMemberSeasonHistory } from "../../lib/seasonStatsApi";
 import { STATS_LABELS } from "../../lib/statsLabels";
-import { TUMUNS_PER_HIZB, formatHizbCount, tumunStoredToUi } from "../../lib/tumun";
+import { TUMUNS_PER_HIZB, formatHizbCount } from "../../lib/tumun";
 
 const palette = {
   primary: "#2E7D32",
@@ -32,13 +32,32 @@ function seasonYear(startDate) {
   return /^\d{4}$/.test(year) ? year : "";
 }
 
-function formatPosition(tumun) {
-  if (tumun == null) return "—";
-  const n = Number(tumun);
+function hizbOne(tumun) {
+  if (tumun == null || tumun === "") return "—";
+  const n = Number(tumun) / TUMUNS_PER_HIZB;
   if (!Number.isFinite(n)) return "—";
-  const hizb = Math.floor(n / TUMUNS_PER_HIZB);
-  const rest = tumunStoredToUi(n % TUMUNS_PER_HIZB);
-  return `${formatHizbCount(hizb)} · ${STATS_LABELS.tumun} ${rest}`;
+  const text = `${(Math.round(n * 10) / 10).toFixed(1)} ${STATS_LABELS.unitHizb}`;
+  return n < 0 ? `\u200E${text}` : text;
+}
+
+function scoreOutOf20(row) {
+  const notes = Number(row?.testsNotes);
+  const average = Number(row?.noteMoyenne);
+  if (!Number.isFinite(notes) || notes <= 0 || !Number.isFinite(average)) return "—";
+  return `\u2066${Math.round(average * 10) / 10}${STATS_LABELS.unitScore}\u2069`;
+}
+
+function PositionLine({ debut, fin }) {
+  const start = hizbOne(debut);
+  const end = hizbOne(fin);
+  if (start === "—" && end === "—") return <Text style={styles.line}>—</Text>;
+  return (
+    <View style={styles.positionRow}>
+      <Text style={styles.ltrBit}>{start}</Text>
+      <Text style={styles.line}> ← </Text>
+      <Text style={styles.ltrBit}>{end}</Text>
+    </View>
+  );
 }
 
 function formatGain(gainTumun) {
@@ -59,9 +78,7 @@ function SeasonCard({ row }) {
       {rattrapage ? (
         <>
           <Text style={styles.note}>{STATS_LABELS.progressOnly}</Text>
-          <Text style={styles.line}>
-            {STATS_LABELS.from} {formatPosition(row.posDebut)} {STATS_LABELS.to} {formatPosition(row.posFin)}
-          </Text>
+          <PositionLine debut={row.posDebut} fin={row.posFin} />
           <Text style={styles.line}>
             {STATS_LABELS.gainHistory}: {formatGain(row.gainTumun)}
           </Text>
@@ -73,14 +90,12 @@ function SeasonCard({ row }) {
           <Text style={styles.line}>
             {STATS_LABELS.presence}: {row.presencePct == null ? "—" : `${row.presencePct}${STATS_LABELS.unitPercent}`}
           </Text>
-          <Text style={styles.line}>
-            {STATS_LABELS.from} {formatPosition(row.posDebut)} {STATS_LABELS.to} {formatPosition(row.posFin)}
-          </Text>
+          <PositionLine debut={row.posDebut} fin={row.posFin} />
           <Text style={styles.line}>
             {STATS_LABELS.gainHistory}: {formatGain(row.gainTumun)}
           </Text>
           <Text style={styles.line}>
-            {STATS_LABELS.tests}: {dash(row.testsNotes)} · {STATS_LABELS.averageShort} {dash(row.noteMoyenne)}{STATS_LABELS.unitScore}
+            {STATS_LABELS.tests}: {scoreOutOf20(row)}
           </Text>
           <Text style={styles.line}>
             {STATS_LABELS.goal}:{" "}
@@ -188,6 +203,8 @@ const styles = StyleSheet.create({
   },
   seasonTitle: { fontWeight: "800", color: palette.textPrimary, ...rtlText },
   line: { color: palette.textPrimary, fontSize: 13, ...rtlText },
+  positionRow: { flexDirection: row, alignItems: "center" },
+  ltrBit: { color: palette.textPrimary, fontSize: 13, writingDirection: "ltr" },
   note: { color: palette.textSecondary, fontSize: 12, ...rtlText },
   state: { alignItems: "center", gap: 8, paddingVertical: 8 },
   stateText: { color: palette.textSecondary, ...rtlText },
