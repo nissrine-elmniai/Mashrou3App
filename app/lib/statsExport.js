@@ -146,8 +146,13 @@ function deltaHtml(current, previous) {
 }
 
 function kpiCard(label, value, unit, delta) {
-  const shown = value == null ? "—" : esc(value);
-  const unitHtml = value != null && unit ? `<span class="unit">${esc(unit)}</span>` : "";
+  const score = unit === STATS_LABELS.unitScore && value != null;
+  const shown = value == null
+    ? "—"
+    : score
+      ? `<span dir="ltr">${esc(value)}${esc(unit)}</span>`
+      : esc(value);
+  const unitHtml = value != null && unit && !score ? `<span class="unit">${esc(unit)}</span>` : "";
   return `<div class="kpi"><div class="kpi-top">${delta || ""}</div><div class="kpi-value">${shown}${unitHtml}</div><div class="kpi-label">${esc(label)}</div></div>`;
 }
 
@@ -430,8 +435,17 @@ function supervisorsHtml(stats) {
 
 function memberTestsCell(row) {
   if (row?.source === "rattrapage") return "—";
-  if (row?.testsNotes == null && row?.noteMoyenne == null) return "—";
-  return `${dash(row.testsNotes)} · ${dash(row.noteMoyenne)} ${STATS_LABELS.unitScore}`;
+  const notes = Number(row?.testsNotes);
+  const average = oneDecimal(row?.noteMoyenne);
+  if (!Number.isFinite(notes) || notes <= 0 || average == null) return "—";
+  return `<span dir="ltr">${esc(`${average}${STATS_LABELS.unitScore}`)}</span>`;
+}
+
+function memberPositionCell(row) {
+  const start = hizbFromTumun(row?.posDebut);
+  const end = hizbFromTumun(row?.posFin);
+  if (start === "—" && end === "—") return "—";
+  return `<span dir="ltr">${esc(start)}</span> ← <span dir="ltr">${esc(end)}</span>`;
 }
 
 function memberObjectifCell(row) {
@@ -453,8 +467,7 @@ function membersHtml(rows) {
     .map((row) => {
       const rattrapage = row?.source === "rattrapage";
       const gain = memberGainCell(row);
-      const position = `${hizbFromTumun(row?.posDebut)} → ${hizbFromTumun(row?.posFin)}`;
-      return `<tr><td class="name">${esc(row?.name || "—")}</td><td>${esc(rattrapage ? "—" : dash(row?.seanceNom))}</td><td>${esc(rattrapage ? "—" : dashPct(row?.presencePct))}</td><td>${esc(position)}</td><td class="${gain.negative ? "neg" : ""}">${esc(gain.text)}</td><td>${esc(memberTestsCell(row))}</td><td>${esc(memberObjectifCell(row))}</td></tr>`;
+      return `<tr><td class="name">${esc(row?.name || "—")}</td><td>${esc(rattrapage ? "—" : dash(row?.seanceNom))}</td><td>${esc(rattrapage ? "—" : dashPct(row?.presencePct))}</td><td class="pos">${memberPositionCell(row)}</td><td class="${gain.negative ? "neg" : ""}">${esc(gain.text)}</td><td>${memberTestsCell(row)}</td><td>${esc(memberObjectifCell(row))}</td></tr>`;
     })
     .join("");
   return `<table><thead><tr><th class="name">${esc(STATS_LABELS.colName)}</th><th>${esc(STATS_LABELS.seance)}</th><th>${esc(STATS_LABELS.comparePresence)}</th><th>${esc(STATS_LABELS.colPosition)}</th><th>${esc(STATS_LABELS.colGain)}</th><th>${esc(STATS_LABELS.tests)}</th><th>${esc(STATS_LABELS.goal)}</th></tr></thead><tbody>${body}</tbody></table>`;
@@ -637,6 +650,7 @@ function pageHtml(body, footerName) {
   .legend-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
   .legend-dot { width: 8px; height: 8px; border-radius: 4px; flex: 0 0 8px; }
   .neg { color: ${RED}; }
+  .pos { white-space: nowrap; direction: rtl; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   thead { display: table-header-group; }
   th, td { border-bottom: 1px solid ${BORDER}; padding: 6px 4px; text-align: center; font-size: 10px; vertical-align: middle; }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
 import { QuickButton } from "../../components/ui";
-import { AttendanceRow } from "./components/SupervisorWidgets";
+import { AttendanceRow, OutlineButton } from "./components/SupervisorWidgets";
 import { initials, STATUS_COLORS } from "./supervisorHelpers";
 import {
   formatSessionDateLabel,
@@ -28,13 +28,207 @@ import {
 import { getSeanceMembers } from "../../lib/membersApi";
 import { emitSupervisorAttendanceSaved } from "./supervisorAttendanceBridge";
 
+/** Fenêtre dépassée : maintenant > fin (heure_debut + 48h). Fermée mais pas encore commencée = false. */
+function isMarkingWindowExceeded(markingWindowEnd) {
+  if (!markingWindowEnd) return false;
+  const end = new Date(markingWindowEnd);
+  if (Number.isNaN(end.getTime())) return false;
+  return Date.now() > end.getTime();
+}
+
+function statusOf(byMemberId, id) {
+  const status = byMemberId?.[id];
+  if (status === "present" || status === "absent") return status;
+  return "unset";
+}
+
+function detailVisibility({
+  readOnly,
+  windowExceeded,
+  correcting,
+  loading,
+  error,
+  deadlineLabel,
+  presentCount,
+  absentCount,
+}) {
+  const idle = !loading && !error;
+  return {
+    showPencil: windowExceeded && !correcting && idle,
+    showSummary: idle && presentCount + absentCount > 0,
+    showDeadline: !readOnly && Boolean(deadlineLabel),
+    showMarkingSave: !readOnly && idle,
+    showCorrectionSave: correcting && idle,
+  };
+}
+
+function AttendanceDetailRows({
+  members,
+  readOnly,
+  correcting,
+  saving,
+  byMemberId,
+  correctionRecords,
+  records,
+  onToggleCorrection,
+  onToggleRecord,
+}) {
+  return members.map((m) => {
+    if (!m?.id) return null;
+    const name = `${m.firstName || ""} ${m.lastName || ""}`.trim();
+    const useSwitches = correcting || !readOnly;
+
+    if (!useSwitches) {
+      const status = statusOf(byMemberId, m.id);
+      const isUnset = status === "unset";
+      const isPresent = status === "present";
+
+      return (
+        <AttendanceRow
+          key={m.id}
+          name={name}
+          initial={initials(m.firstName)}
+          userId={m.id}
+          avatarUrl={m.avatarUrl}
+          value={isPresent}
+          readOnly
+          unset={isUnset}
+        />
+      );
+    }
+
+    const isPresent = (correcting ? correctionRecords : records)[m.id] === true;
+    return (
+      <AttendanceRow
+        key={m.id}
+        name={name}
+        initial={initials(m.firstName)}
+        userId={m.id}
+        avatarUrl={m.avatarUrl}
+        value={isPresent}
+        unset={false}
+        statusLabel={isPresent ? "حاضر" : "غائب"}
+        onToggle={(v) => {
+          if (correcting) {
+            if (!saving) onToggleCorrection(m.id, v);
+            return;
+          }
+          onToggleRecord(m.id, v);
+        }}
+      />
+    );
+  });
+}
+
+function DetailListBody({ loading, error, rows }) {
+  if (loading) {
+    return <ActivityIndicator color={colors.primary} style={styles.loader} />;
+  }
+  if (error) {
+    return <Text style={styles.errorText}>{error}</Text>;
+  }
+  return rows;
+}
+
+function AttendanceDetailView({
+  navigation,
+  headerTitle,
+  dateLabel,
+  deadlineLabel,
+  groupName,
+  presenceStats,
+  visibility,
+  loading,
+  error,
+  onStartCorrection,
+  onMarkingSave,
+  onCorrectionSave,
+  onCancelCorrection,
+  saving,
+  rows,
+}) {
+  return (
+    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+      <StatusBar style="light" />
+      <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+        >
+          <Ionicons name={arrowBack} size={22} color="white" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{headerTitle}</Text>
+        {visibility.showPencil ? (
+          <TouchableOpacity
+            style={styles.editBtn}
+            onPress={onStartCorrection}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="تعديل الحضور"
+          >
+            <Ionicons name="create-outline" size={22} color="white" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      <View style={styles.banner}>
+        <Text style={styles.bannerGroup}>{groupName || "الحصة"}</Text>
+        <Text style={styles.bannerDate}>{dateLabel}</Text>
+        {visibility.showSummary ? (
+          <Text style={styles.bannerStats}>
+            <Text style={styles.bannerPresent}>{presenceStats.presentCount} حاضر</Text>
+            <Text style={styles.bannerStatsDash}> — </Text>
+            <Text style={styles.bannerAbsent}>{presenceStats.absentCount} غائب</Text>
+          </Text>
+        ) : null}
+        {visibility.showDeadline ? (
+          <Text style={styles.bannerDeadline}>يمكنك التعديل حتى {deadlineLabel}</Text>
+        ) : null}
+      </View>
+
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <DetailListBody loading={loading} error={error} rows={rows} />
+      </ScrollView>
+
+      {visibility.showMarkingSave ? (
+        <View style={styles.saveBar}>
+          <QuickButton
+            label="حفظ الحضور "
+            icon="checkmark"
+            color={colors.primary}
+            onPress={onMarkingSave}
+          />
+        </View>
+      ) : null}
+
+      {visibility.showCorrectionSave ? (
+        <View style={styles.saveBar}>
+          {saving ? (
+            <ActivityIndicator color={colors.primary} style={styles.loader} />
+          ) : null}
+          <QuickButton
+            label="حفظ"
+            icon="checkmark"
+            color={colors.primary}
+            onPress={onCorrectionSave}
+          />
+          <OutlineButton label="إلغاء" onPress={onCancelCorrection} />
+        </View>
+      ) : null}
+    </SafeAreaView>
+  );
+}
+
 export default function SupervisorAttendanceDetailScreen({ navigation, route }) {
   const {
     readOnly = true,
     seanceId,
     sessionDate,
     markingWindowEnd,
-    isMarked: isMarkedParam = false,
     groupName,
   } = route.params || {};
   const membersFromRoute = Array.isArray(route.params?.members)
@@ -88,6 +282,12 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
   const [byMemberId, setByMemberId] = useState({});
   const [records, setRecords] = useState({});
   const [saving, setSaving] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+  const [correctionRecords, setCorrectionRecords] = useState({});
+  const saveLock = useRef(false);
+  const correctingRef = useRef(false);
+
+  const windowExceeded = readOnly && isMarkingWindowExceeded(markingWindowEnd);
 
   useEffect(() => {
     if (membersLoading) {
@@ -100,6 +300,7 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
       setError("بيانات الحصة غير مكتملة");
       return;
     }
+    if (correctingRef.current) return;
 
     let cancelled = false;
     setLoading(true);
@@ -115,6 +316,10 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
         return;
       }
 
+      if (correctingRef.current) {
+        setLoading(false);
+        return;
+      }
       const fetched = res.byMemberId || {};
       setByMemberId(fetched);
       if (!readOnly) {
@@ -156,6 +361,77 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     ]);
   };
 
+  const startCorrection = () => {
+    if (!windowExceeded || loading || error || saving) return;
+    setCorrectionRecords(recordsFromByMemberId(memberIds, byMemberId));
+    correctingRef.current = true;
+    setCorrecting(true);
+  };
+
+  const cancelCorrection = () => {
+    if (saveLock.current) return;
+    correctingRef.current = false;
+    setCorrectionRecords({});
+    setCorrecting(false);
+  };
+
+  const toggleCorrection = (id, value) => {
+    if (saving) return;
+    setCorrectionRecords((prev) => ({ ...prev, [id]: value }));
+  };
+
+  const commitCorrection = async (payload) => {
+    if (!correctingRef.current || saveLock.current || !seanceId || !sessionDate) return;
+    saveLock.current = true;
+    setSaving(true);
+    const res = await saveSeancePresence(seanceId, sessionDate, payload);
+    setSaving(false);
+    saveLock.current = false;
+
+    if (!correctingRef.current) return;
+
+    if (!res.ok) {
+      Alert.alert("تنبيه", res.error || "تعذر حفظ الحضور");
+      return;
+    }
+
+    setByMemberId((prev) => ({ ...prev, ...payload }));
+    setCorrectionRecords({});
+    correctingRef.current = false;
+    setCorrecting(false);
+    emitSupervisorAttendanceSaved();
+    Alert.alert("تم", "تم حفظ الحضور");
+  };
+
+  const requestCorrectionSave = () => {
+    if (!correcting || saving || loading) return;
+
+    const payload = {};
+    let unsetSavedAbsent = 0;
+    memberIds.forEach((id) => {
+      const before = statusOf(byMemberId, id);
+      const after = correctionRecords[id] ? "present" : "absent";
+      if (after === before) return;
+      payload[id] = after;
+      if (before === "unset" && after === "absent") unsetSavedAbsent += 1;
+    });
+
+    if (Object.keys(payload).length === 0) {
+      Alert.alert("تنبيه", "لا توجد تغييرات للحفظ");
+      return;
+    }
+
+    const confirmMessage =
+      unsetSavedAbsent > 0
+        ? `سيتم تسجيل ${unsetSavedAbsent} أعضاء غير مسجلين كغائبين. هل تريد الحفظ؟`
+        : "هل تريد حفظ تعديلات الحضور؟";
+
+    Alert.alert("تأكيد", confirmMessage, [
+      { text: "إلغاء", style: "cancel" },
+      { text: "حفظ", onPress: () => commitCorrection(payload) },
+    ]);
+  };
+
   const dateLabel = formatSessionDateLabel(sessionDate);
   const deadlineLabel = formatDeadlineLabel(markingWindowEnd);
   const headerTitle = readOnly ? "تفاصيل الحضور" : "تسجيل الحضور";
@@ -164,109 +440,61 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     let presentCount = 0;
     let absentCount = 0;
     memberIds.forEach((id) => {
-      let status = byMemberId[id];
+      let status = statusOf(byMemberId, id);
       if (!readOnly && id in records) {
         status = records[id] ? "present" : "absent";
+      } else if (correcting && id in correctionRecords) {
+        status = correctionRecords[id] ? "present" : "absent";
       }
       if (status === "present") presentCount += 1;
       else if (status === "absent") absentCount += 1;
     });
     return { presentCount, absentCount };
-  }, [memberIds, byMemberId, records, readOnly]);
+  }, [memberIds, byMemberId, records, readOnly, correcting, correctionRecords]);
 
-  const showPresenceSummary =
-    !loading && !error && presenceStats.presentCount + presenceStats.absentCount > 0;
+  const visibility = detailVisibility({
+    readOnly,
+    windowExceeded,
+    correcting,
+    loading,
+    error,
+    deadlineLabel,
+    presentCount: presenceStats.presentCount,
+    absentCount: presenceStats.absentCount,
+  });
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      <StatusBar style="light" />
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-        >
-          <Ionicons name={arrowBack} size={22} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{headerTitle}</Text>
-      </View>
-
-      <View style={styles.banner}>
-        <Text style={styles.bannerGroup}>{groupName || "الحصة"}</Text>
-        <Text style={styles.bannerDate}>{dateLabel}</Text>
-        {showPresenceSummary ? (
-          <Text style={styles.bannerStats}>
-            <Text style={styles.bannerPresent}>{presenceStats.presentCount} حاضر</Text>
-            <Text style={styles.bannerStatsDash}> — </Text>
-            <Text style={styles.bannerAbsent}>{presenceStats.absentCount} غائب</Text>
-          </Text>
-        ) : null}
-        {!readOnly && deadlineLabel ? (
-          <Text style={styles.bannerDeadline}>يمكنك التعديل حتى {deadlineLabel}</Text>
-        ) : null}
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {loading ? (
-          <ActivityIndicator color={colors.primary} style={styles.loader} />
-        ) : error ? (
-          <Text style={styles.errorText}>{error}</Text>
-        ) : (
-          members.map((m) => {
-            if (!m?.id) return null;
-            const name = `${m.firstName || ""} ${m.lastName || ""}`.trim();
-
-            if (readOnly) {
-              const status = byMemberId[m.id] || "unset";
-              const isUnset = status === "unset";
-              const isPresent = status === "present";
-
-              return (
-                <AttendanceRow
-                  key={m.id}
-                  name={name}
-                  initial={initials(m.firstName)}
-                  userId={m.id}
-                  avatarUrl={m.avatarUrl}
-                  value={isPresent}
-                  readOnly
-                  unset={isUnset}
-                />
-              );
-            }
-
-            const isPresent = records[m.id] === true;
-            return (
-              <AttendanceRow
-                key={m.id}
-                name={name}
-                initial={initials(m.firstName)}
-                userId={m.id}
-                avatarUrl={m.avatarUrl}
-                value={isPresent}
-                unset={false}
-                statusLabel={isPresent ? "حاضر" : "غائب"}
-                onToggle={(v) => setRecords((prev) => ({ ...prev, [m.id]: v }))}
-              />
-            );
-          })
-        )}
-      </ScrollView>
-
-      {!readOnly && !loading && !error ? (
-        <View style={styles.saveBar}>
-          <QuickButton
-            label="حفظ الحضور "
-            icon="checkmark"
-            color={colors.primary}
-            onPress={handleSave}
-          />
-        </View>
-      ) : null}
-    </SafeAreaView>
+    <AttendanceDetailView
+      navigation={navigation}
+      headerTitle={headerTitle}
+      dateLabel={dateLabel}
+      deadlineLabel={deadlineLabel}
+      groupName={groupName}
+      presenceStats={presenceStats}
+      visibility={visibility}
+      loading={loading}
+      error={error}
+      saving={saving}
+      onStartCorrection={startCorrection}
+      onMarkingSave={handleSave}
+      onCorrectionSave={requestCorrectionSave}
+      onCancelCorrection={cancelCorrection}
+      rows={
+        <AttendanceDetailRows
+          members={members}
+          readOnly={readOnly}
+          correcting={correcting}
+          saving={saving}
+          byMemberId={byMemberId}
+          correctionRecords={correctionRecords}
+          records={records}
+          onToggleCorrection={toggleCorrection}
+          onToggleRecord={(id, value) =>
+            setRecords((prev) => ({ ...prev, [id]: value }))
+          }
+        />
+      }
+    />
   );
 }
 
@@ -281,6 +509,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   backBtn: { padding: 2 },
+  editBtn: { padding: 2 },
   headerTitle: {
     flex: 1,
     color: "white",

@@ -226,6 +226,131 @@ function Fact({ label, value }) {
   );
 }
 
+const MEMBER_NAME_W = 140;
+const MEMBER_COLS = [
+  { key: "seance", label: STATS_LABELS.seance, width: 120 },
+  { key: "presence", label: STATS_LABELS.comparePresence, width: 88 },
+  { key: "position", label: STATS_LABELS.colPosition, width: 176 },
+  { key: "gain", label: STATS_LABELS.colGain, width: 120 },
+  { key: "tests", label: STATS_LABELS.tests, width: 84 },
+  { key: "goal", label: STATS_LABELS.goal, width: 88 },
+];
+
+function hizbFromTumun(tumun) {
+  if (tumun == null || tumun === "") return "—";
+  const n = Number(tumun) / 8;
+  if (!Number.isFinite(n)) return "—";
+  const text = `${(Math.round(n * 10) / 10).toFixed(1)} ${STATS_LABELS.unitHizb}`;
+  return n < 0 ? `\u200E${text}` : text;
+}
+
+function memberScore(row) {
+  if (row?.source === "rattrapage") return "—";
+  const notes = Number(row?.testsNotes);
+  const average = oneDecimal(row?.noteMoyenne);
+  if (!Number.isFinite(notes) || notes <= 0 || average == null) return "—";
+  return `\u2066${average}${STATS_LABELS.unitScore}\u2069`;
+}
+
+function MemberPosition({ row }) {
+  const start = hizbFromTumun(row?.posDebut);
+  const end = hizbFromTumun(row?.posFin);
+  if (start === "—" && end === "—") return <Text style={styles.memberCellText}>—</Text>;
+  return (
+    <View style={styles.memberPosition}>
+      <Text style={styles.memberLtr}>{start}</Text>
+      <Text style={styles.memberCellText}> ← </Text>
+      <Text style={styles.memberLtr}>{end}</Text>
+    </View>
+  );
+}
+
+function MemberSeasonTable({ rows, onPress }) {
+  if (!rows.length) return <Text style={styles.emptyHint}>{STATS_LABELS.noMemberData}</Text>;
+  return (
+    <View style={styles.memberTable}>
+      <View style={styles.memberNameCol}>
+        <View style={styles.memberHeadName}>
+          <Text style={styles.memberHeadText} numberOfLines={1}>{STATS_LABELS.colName}</Text>
+        </View>
+        {rows.map((row, index) => (
+          <TouchableOpacity
+            key={`${row.membreId || index}-${row.source || ""}`}
+            style={styles.memberNameCell}
+            onPress={() => onPress(row)}
+          >
+            <Text style={styles.memberNameText} numberOfLines={1} ellipsizeMode="tail">
+              {row.name || "—"}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator>
+        <View>
+          <View style={styles.memberHeadRow}>
+            {MEMBER_COLS.map((col) => (
+              <View key={col.key} style={[styles.memberHeadCell, { width: col.width }]}>
+                <Text style={styles.memberHeadText} numberOfLines={1}>{col.label}</Text>
+              </View>
+            ))}
+          </View>
+          {rows.map((row, index) => {
+            const gain = Number(row.gainTumun);
+            const negative = Number.isFinite(gain) && gain < 0;
+            const rattrapage = row.source === "rattrapage";
+            const goal =
+              rattrapage || row.objectifAtteint == null
+                ? "—"
+                : row.objectifAtteint
+                  ? STATS_LABELS.achieved
+                  : STATS_LABELS.notAchieved;
+            return (
+              <TouchableOpacity
+                key={`${row.membreId || index}-${row.source || ""}`}
+                style={styles.memberDataRow}
+                onPress={() => onPress(row)}
+              >
+                <View style={[styles.memberCell, { width: 120 }]}>
+                  <Text style={styles.memberCellText} numberOfLines={1}>
+                    {rattrapage ? "—" : row.seanceNom || "—"}
+                  </Text>
+                </View>
+                <View style={[styles.memberCell, { width: 88 }]}>
+                  <Text style={styles.memberCellText}>{rattrapage ? "—" : dashPct(row.presencePct)}</Text>
+                </View>
+                <View style={[styles.memberCell, { width: 176 }]}>
+                  <MemberPosition row={row} />
+                </View>
+                <View style={[styles.memberCell, { width: 120 }]}>
+                  <Text style={[styles.memberCellText, negative && styles.memberNegative]}>
+                    {row.gainTumun == null
+                      ? "—"
+                      : `${negative ? "\u200E" : ""}${formatHizbOne(gain / 8)}`}
+                  </Text>
+                </View>
+                <View style={[styles.memberCell, { width: 84 }]}>
+                  <Text style={styles.memberLtr}>{memberScore(row)}</Text>
+                </View>
+                <View style={[styles.memberCell, { width: 88 }]}>
+                  <Text
+                    style={[
+                      styles.memberCellText,
+                      row.objectifAtteint === true && !rattrapage && styles.memberAchieved,
+                      row.objectifAtteint === false && !rattrapage && styles.memberMissed,
+                    ]}
+                  >
+                    {goal}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
 export default function AdminStatsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "stats");
   const { seasons, currentUser } = useApp();
@@ -238,6 +363,7 @@ export default function AdminStatsScreen({ navigation }) {
   const fabClearance = 56 + 24 + bottomGap;
   const typeTouched = useRef(false);
   const requestId = useRef(0);
+  const selectedIdRef = useRef(null);
 
   const [type, setType] = useState(() => {
     const active = (seasons || []).find((season) => season.active);
@@ -250,6 +376,7 @@ export default function AdminStatsScreen({ navigation }) {
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [memberRows, setMemberRows] = useState([]);
   const [exporting, setExporting] = useState(false);
   const [compareExport, setCompareExport] = useState({
     disabled: true,
@@ -277,18 +404,41 @@ export default function AdminStatsScreen({ navigation }) {
     setError(null);
     const res = await listSeasonStatsByType(seasonType);
     if (token !== requestId.current) return;
-    setLoading(false);
     if (!res.ok) {
       setViews([]);
+      setMemberRows([]);
       setError(res.error || STATS_LABELS.loadError);
+      setLoading(false);
       return;
     }
     const list = res.seasons || [];
+    const nextId =
+      selectedIdRef.current && list.some((view) => view.saisonId === selectedIdRef.current)
+        ? selectedIdRef.current
+        : defaultSeasonId(list);
+    const season = list.find((view) => view.saisonId === nextId) || null;
+    let rows = [];
+    if (isAdmin && season && !season.empty) {
+      const members = await getSeasonMemberRows({
+        id: season.saisonId,
+        active: !!season.active,
+      });
+      if (token !== requestId.current) return;
+      if (!members.ok) {
+        setViews([]);
+        setMemberRows([]);
+        setError(members.error || STATS_LABELS.loadError);
+        setLoading(false);
+        return;
+      }
+      rows = members.rows || [];
+    }
+    setMemberRows(rows);
     setViews(list);
-    setSelectedId((prev) =>
-      prev && list.some((view) => view.saisonId === prev) ? prev : defaultSeasonId(list)
-    );
-  }, []);
+    selectedIdRef.current = nextId;
+    setSelectedId(nextId);
+    setLoading(false);
+  }, [isAdmin]);
 
   useFocusEffect(
     useCallback(() => {
@@ -308,9 +458,48 @@ export default function AdminStatsScreen({ navigation }) {
     typeTouched.current = true;
     setType(next);
     setViews([]);
+    setMemberRows([]);
+    selectedIdRef.current = null;
     setSelectedId(null);
     setError(null);
     setLoading(true);
+  };
+
+  const selectSeason = async (view) => {
+    if (!view || view.saisonId === selectedId) return;
+    const token = ++requestId.current;
+    selectedIdRef.current = view.saisonId;
+    setSelectedId(view.saisonId);
+    if (!isAdmin || view.empty) {
+      setMemberRows([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const members = await getSeasonMemberRows({
+      id: view.saisonId,
+      active: !!view.active,
+    });
+    if (token !== requestId.current) return;
+    if (!members.ok) {
+      setMemberRows([]);
+      setError(members.error || STATS_LABELS.loadError);
+      setLoading(false);
+      return;
+    }
+    setMemberRows(members.rows || []);
+    setLoading(false);
+  };
+
+  const openMember = (row) => {
+    const parts = String(row?.name || "").trim().split(/\s+/).filter(Boolean);
+    navigation.navigate("MemberProfile", {
+      memberId: row.membreId,
+      firstName: parts[0] || "",
+      lastName: parts.slice(1).join(" "),
+      adminTheme: true,
+      viewerRole: "admin",
+    });
   };
 
   const exportDisabled = exporting || loading || !selected || selected.empty;
@@ -454,7 +643,7 @@ export default function AdminStatsScreen({ navigation }) {
                 <TouchableOpacity
                   key={view.saisonId}
                   style={[styles.chip, on && styles.chipOn]}
-                  onPress={() => setSelectedId(view.saisonId)}
+                  onPress={() => selectSeason(view)}
                 >
                   <Text style={[styles.chipText, on && styles.chipTextOn]} numberOfLines={1}>
                     {seasonLabel(view)}
@@ -511,8 +700,11 @@ export default function AdminStatsScreen({ navigation }) {
               <MetricCard
                 icon={ClipboardList}
                 label={STATS_LABELS.testsAverage}
-                value={oneDecimal(currentKpi.tests)}
-                unit={STATS_LABELS.unitScore}
+                value={
+                  currentKpi.tests == null
+                    ? null
+                    : `\u2066${oneDecimal(currentKpi.tests)}${STATS_LABELS.unitScore}\u2069`
+                }
                 width={cardWidth}
                 delta={<Delta current={currentKpi.tests} previous={previousKpi.tests} />}
               />
@@ -562,6 +754,12 @@ export default function AdminStatsScreen({ navigation }) {
                   <Fact label={STATS_LABELS.acceptanceRate} value={dashPct(selected.effectifs.tauxAcceptation)} />
                 </>
               )}
+              {isAdmin ? (
+                <>
+                  <Text style={styles.memberListTitle}>{STATS_LABELS.memberList}</Text>
+                  <MemberSeasonTable rows={memberRows} onPress={openMember} />
+                </>
+              ) : null}
             </SectionCard>
 
             <SectionCard title={STATS_LABELS.presence}>
@@ -991,4 +1189,70 @@ const styles = StyleSheet.create({
   testRow: { gap: 2, paddingVertical: 4 },
   testTitle: { color: palette.textPrimary, fontWeight: "700", ...rtlText },
   testMeta: { color: palette.textSecondary, fontSize: 12, ...rtlText },
+  memberListTitle: { fontSize: 14, fontWeight: "700", color: palette.textPrimary, marginTop: 4, ...rtlText },
+  memberTable: {
+    flexDirection: row,
+    alignItems: "flex-start",
+    backgroundColor: palette.card,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  memberNameCol: {
+    width: MEMBER_NAME_W,
+    flexShrink: 0,
+    backgroundColor: palette.softGreen,
+    borderLeftWidth: 1,
+    borderLeftColor: palette.border,
+  },
+  memberHeadName: {
+    height: 48,
+    width: MEMBER_NAME_W,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    backgroundColor: palette.softGreen,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  memberNameCell: {
+    height: 48,
+    width: MEMBER_NAME_W,
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  memberNameText: { width: "100%", fontSize: 12, color: palette.textPrimary, ...rtlText },
+  memberHeadRow: {
+    flexDirection: row,
+    height: 48,
+    backgroundColor: palette.softGreen,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  memberHeadCell: {
+    height: 48,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  memberHeadText: { fontSize: 12, fontWeight: "700", color: palette.textPrimary, textAlign: "center", ...rtlText },
+  memberDataRow: {
+    flexDirection: row,
+    height: 48,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    alignItems: "center",
+  },
+  memberCell: {
+    height: 48,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  memberCellText: { fontSize: 12, color: palette.textPrimary, textAlign: "center" },
+  memberPosition: { flexDirection: row, alignItems: "center", justifyContent: "center" },
+  memberLtr: { fontSize: 12, color: palette.textPrimary, writingDirection: "ltr", textAlign: "center" },
+  memberNegative: { color: palette.red },
+  memberAchieved: { color: palette.primary },
+  memberMissed: { color: palette.textSecondary },
 });
