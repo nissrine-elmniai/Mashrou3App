@@ -10,6 +10,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { SEASON_TYPES } from "../../constants/roles";
 import { rtlText } from "../../constants/rtl";
 import { getMemberSeasonHistory } from "../../lib/seasonStatsApi";
+import { STATS_LABELS } from "../../lib/statsLabels";
 import { TUMUNS_PER_HIZB, formatHizbCount, tumunStoredToUi } from "../../lib/tumun";
 
 const palette = {
@@ -37,7 +38,7 @@ function formatPosition(tumun) {
   if (!Number.isFinite(n)) return "—";
   const hizb = Math.floor(n / TUMUNS_PER_HIZB);
   const rest = tumunStoredToUi(n % TUMUNS_PER_HIZB);
-  return `${formatHizbCount(hizb)} · الثمن ${rest}`;
+  return `${formatHizbCount(hizb)} · ${STATS_LABELS.tumun} ${rest}`;
 }
 
 function formatGain(gainTumun) {
@@ -45,44 +46,48 @@ function formatGain(gainTumun) {
   const hizb = Number(gainTumun) / TUMUNS_PER_HIZB;
   if (!Number.isFinite(hizb)) return "—";
   const rounded = Math.round(hizb * 100) / 100;
-  return `${rounded} حزب`;
+  return `${rounded} ${STATS_LABELS.unitHizb}`;
 }
 
 function SeasonCard({ row }) {
   const year = seasonYear(row.startDate);
-  const title = year ? `${row.name || "موسم"} · ${year}` : row.name || "موسم";
+  const title = year ? `${row.name || STATS_LABELS.seasonFallback} · ${year}` : row.name || STATS_LABELS.seasonFallback;
   const rattrapage = row.source === "rattrapage";
   return (
     <View style={styles.seasonCard}>
       <Text style={styles.seasonTitle}>{title}</Text>
       {rattrapage ? (
         <>
-          <Text style={styles.note}>بيانات التقدم فقط</Text>
+          <Text style={styles.note}>{STATS_LABELS.progressOnly}</Text>
           <Text style={styles.line}>
-            من {formatPosition(row.posDebut)} إلى {formatPosition(row.posFin)}
+            {STATS_LABELS.from} {formatPosition(row.posDebut)} {STATS_LABELS.to} {formatPosition(row.posFin)}
           </Text>
-          <Text style={styles.line}>حفظ خلال الموسم: {formatGain(row.gainTumun)}</Text>
+          <Text style={styles.line}>
+            {STATS_LABELS.gainHistory}: {formatGain(row.gainTumun)}
+          </Text>
         </>
       ) : (
         <>
-          <Text style={styles.line}>الحصة: {dash(row.seanceNom)}</Text>
-          <Text style={styles.line}>المشرف: {dash(row.superviseurNom)}</Text>
+          <Text style={styles.line}>{STATS_LABELS.seance}: {dash(row.seanceNom)}</Text>
+          <Text style={styles.line}>{STATS_LABELS.supervisor}: {dash(row.superviseurNom)}</Text>
           <Text style={styles.line}>
-            الحضور: {row.presencePct == null ? "—" : `${row.presencePct}%`}
+            {STATS_LABELS.presence}: {row.presencePct == null ? "—" : `${row.presencePct}${STATS_LABELS.unitPercent}`}
           </Text>
           <Text style={styles.line}>
-            من {formatPosition(row.posDebut)} إلى {formatPosition(row.posFin)}
-          </Text>
-          <Text style={styles.line}>حفظ خلال الموسم: {formatGain(row.gainTumun)}</Text>
-          <Text style={styles.line}>
-            الاختبارات: {dash(row.testsNotes)} · المعدل {dash(row.noteMoyenne)}/20
+            {STATS_LABELS.from} {formatPosition(row.posDebut)} {STATS_LABELS.to} {formatPosition(row.posFin)}
           </Text>
           <Text style={styles.line}>
-            الهدف:{" "}
+            {STATS_LABELS.gainHistory}: {formatGain(row.gainTumun)}
+          </Text>
+          <Text style={styles.line}>
+            {STATS_LABELS.tests}: {dash(row.testsNotes)} · {STATS_LABELS.averageShort} {dash(row.noteMoyenne)}{STATS_LABELS.unitScore}
+          </Text>
+          <Text style={styles.line}>
+            {STATS_LABELS.goal}:{" "}
             {row.objectifCible == null
               ? "—"
               : `${formatHizbCount(row.objectifCible)} · ${
-                  row.objectifAtteint ? "مُحقَّق" : "غير مُحقَّق"
+                  row.objectifAtteint ? STATS_LABELS.achievedMark : STATS_LABELS.notAchievedMark
                 }`}
           </Text>
         </>
@@ -121,7 +126,7 @@ export default function MemberSeasonHistory({ membreId }) {
         setLoading(false);
         if (!res.ok) {
           setRows([]);
-          setError(res.error || "تعذر تحميل السجل");
+          setError(res.error || STATS_LABELS.historyLoadError);
           return;
         }
         setRows(res.rows || []);
@@ -137,25 +142,25 @@ export default function MemberSeasonHistory({ membreId }) {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>سجل المواسم</Text>
+      <Text style={styles.title}>{STATS_LABELS.historyTitle}</Text>
       {loading ? (
         <View style={styles.state}>
           <ActivityIndicator color={palette.primary} />
-          <Text style={styles.stateText}>جاري تحميل الإحصائيات…</Text>
+          <Text style={styles.stateText}>{STATS_LABELS.loading}</Text>
         </View>
       ) : error ? (
         <View style={styles.state}>
           <Text style={styles.error}>{error}</Text>
           <TouchableOpacity style={styles.retry} onPress={() => setReloadKey((n) => n + 1)}>
-            <Text style={styles.retryText}>إعادة المحاولة</Text>
+            <Text style={styles.retryText}>{STATS_LABELS.retry}</Text>
           </TouchableOpacity>
         </View>
       ) : rows.length === 0 ? (
-        <Text style={styles.stateText}>لا يوجد سجل مواسم لهذا العضو</Text>
+        <Text style={styles.stateText}>{STATS_LABELS.historyEmpty}</Text>
       ) : (
         <>
-          <Group title="المواسم العادية" rows={regular} />
-          <Group title="المدارس الصيفية" rows={summer} />
+          <Group title={STATS_LABELS.seasonsRegular} rows={regular} />
+          <Group title={STATS_LABELS.seasonsSummer} rows={summer} />
         </>
       )}
     </View>

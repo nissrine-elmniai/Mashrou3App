@@ -41,29 +41,31 @@ import { countPlannedTestsAdmin } from "../lib/testsApi";
 import AdminMessagesFab from "./AdminMessagesFab";
 import ProfileAvatar from "./ProfileAvatar";
 
+const DIVIDER_WIDTH = 1;
+const DIVIDER_COLOR = "#E0E0E0";
+
 const palette = {
   primary: "#2E7D32",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
   textSecondary: "#666666",
   textPrimary: "#333333",
-  border: "#E0E0E0",
 };
 
 const SIDEBAR_WIDTH = 280;
 
 const MENU_ITEMS = [
   { id: "home", label: "الرئيسية", icon: Home },
-  { id: "supervisors", label: "المشرفون", icon: UserCog },
-  { id: "members", label: "الأعضاء", icon: Users },
-  { id: "newSeason", label: "انطلاق موسم جديد", icon: CalendarPlus },
   { id: "registrations", label: "طلبات الانضمام والتسجيل", icon: FileText },
+  { id: "members", label: "الأعضاء", icon: Users },
+  { id: "supervisors", label: "المشرفون", icon: UserCog },
   { id: "sessions", label: "الحصص", icon: Calendar },
+  { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "tests", label: "الاختبارات", icon: ClipboardList },
   { id: "stats", label: "الإحصائيات", icon: BarChart3 },
-  { id: "notifications", label: "التنبيهات", icon: Bell },
   { id: "chat", label: "المحادثات", icon: MessageSquare },
   { id: "profile", label: "الملف الشخصي", icon: User },
+  { id: "newSeason", label: "انطلاق موسم جديد", icon: CalendarPlus, separatorBefore: true },
 ];
 
 const ROUTE_MAP = {
@@ -214,14 +216,15 @@ export function AdminSidebar({
                     ? formatPendingRegsBadge(badgeCount)
                     : formatMenuBadge(badgeCount);
               return (
-                <TouchableOpacity
-                  key={item.id}
-                  onPress={() => handlePress(item.id)}
-                  style={[
-                    sbStyles.menuItem,
-                    isActive && sbStyles.menuItemActive,
-                  ]}
-                >
+                <React.Fragment key={item.id}>
+                  {item.separatorBefore ? <View style={sbStyles.menuDivider} /> : null}
+                  <TouchableOpacity
+                    onPress={() => handlePress(item.id)}
+                    style={[
+                      sbStyles.menuItem,
+                      isActive && sbStyles.menuItemActive,
+                    ]}
+                  >
                   <Icon
                     size={20}
                     color={isActive ? palette.primary : palette.textSecondary}
@@ -243,6 +246,7 @@ export function AdminSidebar({
                     </View>
                   ) : null}
                 </TouchableOpacity>
+                </React.Fragment>
               );
             })}
           </ScrollView>
@@ -486,6 +490,12 @@ const sbStyles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 4,
   },
+  menuDivider: {
+    height: DIVIDER_WIDTH,
+    backgroundColor: DIVIDER_COLOR,
+    marginVertical: 8,
+    marginHorizontal: 16,
+  },
   menuItemActive: {
     backgroundColor: palette.softGreen,
     borderRightWidth: 3,
@@ -520,8 +530,8 @@ const sbStyles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 16,
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
+    borderTopWidth: DIVIDER_WIDTH,
+    borderTopColor: DIVIDER_COLOR,
     backgroundColor: "#fff",
   },
   logoutBtn: {

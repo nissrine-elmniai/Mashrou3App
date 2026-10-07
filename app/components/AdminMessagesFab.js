@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { formatUnreadBadge } from "../lib/messagesApi";
@@ -18,8 +19,9 @@ export default function AdminMessagesFab({
   bottomOffset = 16,
 }) {
   const insets = useSafeAreaInsets();
+  const route = useRoute();
 
-  if (hidden) return null;
+  if (hidden || route.name === "AdminStats") return null;
 
   const bottom = Math.max(insets.bottom, 16) + bottomOffset;
 
