@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   AppState,
   Modal,
   StyleSheet,
@@ -16,6 +17,7 @@ import {
   acknowledgeAlert,
   subscribeToNewAlerts,
 } from "../lib/alertsApi";
+import { subscribeAlertGateRefresh } from "../lib/alertGateEvents";
 import { getActiveRegularSeason } from "../lib/seasonScope";
 import AlertSenderFace from "./AlertSenderFace";
 
@@ -38,6 +40,7 @@ export default function BlockingAlertGate() {
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const [queue, setQueue] = useState([]);
   const [loadingAck, setLoadingAck] = useState(false);
+  const [ackError, setAckError] = useState("");
   const fetchingRef = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -65,7 +68,9 @@ export default function BlockingAlertGate() {
     activeSeasonId,
   ]);
 
-  // Requête immédiate au montage + Realtime (affichage dès l'envoi admin)
+  // Montage et retour de session. Couvre l'app tuée puis ouverte par un push :
+  // le gate n'est monté qu'après hydratation, et ce effet relance le chargement
+  // dès que l'identifiant de session est connu.
   useEffect(() => {
     if (!supabaseSession?.user?.id || isAdmin) return undefined;
     refresh();
@@ -73,6 +78,12 @@ export default function BlockingAlertGate() {
       refresh();
     });
   }, [refresh, supabaseSession?.user?.id, isAdmin]);
+
+  useEffect(() => {
+    return subscribeAlertGateRefresh(() => {
+      refresh();
+    });
+  }, [refresh]);
 
   // Requête immédiate à chaque retour au premier plan
   useEffect(() => {
@@ -91,11 +102,12 @@ export default function BlockingAlertGate() {
   const handleAcknowledge = async () => {
     const current = queue[0];
     if (!current || loadingAck) return;
+    setAckError("");
     setLoadingAck(true);
     const res = await acknowledgeAlert(current.id);
     setLoadingAck(false);
     if (!res.ok) {
-      // Erreur silencieuse : on retentera au prochain poll 30 s
+      setAckError("تعذّر تسجيل الاطلاع، يرجى المحاولة مرة أخرى");
       return;
     }
     // FIFO : retirer l'alerte acquittée, afficher la suivante
@@ -127,10 +139,13 @@ export default function BlockingAlertGate() {
             activeOpacity={0.85}
             disabled={loadingAck}
           >
-            <Text style={styles.buttonText}>
-              {loadingAck ? "جاري التأكيد..." : "تمت القراءة"}
-            </Text>
+            {loadingAck ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>تمت القراءة</Text>
+            )}
           </TouchableOpacity>
+          {ackError ? <Text style={styles.ackError}>{ackError}</Text> : null}
           {total > 1 ? (
             <Text style={styles.counter}>
               تبقّى {total - 1} من التنبيهات غير المقروءة
@@ -180,6 +195,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#fff",
     ...rtlTextBold,
+  },
+  ackError: {
+    marginTop: 12,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.red,
+    textAlign: "center",
+    lineHeight: 20,
+    ...rtlText,
   },
   counter: {
     marginTop: 12,

@@ -680,7 +680,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
               </TouchableOpacity>
             </View>
             <Text style={styles.modalHint}>
-              {`هذا المشرف مسؤول عن حصة «${removalSeance?.nom || "الحصة"}». الحصة لا تبقى بدون مسؤول. اختر مشرفاً غير مكلّف بحصة أخرى، ثم يُسحب الحساب الحالي. الحصص المؤرشفة تبقى في السجل.`}
+              {`هذا المشرف مسؤول عن حصة «${removalSeance?.nom || "الحصة"}». الحصة لا تبقى بدون مسؤول. اختر مشرفاً غير مكلّف بحصة أخرى، ثم يُسحب الحساب الحالي.`}
             </Text>
             <Text style={styles.modalFieldLabel}>المشرف الجديد</Text>
             {replacementOptions.length === 0 ? (

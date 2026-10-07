@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
 import {
   X,
   Home,
@@ -36,7 +35,7 @@ import {
   formatPendingRegsBadge,
 } from "../constants/notifications";
 import { useInboxThreads } from "../hooks/useInboxThreads";
-import { formatUnreadBadge } from "../lib/messagesApi";
+import { filterAdminInboxRows, formatUnreadBadge } from "../lib/messagesApi";
 import { countPlannedTestsAdmin } from "../lib/testsApi";
 import AdminMessagesFab from "./AdminMessagesFab";
 import ProfileAvatar from "./ProfileAvatar";
@@ -267,31 +266,6 @@ export function AdminSidebar({
   );
 }
 
-export function AdminChatFab({ navigation, hidden = false }) {
-  const insets = useSafeAreaInsets();
-  if (hidden) return null;
-
-  return (
-    <TouchableOpacity
-      style={[
-        fabStyles.fab,
-        { bottom: Math.max(insets.bottom, 16) + 16 },
-      ]}
-      onPress={() => navigation.navigate("AdminChat")}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityLabel="المحادثات"
-    >
-      <Ionicons
-        name="chatbubble-ellipses"
-        size={24}
-        color="#fff"
-        pointerEvents="none"
-      />
-    </TouchableOpacity>
-  );
-}
-
 export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
   const registrationsBadge = options?.registrationsBadge;
   const [isOpen, setIsOpen] = useState(false);
@@ -303,9 +277,19 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
     notifications,
     stats,
   } = useApp();
-  const { threads, loading: threadsLoading } = useInboxThreads();
+  const {
+    threads,
+    loading: threadsLoading,
+    error: threadsError,
+    reload: reloadThreads,
+  } = useInboxThreads(true, { includeStatus: true });
+  // Même filtre que la liste : un membre ou un compte inactif ne compte pas.
   const unreadTotal = useMemo(
-    () => (threads || []).reduce((sum, t) => sum + (Number(t.unreadCount) || 0), 0),
+    () =>
+      filterAdminInboxRows(threads).reduce(
+        (sum, t) => sum + (Number(t.unreadCount) || 0),
+        0
+      ),
     [threads]
   );
   const [plannedTestsCount, setPlannedTestsCount] = useState(0);
@@ -378,6 +362,8 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
     openSidebar: () => setIsOpen(true),
     threads,
     threadsLoading,
+    threadsError,
+    reloadThreads,
     unreadTotal,
     menuBadges,
     messagesFab: (
@@ -406,25 +392,6 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
     ),
   };
 }
-
-const fabStyles = StyleSheet.create({
-  fab: {
-    position: "absolute",
-    end: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: palette.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    zIndex: 5,
-  },
-});
 
 const sbStyles = StyleSheet.create({
   modalContainer: {
