@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { Menu, Bell, Megaphone } from "lucide-react-native";
+import { Menu, Bell, Megaphone, Check } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row } from "../../constants/rtl";
@@ -22,6 +22,7 @@ import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { sendAlert, getAllAlertsAdmin } from "../../lib/alertsApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
+import { UnderlinedTitle } from "../../components/stats/StatsCharts";
 
 const palette = {
   primary: "#2E7D32",
@@ -58,6 +59,14 @@ const AUDIENCE_LABELS = {
   supervisors: "المشرفون",
 };
 
+const CONFIRM_PREVIEW_MAX = 160;
+
+function confirmAudienceLabel(audience) {
+  if (audience === "members") return "الأعضاء";
+  if (audience === "supervisors") return "المشرفون";
+  return "الأعضاء والمشرفون";
+}
+
 export default function AdminNotificationsScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "notifications");
   const { currentUser, stats, seasons } = useApp();
@@ -69,6 +78,7 @@ export default function AdminNotificationsScreen({ navigation }) {
   const [toMembers, setToMembers] = useState(true);
   const [toSupervisors, setToSupervisors] = useState(true);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
 
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
@@ -105,20 +115,16 @@ export default function AdminNotificationsScreen({ navigation }) {
     return null;
   };
 
-  const handleSend = async () => {
-    const audience = resolveAudience();
-    if (!audience) {
-      Alert.alert("تنبيه", "اختر الأعضاء أو المشرفين أو الاثنين معاً");
-      return;
-    }
-    if (!alertText.trim()) {
-      Alert.alert("تنبيه", "اكتب نص التنبيه أولاً");
-      return;
-    }
+  const canSend = Boolean(alertText.trim()) && (toMembers || toSupervisors);
+
+  const performSend = async (audience, message) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
-    const result = await sendAlert(alertText.trim(), audience, {
+    const result = await sendAlert(message, audience, {
       saisonId: activeSeasonId,
     });
+    sendingRef.current = false;
     setSending(false);
     if (!result.ok) {
       Alert.alert("فشل الإرسال", result.error);
@@ -133,6 +139,32 @@ export default function AdminNotificationsScreen({ navigation }) {
           : "الأعضاء والمشرفين";
     Alert.alert("تم الإرسال", `تم إرسال التنبيه إلى ${dest}`);
     loadHistory();
+  };
+
+  const handleSend = () => {
+    const audience = resolveAudience();
+    if (!audience) {
+      Alert.alert("تنبيه", "اختر الأعضاء أو المشرفين أو الاثنين معاً");
+      return;
+    }
+    const message = alertText.trim();
+    if (!message) {
+      Alert.alert("تنبيه", "اكتب نص التنبيه أولاً");
+      return;
+    }
+    if (sendingRef.current) return;
+    const preview =
+      message.length > CONFIRM_PREVIEW_MAX
+        ? `${message.slice(0, CONFIRM_PREVIEW_MAX)}…`
+        : message;
+    Alert.alert(
+      "تأكيد الإرسال",
+      `${preview}\n\n${confirmAudienceLabel(audience)}\n\nلا يمكن تعديل التنبيه أو حذفه بعد الإرسال`,
+      [
+        { text: "إلغاء", style: "cancel" },
+        { text: "إرسال", onPress: () => performSend(audience, message) },
+      ]
+    );
   };
 
   return (
@@ -191,10 +223,12 @@ export default function AdminNotificationsScreen({ navigation }) {
             <View style={styles.composerHeader}>
               <Megaphone
                 size={18}
-                color={palette.primary}
+                color={palette.textPrimary}
                 pointerEvents="none"
               />
-              <Text style={styles.composerTitle}>إرسال تنبيه عاجل</Text>
+              <UnderlinedTitle style={styles.composerTitle}>
+                إرسال تنبيه عاجل
+              </UnderlinedTitle>
             </View>
             <TextInput
               style={styles.composerInput}
@@ -205,18 +239,24 @@ export default function AdminNotificationsScreen({ navigation }) {
               multiline
               maxLength={500}
             />
+            <UnderlinedTitle style={[styles.composerTitle, styles.audienceLabel]}>
+              المستهدفون
+            </UnderlinedTitle>
             <View style={styles.audienceRow}>
               <TouchableOpacity
-                style={[
-                  styles.chip,
-                  toMembers && styles.chipActive,
-                ]}
+                style={[styles.chip, toMembers ? styles.chipChecked : styles.chipUnchecked]}
                 onPress={() => setToMembers((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: toMembers }}
+                accessibilityLabel="الأعضاء"
               >
+                {toMembers ? (
+                  <Check size={14} color={colors.card} strokeWidth={3} />
+                ) : null}
                 <Text
                   style={[
                     styles.chipText,
-                    toMembers && styles.chipTextActive,
+                    toMembers ? styles.chipTextChecked : styles.chipTextUnchecked,
                   ]}
                 >
                   الأعضاء
@@ -225,14 +265,20 @@ export default function AdminNotificationsScreen({ navigation }) {
               <TouchableOpacity
                 style={[
                   styles.chip,
-                  toSupervisors && styles.chipActive,
+                  toSupervisors ? styles.chipChecked : styles.chipUnchecked,
                 ]}
                 onPress={() => setToSupervisors((v) => !v)}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: toSupervisors }}
+                accessibilityLabel="المشرفون"
               >
+                {toSupervisors ? (
+                  <Check size={14} color={colors.card} strokeWidth={3} />
+                ) : null}
                 <Text
                   style={[
                     styles.chipText,
-                    toSupervisors && styles.chipTextActive,
+                    toSupervisors ? styles.chipTextChecked : styles.chipTextUnchecked,
                   ]}
                 >
                   المشرفون
@@ -240,22 +286,37 @@ export default function AdminNotificationsScreen({ navigation }) {
               </TouchableOpacity>
             </View>
             <TouchableOpacity
-              style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
-              onPress={handleSend}
-              disabled={sending}
+              style={[
+                styles.sendBtn,
+                !canSend && !sending && styles.sendBtnDisabled,
+              ]}
+              onPress={canSend && !sending ? handleSend : undefined}
+              disabled={!canSend || sending}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canSend || sending }}
             >
-              <Text style={styles.sendBtnText}>
-                {sending ? "جارٍ الإرسال…" : "إرسال التنبيه"}
-              </Text>
+              {sending ? (
+                <ActivityIndicator color={colors.card} />
+              ) : (
+                <Text
+                  style={[
+                    styles.sendBtnText,
+                    !canSend && styles.sendBtnTextDisabled,
+                  ]}
+                >
+                  إرسال التنبيه
+                </Text>
+              )}
             </TouchableOpacity>
-            <Text style={styles.composerHint}>
-              سيظهر التنبيه في شاشة كاملة عاجلة لكل المستهدفين، ويبقى
-              معروضاً حتى القراءة.
-            </Text>
+          
           </View>
 
-          <Text style={styles.sectionTitle}>سجل التنبيهات</Text>
+          <View style={styles.sectionTitleWrap}>
+            <UnderlinedTitle style={styles.sectionTitle}>
+              سجل التنبيهات
+            </UnderlinedTitle>
+          </View>
 
           {loadingHistory ? (
             <View style={styles.loadingCard}>
@@ -389,46 +450,62 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     ...rtlText,
   },
+  audienceLabel: {
+    marginTop: 10,
+  },
   audienceRow: {
     flexDirection: row,
     gap: 10,
-    marginTop: 10,
+    marginTop: 8,
   },
   chip: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: "#EEEEEE",
-  },
-  chipActive: {
-    backgroundColor: palette.softGreen,
     borderWidth: 1,
-    borderColor: palette.primary,
+  },
+  chipChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  chipUnchecked: {
+    backgroundColor: "transparent",
+    borderColor: colors.border,
   },
   chipText: {
     fontSize: 13,
     fontWeight: "600",
-    color: palette.textSecondary,
     ...rtlText,
   },
-  chipTextActive: {
-    color: palette.primary,
+  chipTextChecked: {
+    color: colors.card,
+  },
+  chipTextUnchecked: {
+    color: colors.textSecondary,
   },
   sendBtn: {
     marginTop: 14,
-    backgroundColor: palette.primary,
+    backgroundColor: colors.primary,
     borderRadius: 12,
-    paddingVertical: 13,
+    paddingVertical: 8,
+    minHeight: 44,
     alignItems: "center",
+    justifyContent: "center",
   },
   sendBtnDisabled: {
-    opacity: 0.6,
+    backgroundColor: colors.disabled,
   },
   sendBtnText: {
-    color: "#fff",
+    color: colors.card,
     fontSize: 15,
     fontWeight: "700",
     ...rtlText,
+  },
+  sendBtnTextDisabled: {
+    color: colors.muted,
   },
   composerHint: {
     marginTop: 10,
@@ -436,11 +513,13 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     ...rtlText,
   },
+  sectionTitleWrap: {
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "700",
     color: palette.textPrimary,
-    marginBottom: 12,
     ...rtlText,
   },
   loadingCard: {
@@ -503,7 +582,7 @@ const styles = StyleSheet.create({
   },
   historyAck: {
     fontSize: 11,
-    color: palette.blue,
+    color: colors.primary,
     ...rtlText,
   },
 });

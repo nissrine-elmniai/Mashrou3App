@@ -17,6 +17,7 @@ export const colors = {
   text: "#1F2937",
   textSecondary: "#374151",
   muted: "#6B7280",
+  disabled: "#D1D5DB",
   placeholder: "#9CA3AF",
   border: "#E5E7EB",
   borderGreen: "#BBF7D0",
