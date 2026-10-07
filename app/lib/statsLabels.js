@@ -13,6 +13,7 @@ export const STATS_LABELS = {
   activeMark: "(جاري)",
   seasonFallback: "موسم",
   loading: "جاري تحميل الإحصائيات…",
+  loadingData: "جاري تحميل البيانات…",
   loadError: "تعذر تحميل الإحصائيات",
   retry: "إعادة المحاولة",
   noSeasonsOfType: "لا توجد مواسم من هذا النوع",

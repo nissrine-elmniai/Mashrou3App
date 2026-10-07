@@ -63,9 +63,7 @@ export default function LoginScreen({ navigation }) {
           </View>
           <View style={styles.headerContainer}>
             <Text style={styles.titleMain}>مهندس حامل لكتاب الله</Text>
-            <Text style={styles.subtitleMain}>
-              منصة إدارة حلقات تحفيظ القرآن الكريم
-            </Text>
+            <Text style={styles.subtitleMain}>عن لجنة المسجد - نادي الإيثار </Text>
             <View style={styles.divider} />
           </View>
 

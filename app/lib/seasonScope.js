@@ -26,6 +26,22 @@ export function getActiveRegularSeason(seasons = []) {
 }
 
 /**
+ * Saison de l'accueil admin : n'importe quel type actif.
+ * Plusieurs actives → la plus récente (createdAt), et multiple = true.
+ */
+export function pickDisplayedActiveSeason(seasons = []) {
+  const active = (seasons || []).filter((season) => season?.active);
+  if (!active.length) return { season: null, multiple: false };
+  const ranked = [...active].sort((a, b) => {
+    const aAt = Date.parse(a?.createdAt || "") || 0;
+    const bAt = Date.parse(b?.createdAt || "") || 0;
+    if (bAt !== aAt) return bAt - aAt;
+    return String(b?.id || "").localeCompare(String(a?.id || ""));
+  });
+  return { season: ranked[0], multiple: active.length > 1 };
+}
+
+/**
  * Inscription membre ouverte uniquement si le musim est actif ET
  * registrationOpen (ouvert par « انطلاق موسم جديد » / annonce été).
  */
