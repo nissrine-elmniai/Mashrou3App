@@ -12,6 +12,10 @@ Stack, flux, décisions et migration `0129` (écrite, non exécutée) : [docs/al
 
 `0130_drop_tables_mortes.sql` est écrite, non exécutée. Elle supprime, sans `CASCADE` : `attendance_records`, `attendance_sessions`, `exam_participants`, `exams`, `group_members`, `member_progress`, `groups`, `seasons`, `alerte_accuses`, `alertes`, `alert_reads`, `invitations`. `activation_codes` reste. `start_new_season` (corps de `0124`) ne vide plus `alert_reads`, `alerte_accuses` ni `alertes`. Le client ne lit pas ces clés de `counts`.
 
+`0131_push_dispatch_sans_boucle_et_purge_cron.sql` est écrite, non exécutée. Elle arrête la réécriture cron de `dispatch_request_id`. Détail : [docs/nettoyage-bdd.md](docs/nettoyage-bdd.md).
+
+Prochain numéro libre : `0132`.
+
 ## Reste à faire
 
 Basse priorité :
