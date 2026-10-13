@@ -31,10 +31,11 @@ import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors } from "../../constants/theme";
 import {
   GENDER_FILTER_ALL,
+  GENDER_TOGGLES,
   matchesGenderFilter,
   normalizeGender,
+  toggleGenderFilter,
 } from "../../lib/genderFilter";
-import GenderSegmentedControl from "../../components/admin/GenderSegmentedControl";
 import {
   sendMemberAcceptEmail,
   sendMemberRejectEmail,
@@ -309,11 +310,12 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     [REGISTRATION_KIND.SEASON_RENEWAL, "إعادة تسجيل"],
   ];
 
+  // « الكل » en tête ; l'onglet par défaut reste « قيد الانتظار ».
   const filters = [
+    ["all", "الكل"],
     ["pending", `قيد الانتظار${pendingCount ? ` (${pendingCount})` : ""}`],
     ["accepted", "المقبولة"],
     ["rejected", "المرفوضة"],
-    ["all", "الكل"],
   ];
 
   return (
@@ -392,7 +394,13 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           </View>
         ) : null}
 
-        <View style={styles.filterRow}>
+        {/* Une seule ligne : statut │ genre ; défilement horizontal si trop large. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
+          contentContainerStyle={styles.filterScrollRow}
+        >
           {filters.map(([key, label]) => (
             <TouchableOpacity
               key={key}
@@ -412,9 +420,28 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
-
-        <GenderSegmentedControl value={genderFilter} onChange={setGenderFilter} />
+          <View style={styles.filterDivider} />
+          {/* Genre : 2e appui sur la pastille active → retour à tous. */}
+          {GENDER_TOGGLES.map(([key, label]) => (
+            <TouchableOpacity
+              key={key}
+              style={[
+                styles.filterChip,
+                genderFilter === key && styles.filterChipActive,
+              ]}
+              onPress={() => setGenderFilter((current) => toggleGenderFilter(current, key))}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  genderFilter === key && styles.filterChipTextActive,
+                ]}
+              >
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
 
         {loading && !refreshing ? (
           <ActivityIndicator color={palette.primary} style={styles.loader} />
@@ -650,6 +677,21 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     marginBottom: 16,
+  },
+  filterScroll: {
+    marginBottom: 16,
+    flexGrow: 0,
+  },
+  filterScrollRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    paddingEnd: 8,
+  },
+  filterDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: palette.border,
   },
   filterChip: {
     paddingHorizontal: 14,
