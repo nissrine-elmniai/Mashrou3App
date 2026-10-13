@@ -112,7 +112,6 @@ export const STATS_LABELS = {
   historyTitle: "سجل المواسم",
   historyLoadError: "تعذر تحميل السجل",
   historyEmpty: "لا يوجد سجل مواسم لهذا العضو",
-  progressOnly: "بيانات التقدم فقط",
   from: "من",
   to: "إلى",
   tumun: "الثمن",

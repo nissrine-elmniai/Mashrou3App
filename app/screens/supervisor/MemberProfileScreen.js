@@ -700,21 +700,29 @@ export default function MemberProfileScreen({ navigation, route }) {
           <Ionicons name={arrowBack} size={22} color={headerIconColor} />
         </TouchableOpacity>
         <Text
-          style={[styles.headerTitle, adminTheme && styles.headerTitleAdmin]}
+          style={[
+            styles.headerTitle,
+            adminTheme && styles.headerTitleAdmin,
+            isAdminViewer && styles.headerTitleBesideRemove,
+          ]}
           numberOfLines={1}
         >
           {fullName}
         </Text>
         {canRemoveFromSeance && inscriptionId ? (
           <TouchableOpacity
-            style={styles.headerRemoveBtn}
+            style={isAdminViewer ? styles.headerRemovePill : styles.headerRemoveBtn}
             onPress={confirmRemoveFromSeance}
             disabled={removingFromSeance}
             activeOpacity={0.7}
             accessibilityLabel="إزالة من الحصة"
           >
             {removingFromSeance ? (
-              <ActivityIndicator color={trashColor} size="small" />
+              <ActivityIndicator color={isAdminViewer ? colors.red : trashColor} size="small" />
+            ) : isAdminViewer ? (
+              <Text style={styles.headerRemovePillText} numberOfLines={1}>
+                إزالة من الحصة
+              </Text>
             ) : (
               <Ionicons name="trash-outline" size={22} color={trashColor} />
             )}
@@ -1000,6 +1008,10 @@ const styles = StyleSheet.create({
     color: "#333333",
     fontSize: 16,
   },
+  headerTitleBesideRemove: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
   headerRemoveBtn: {
     padding: 4,
     minWidth: 30,
@@ -1008,6 +1020,20 @@ const styles = StyleSheet.create({
   },
   headerRemovePlaceholder: {
     width: 30,
+  },
+  headerRemovePill: {
+    flexShrink: 0,
+    backgroundColor: "rgba(220,38,38,0.1)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerRemovePillText: {
+    color: colors.red,
+    fontSize: 13,
+    ...rtlText,
   },
 
   avatarBlock: { alignItems: "center", marginBottom: 20 },

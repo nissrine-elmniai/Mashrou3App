@@ -77,7 +77,6 @@ function SeasonCard({ row }) {
       <Text style={styles.seasonTitle}>{title}</Text>
       {rattrapage ? (
         <>
-          <Text style={styles.note}>{STATS_LABELS.progressOnly}</Text>
           <PositionLine debut={row.posDebut} fin={row.posFin} />
           <Text style={styles.line}>
             {STATS_LABELS.gainHistory}: {formatGain(row.gainTumun)}
@@ -205,7 +204,6 @@ const styles = StyleSheet.create({
   line: { color: palette.textPrimary, fontSize: 13, ...rtlText },
   positionRow: { flexDirection: row, alignItems: "center" },
   ltrBit: { color: palette.textPrimary, fontSize: 13, writingDirection: "ltr" },
-  note: { color: palette.textSecondary, fontSize: 12, ...rtlText },
   state: { alignItems: "center", gap: 8, paddingVertical: 8 },
   stateText: { color: palette.textSecondary, ...rtlText },
   error: { color: palette.red, textAlign: "center", ...rtlText },

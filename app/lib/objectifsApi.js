@@ -3,9 +3,11 @@ import { TOTAL_HIZB } from "./tumun";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 const TABLE = "objectifs";
-const COLUMNS_WITH_DEPART =
-  "membre_id, saison_id, nb_hizb_cible, nb_hizb_depart, created_at";
-const COLUMNS_WITHOUT_DEPART = "membre_id, saison_id, nb_hizb_cible, created_at";
+/**
+ * nb_hizb_depart (0062) n'est plus lu ni écrit : le départ est calculé par
+ * le serveur (get_member_season_progress, 0135). Colonne gardée, défaut 0.
+ */
+const COLUMNS = "membre_id, saison_id, nb_hizb_cible, created_at";
 
 function withTimeout(promise, ms, label) {
   return Promise.race([
@@ -22,6 +24,10 @@ function withTimeout(promise, ms, label) {
 export const OBJECTIF_LOCKED_MESSAGE =
   "لا يمكن تحديد الهدف قبل التسجيل في الموسم الحالي";
 
+/** Trigger objectifs_require_position (0137) : pas de départ de saison connu. */
+export const OBJECTIF_POSITION_REQUIRED_MESSAGE =
+  "احفظ موضعك أولاً قبل تحديد هدف الموسم";
+
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
   const details = `${error?.details || ""} ${error?.hint || ""}`;
@@ -30,6 +36,12 @@ function mapTableError(error, tableLabel) {
     details.includes(OBJECTIF_LOCKED_MESSAGE)
   ) {
     return OBJECTIF_LOCKED_MESSAGE;
+  }
+  if (
+    msg.includes(OBJECTIF_POSITION_REQUIRED_MESSAGE) ||
+    details.includes(OBJECTIF_POSITION_REQUIRED_MESSAGE)
+  ) {
+    return OBJECTIF_POSITION_REQUIRED_MESSAGE;
   }
   if (/relation.*does not exist|Could not find the table/i.test(msg)) {
     return `جدول ${tableLabel} غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor`;
@@ -86,31 +98,14 @@ function parseNbHizbCible(raw) {
   return parseObjectifInput(raw);
 }
 
-/** Position de départ : entier 0–60. Vide / null → 0. */
-function parseNbHizbDepart(raw) {
-  if (raw == null || raw === "") {
-    return { ok: true, value: 0 };
-  }
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0 || n > TOTAL_HIZB) {
-    return {
-      ok: false,
-      error: "موضع الانطلاق يجب أن يكون بين 0 و 60",
-    };
-  }
-  return { ok: true, value: n };
-}
-
 function mapObjectifRow(row) {
   if (!row) return null;
   const parsed = parseNbHizbCible(row.nb_hizb_cible);
   if (!parsed.ok) return null;
-  const depart = parseNbHizbDepart(row.nb_hizb_depart);
   return {
     membreId: row.membre_id,
     saisonId: row.saison_id,
     nbHizbCible: parsed.value,
-    nbHizbDepart: depart.ok ? depart.value : 0,
     createdAt: row.created_at || null,
   };
 }
@@ -122,47 +117,28 @@ function isRlsDenied(error) {
 
 async function fetchObjectifRow(membreId, saisonId, label) {
   const saison = String(saisonId).trim();
-  let { data, error } = await withTimeout(
+  const { data, error } = await withTimeout(
     supabase
       .from(TABLE)
-      .select(COLUMNS_WITH_DEPART)
+      .select(COLUMNS)
       .eq("membre_id", membreId)
       .eq("saison_id", saison)
       .maybeSingle(),
     SUPABASE_TIMEOUT_MS,
     label
   );
-  if (error && mentionsMissingColumn(error, "nb_hizb_depart")) {
-    ({ data, error } = await withTimeout(
-      supabase
-        .from(TABLE)
-        .select(COLUMNS_WITHOUT_DEPART)
-        .eq("membre_id", membreId)
-        .eq("saison_id", saison)
-        .maybeSingle(),
-      SUPABASE_TIMEOUT_MS,
-      label
-    ));
-  }
   return { data, error };
 }
 
 async function insertObjectifRow(row) {
   let payload = { ...row };
-  let select = COLUMNS_WITH_DEPART;
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 2; i += 1) {
     const { data, error } = await withTimeout(
-      supabase.from(TABLE).insert(payload).select(select).single(),
+      supabase.from(TABLE).insert(payload).select(COLUMNS).single(),
       SUPABASE_TIMEOUT_MS,
       "حفظ هدف الموسم"
     );
     if (!error) return { data, error: null };
-    if (mentionsMissingColumn(error, "nb_hizb_depart")) {
-      const { nb_hizb_depart: _depart, ...rest } = payload;
-      payload = rest;
-      select = COLUMNS_WITHOUT_DEPART;
-      continue;
-    }
     if (mentionsMissingColumn(error, "updated_at")) {
       const { updated_at: _updated, ...rest } = payload;
       payload = rest;
@@ -175,24 +151,19 @@ async function insertObjectifRow(row) {
 
 async function updateObjectifCible(userId, saison, nbHizbCible, now) {
   let patch = { nb_hizb_cible: nbHizbCible, updated_at: now };
-  let select = COLUMNS_WITH_DEPART;
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 2; i += 1) {
     const { data, error } = await withTimeout(
       supabase
         .from(TABLE)
         .update(patch)
         .eq("membre_id", userId)
         .eq("saison_id", saison)
-        .select(select)
+        .select(COLUMNS)
         .single(),
       SUPABASE_TIMEOUT_MS,
       "حفظ هدف الموسم"
     );
     if (!error) return { data, error: null };
-    if (mentionsMissingColumn(error, "nb_hizb_depart")) {
-      select = COLUMNS_WITHOUT_DEPART;
-      continue;
-    }
     if (mentionsMissingColumn(error, "updated_at")) {
       const { updated_at: _updated, ...rest } = patch;
       patch = rest;
@@ -236,11 +207,10 @@ export async function getMyObjectif(saisonId) {
 }
 
 /**
- * Upsert UNIQUE (membre_id, saison_id).
- * `nb_hizb_depart` n'est écrit qu'à la CRÉATION ; une modification ultérieure
- * de `nb_hizb_cible` conserve le départ déjà stocké.
+ * Upsert UNIQUE (membre_id, saison_id). Seul `nb_hizb_cible` est écrit :
+ * le départ est calculé par le serveur, quel que soit l'ordre de saisie.
  */
-export async function setMyObjectif(saisonId, nbHizbCible, nbHizbDepart) {
+export async function setMyObjectif(saisonId, nbHizbCible) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
@@ -250,10 +220,6 @@ export async function setMyObjectif(saisonId, nbHizbCible, nbHizbDepart) {
   const parsed = parseNbHizbCible(nbHizbCible);
   if (!parsed.ok) {
     return parsed;
-  }
-  const parsedDepart = parseNbHizbDepart(nbHizbDepart);
-  if (!parsedDepart.ok) {
-    return parsedDepart;
   }
 
   const userId = await currentAuthId();
@@ -271,7 +237,6 @@ export async function setMyObjectif(saisonId, nbHizbCible, nbHizbDepart) {
     }
 
     if (existing.data) {
-      const keptDepart = mapObjectifRow(existing.data)?.nbHizbDepart ?? 0;
       const { data, error } = await updateObjectifCible(
         userId,
         saison,
@@ -281,18 +246,13 @@ export async function setMyObjectif(saisonId, nbHizbCible, nbHizbDepart) {
       if (error) {
         return { ok: false, error: mapTableError(error, TABLE) };
       }
-      const mapped = mapObjectifRow(data);
-      if (mapped && data?.nb_hizb_depart == null) {
-        mapped.nbHizbDepart = keptDepart;
-      }
-      return { ok: true, objectif: mapped };
+      return { ok: true, objectif: mapObjectifRow(data) };
     }
 
     const { data, error } = await insertObjectifRow({
       membre_id: userId,
       saison_id: saison,
       nb_hizb_cible: parsed.value,
-      nb_hizb_depart: parsedDepart.value,
       updated_at: now,
     });
     if (error) {

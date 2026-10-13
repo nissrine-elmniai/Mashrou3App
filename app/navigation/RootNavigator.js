@@ -7,7 +7,10 @@ import { ROLES } from "../constants/roles";
 import { colors } from "../constants/theme";
 import { fonts } from "../constants/rtl";
 import { handleAuthDeepLink } from "../lib/authLinking";
-import { supabase } from "../lib/supabase";
+import {
+  isPasswordRecoveryInProgress,
+  subscribePasswordRecovery,
+} from "../lib/auth";
 import PushNotificationBridge from "../components/PushNotificationBridge";
 
 import LoginScreen from "../screens/LoginScreen";
@@ -15,7 +18,6 @@ import SupervisorLoginScreen from "../screens/supervisor/SupervisorLoginScreen";
 import RegisterScreen from "../screens/RegisterScreen";
 import ActivateAccountScreen from "../screens/ActivateAccountScreen";
 import ForgotPasswordScreen from "../screens/ForgotPasswordScreen";
-import ResetPasswordScreen from "../screens/ResetPasswordScreen";
 
 import SupervisorDashboard from "../screens/supervisor/SupervisorDashboard";
 import ChatConversationScreen from "../screens/supervisor/ChatConversationScreen";
@@ -36,7 +38,6 @@ const linking = {
   prefixes: ["mashrou3app://"],
   config: {
     screens: {
-      ResetPassword: "reset-password",
       Login: "login",
     },
   },
@@ -76,11 +77,6 @@ function authScreens(Stack) {
         component={ForgotPasswordScreen}
         options={hidden}
       />
-      <Stack.Screen
-        name="ResetPassword"
-        component={ResetPasswordScreen}
-        options={hidden}
-      />
     </>
   );
 }
@@ -95,11 +91,6 @@ function sharedChatScreens(Stack) {
       />
       <Stack.Screen name="GroupChat" component={GroupChatScreen} options={hidden} />
       <Stack.Screen name="GroupInfo" component={GroupInfoScreen} options={hidden} />
-      <Stack.Screen
-        name="ResetPassword"
-        component={ResetPasswordScreen}
-        options={hidden}
-      />
     </>
   );
 }
@@ -343,7 +334,13 @@ export default function RootNavigator() {
   const { currentUser, refreshCurrentUser } = useApp();
   const refreshUserRef = useRef(refreshCurrentUser);
   refreshUserRef.current = refreshCurrentUser;
-  const signedIn = Boolean(currentUser?.role);
+  const [recoveryInProgress, setRecoveryInProgress] = React.useState(
+    isPasswordRecoveryInProgress
+  );
+  // Session OTP : rester sur la pile d'authentification même si un rôle existe.
+  const signedIn = Boolean(currentUser?.role) && !recoveryInProgress;
+
+  useEffect(() => subscribePasswordRecovery(setRecoveryInProgress), []);
 
   useEffect(() => {
     if (!signedIn) return undefined;
@@ -352,12 +349,6 @@ export default function RootNavigator() {
   }, [signedIn]);
 
   useEffect(() => {
-    const goResetPassword = () => {
-      if (navigationRef.current) {
-        navigationRef.current.navigate("ResetPassword");
-      }
-    };
-
     const processUrl = async (url) => {
       if (!url) return;
       const result = await handleAuthDeepLink(url);
@@ -379,10 +370,6 @@ export default function RootNavigator() {
           /* le focus du profil rechargera profiles */
         }
         Alert.alert("تم", "تم تغيير بريدك الإلكتروني بنجاح.");
-        return;
-      }
-      if (result.isRecovery) {
-        goResetPassword();
       }
     };
 
@@ -392,17 +379,8 @@ export default function RootNavigator() {
 
     const linkSub = Linking.addEventListener("url", ({ url }) => processUrl(url));
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        goResetPassword();
-      }
-    });
-
     return () => {
       linkSub.remove();
-      subscription.unsubscribe();
     };
   }, []);
 

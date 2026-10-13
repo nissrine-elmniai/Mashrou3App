@@ -3,8 +3,9 @@ import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase
 import {
   TUMUNS_PER_HIZB,
   TOTAL_HIZB,
+  TUMUN_COURANT_ERROR,
+  TUMUN_COURANT_MAX,
   clampMemberTumuns,
-  formatHizbCount,
   positionFromMemberTumuns,
 } from "./tumun";
 
@@ -48,11 +49,6 @@ function mapTableError(error, tableLabel) {
     return "سجل مكرر — هذه العملية مسجلة مسبقاً";
   }
   return mapSupabaseAuthError(error);
-}
-
-function isRlsDenied(error) {
-  const msg = error?.message || "";
-  return /permission|row-level security|RLS|42501|violates row/i.test(msg);
 }
 
 /**
@@ -150,56 +146,66 @@ export async function getMyProgress(options) {
   };
 }
 
+function numberOrNull(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
- * `nb_hizb_completes` de la dernière ligne `progression` strictement
- * antérieure à `beforeDate` (ISO, comparée à `date`). Aucune ligne → 0.
- * RLS refusée → 0, sans erreur (même silence que getMemberDeclaredHizbCount).
- * @returns {{ ok: true, nbHizbCompletes: number } | { ok: false, error: string }}
+ * Avancement vers هدف الموسم, calculé par le serveur (RPC 0135) sur la saison active.
+ * Positions en أثمان (0–480). depart null = aucune position pour cette saison.
+ * @returns {{ ok: true, progress: null | {
+ *   saisonId, position, depart, gain, cible, avancementPct, finVisee, etat
+ * } } | { ok: false, error: string }}
  */
-export async function getMemberHizbCompletesBeforeDate(membreId, beforeDate) {
+export async function getMemberSeasonProgress(membreId) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   if (!membreId) {
     return { ok: false, error: "معرّف العضو مفقود" };
   }
-  const before = String(beforeDate || "").trim();
-  if (!before) {
-    return { ok: false, error: "تاريخ الموسم مفقود" };
-  }
 
   try {
-    const { data, error } = await fetchProgressionOrdered(
-      () =>
-        supabase
-          .from("progression")
-          .select("nb_hizb_completes")
-          .eq("membre_id", membreId)
-          .lt("date", before)
-          .limit(1),
-      "قراءة التقدم قبل بداية الموسم"
+    const { data, error } = await withTimeout(
+      supabase.rpc("get_member_season_progress", { p_membre_id: membreId }),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة تقدم هدف الموسم"
     );
     if (error) {
-      if (isRlsDenied(error)) {
-        return { ok: true, nbHizbCompletes: 0 };
-      }
       return { ok: false, error: mapTableError(error, "progression") };
     }
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row) {
-      return { ok: true, nbHizbCompletes: 0 };
+    if (!data || typeof data !== "object") {
+      return { ok: true, progress: null };
     }
-    const n = Number(row.nb_hizb_completes);
-    if (!Number.isInteger(n) || n < 0) {
-      return { ok: true, nbHizbCompletes: 0 };
-    }
-    return { ok: true, nbHizbCompletes: Math.min(n, TOTAL_HIZB) };
+    return {
+      ok: true,
+      progress: {
+        saisonId: data.saison_id ?? null,
+        position: numberOrNull(data.position),
+        depart: numberOrNull(data.depart),
+        gain: numberOrNull(data.gain),
+        cible: numberOrNull(data.cible),
+        avancementPct: numberOrNull(data.avancement_pct),
+        finVisee: numberOrNull(data.fin_visee),
+        etat: data.etat || null,
+      },
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
 
-const MAX_TUMUN_COURANT = TUMUNS_PER_HIZB - 1; // 0–7
+/** Même lecture que getMemberSeasonProgress, pour le membre connecté. */
+export async function getMySeasonProgress() {
+  const userId = await currentAuthId();
+  if (!userId) {
+    return { ok: false, error: "يجب تسجيل الدخول" };
+  }
+  return getMemberSeasonProgress(userId);
+}
+
 const HISTORY_DEBOUNCE_MS = 800;
 /** Total des ثمن (8 × 60 حزب) pour le % global du Coran. */
 export const PROGRESS_TOTAL_TUMUN = TOTAL_HIZB * TUMUNS_PER_HIZB;
@@ -220,7 +226,8 @@ function invalidateMemberTumunsCache() {
 
 /**
  * Construit une ligne `progression` depuis la position membre (pas un programme).
- * tumunCourant : reste 0–7. Le juz n'est jamais stocké.
+ * tumunCourant : أثمان mémorisés du حزب en cours, 0–7, stocké tel quel.
+ * 60 حزب → ثمن 0. Le juz n'est jamais stocké.
  * @returns {{ ok: true, row } | { ok: false, error }}
  */
 export function buildProgressRow({
@@ -235,8 +242,11 @@ export function buildProgressRow({
   if (!Number.isInteger(hizbNum) || hizbNum < 0 || hizbNum > TOTAL_HIZB) {
     return { ok: false, error: "عدد الأحزاب المكتملة يجب أن يكون بين 0 و 60" };
   }
-  if (!Number.isInteger(tumunNum) || tumunNum < 0 || tumunNum > MAX_TUMUN_COURANT) {
-    return { ok: false, error: "الثمن الحالي يجب أن يكون بين 0 و 7" };
+  if (!Number.isInteger(tumunNum) || tumunNum < 0 || tumunNum > TUMUN_COURANT_MAX) {
+    return { ok: false, error: TUMUN_COURANT_ERROR };
+  }
+  if (hizbNum === TOTAL_HIZB && tumunNum !== 0) {
+    return { ok: false, error: "عند إكمال 60 حزباً يكون عدد الأثمان 0" };
   }
   const total = hizbNum * TUMUNS_PER_HIZB + tumunNum;
   if (total > PROGRESS_TOTAL_TUMUN) {
@@ -749,133 +759,6 @@ export async function getMemberDeclaredHizbCount(membreId, saisonId) {
   }
   const raw = String(fetched.answers.hizbCount ?? "").trim();
   return { ok: true, hizbCount: raw || null };
-}
-
-/**
- * Parse un objectif texte (« 5 أحزاب », « جزء », « 10 ») → nombre de أثمان.
- * @returns {number|null}
- */
-export function parseObjectifToTumuns(objectifText) {
-  if (objectifText && typeof objectifText === "object") {
-    const n = Number(objectifText.nbHizbCible);
-    if (Number.isInteger(n) && n >= 1) {
-      return n * TUMUNS_PER_HIZB;
-    }
-  }
-  const text = String(objectifText || "").trim();
-  if (!text) return null;
-  const numMatch = text.match(/(\d+(?:[.,]\d+)?)/);
-  if (!numMatch) {
-    if (/جزء|juz/i.test(text)) return 2 * TUMUNS_PER_HIZB;
-    return null;
-  }
-  const n = Number(String(numMatch[1]).replace(",", "."));
-  if (!Number.isFinite(n) || n <= 0) return null;
-  if (/ثمن|tumun|thumun/i.test(text)) {
-    return Math.round(n);
-  }
-  if (/جزء|juz|ajza/i.test(text)) {
-    return Math.round(n * 2 * TUMUNS_PER_HIZB);
-  }
-  // Par défaut : أحزاب
-  return Math.round(n * TUMUNS_PER_HIZB);
-}
-
-/**
- * Tumuns mémorisés depuis le début du musim (dernière − baseline avant musim).
- */
-export function computeSeasonMemorizedTumuns(entries, saisonId) {
-  if (saisonId == null || saisonId === "") return null;
-  const sid = String(saisonId);
-  const dated = datedProgressionAsc(entries);
-  if (dated.length === 0) return 0;
-  const ofSeason = dated.filter(
-    (x) =>
-      x.e?.saison_id != null &&
-      x.e.saison_id !== "" &&
-      String(x.e.saison_id) === sid
-  );
-  if (ofSeason.length === 0) return 0;
-  const current = dated[dated.length - 1];
-  const firstSeason = ofSeason[0];
-  const before = dated.filter((x) => x.t < firstSeason.t);
-  const baseline = before.length > 0 ? before[before.length - 1] : firstSeason;
-  return Math.max(
-    0,
-    rowTumunTotal(current.e) - rowTumunTotal(baseline.e)
-  );
-}
-
-/**
- * Progression vers هدف الموسم.
- * @returns {{ label, targetTumuns, doneTumuns, pct, remainingTumuns }|null}
- */
-export function computeObjectifProgress(objectifText, seasonMemorizedTumuns) {
-  const targetTumuns = parseObjectifToTumuns(objectifText);
-  if (!targetTumuns || targetTumuns <= 0) return null;
-  const doneTumuns = Math.max(0, Number(seasonMemorizedTumuns) || 0);
-  const pct = Math.min(100, Math.round((doneTumuns / targetTumuns) * 100));
-  return {
-    label:
-      typeof objectifText === "object" && objectifText?.nbHizbCible != null
-        ? formatHizbCount(objectifText.nbHizbCible)
-        : String(objectifText || "").trim(),
-    targetTumuns,
-    doneTumuns,
-    remainingTumuns: Math.max(0, targetTumuns - doneTumuns),
-    pct,
-  };
-}
-
-/**
- * Progression globale = Σ progrès des programmes حفظ / objectif global (début de saison).
- * Ex. objectif 10 أحزاب + programmes 3+2+2 → le % utilise les أثمان complétés
- * de ces programmes, dénominateur = 10 أحزاب.
- */
-export function computeObjectifProgressFromPrograms(
-  objectifText,
-  programs = []
-) {
-  const targetTumuns = parseObjectifToTumuns(objectifText);
-  if (!targetTumuns || targetTumuns <= 0) return null;
-
-  const hifzPrograms = (programs || []).filter((p) => {
-    const t = String(p?.type || "hifz").toLowerCase();
-    return t !== "mouraja3a" && t !== "مراجعة";
-  });
-
-  let doneTumuns = 0;
-  let plannedTumuns = 0;
-  hifzPrograms.forEach((p) => {
-    const nb = Math.max(0, Number(p.nbHizb) || 0);
-    const total =
-      Number(p.totalTumuns) > 0
-        ? Number(p.totalTumuns)
-        : nb * TUMUNS_PER_HIZB;
-    const done = Math.min(total, Math.max(0, Number(p.completedTumuns) || 0));
-    plannedTumuns += total;
-    doneTumuns += done;
-  });
-
-  // Ne pas dépasser l'objectif global
-  const cappedDone = Math.min(targetTumuns, doneTumuns);
-  const pct = Math.min(100, Math.round((cappedDone / targetTumuns) * 100));
-
-  return {
-    label:
-      typeof objectifText === "object" && objectifText?.nbHizbCible != null
-        ? formatHizbCount(objectifText.nbHizbCible)
-        : String(objectifText || "").trim(),
-    targetTumuns,
-    doneTumuns: cappedDone,
-    plannedTumuns: Math.min(targetTumuns, plannedTumuns),
-    remainingTumuns: Math.max(0, targetTumuns - cappedDone),
-    pct,
-    programCount: hifzPrograms.length,
-    targetHizb: targetTumuns / TUMUNS_PER_HIZB,
-    doneHizb: cappedDone / TUMUNS_PER_HIZB,
-    plannedHizb: Math.min(targetTumuns, plannedTumuns) / TUMUNS_PER_HIZB,
-  };
 }
 
 /**

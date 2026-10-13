@@ -11,8 +11,10 @@ import {
   StatusBar,
   Image,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSubmitLock } from "../../lib/useSubmitLock";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
@@ -71,6 +73,8 @@ export default function GroupChatScreen({ navigation, route }) {
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
+  /** Verrou synchrone : un seul envoi en cours (connexion lente). */
+  const { busy: sending, run: runSend } = useSubmitLock();
   const [headerName, setHeaderName] = useState(routeGroupName || "مجموعة الحصة");
   const [headerAvatarUrl, setHeaderAvatarUrl] = useState(
     routeAvatarUrl || resolvePublicGroupAvatarUrl(groupId, null)
@@ -142,28 +146,29 @@ export default function GroupChatScreen({ navigation, route }) {
     return unsubscribe;
   }, [authId, groupId]);
 
-  const handleSend = async () => {
-    const trimmed = inputText.trim();
-    if (!trimmed || !groupId || !authId) return;
-    setInputText("");
-    const res = await sendGroupMessage({
-      groupId,
-      contenu: trimmed,
+  const handleSend = () =>
+    runSend(async () => {
+      const trimmed = inputText.trim();
+      if (!trimmed || !groupId || !authId) return;
+      setInputText("");
+      const res = await sendGroupMessage({
+        groupId,
+        contenu: trimmed,
+      });
+      if (!res.ok) {
+        setInputText(trimmed);
+        Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
+        return;
+      }
+      if (res.message) {
+        setMessages((prev) =>
+          prev.some((m) => m.id === res.message.id)
+            ? prev
+            : [...prev, normalizeGroupMessage(res.message, authId)]
+        );
+      }
+      markGroupRead(groupId);
     });
-    if (!res.ok) {
-      setInputText(trimmed);
-      Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
-      return;
-    }
-    if (res.message) {
-      setMessages((prev) =>
-        prev.some((m) => m.id === res.message.id)
-          ? prev
-          : [...prev, normalizeGroupMessage(res.message, authId)]
-      );
-    }
-    markGroupRead(groupId);
-  };
 
   const openInfo = () => {
     navigation.navigate("GroupInfo", {
@@ -309,11 +314,16 @@ export default function GroupChatScreen({ navigation, route }) {
             onSubmitEditing={handleSend}
           />
           <TouchableOpacity
-            style={styles.sendBtn}
+            style={[styles.sendBtn, sending && styles.sendBtnBusy]}
             onPress={handleSend}
+            disabled={sending}
             activeOpacity={0.8}
           >
-            <Ionicons name="send" size={20} color="white" style={styles.sendIcon} />
+            {sending ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Ionicons name="send" size={20} color="white" style={styles.sendIcon} />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -425,6 +435,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.regular,
   },
+  sendBtnBusy: { opacity: 0.7 },
   sendBtn: {
     width: 40,
     height: 40,

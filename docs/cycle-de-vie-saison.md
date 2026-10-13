@@ -108,10 +108,24 @@ Colonnes réelles : `id uuid`, `membre_id`, `saison_id text`, `date timestamptz`
 - `saison_id` écrit = saison active (tout type).
 - Trigger `progression_require_active_enrollment` (BEFORE INSERT/UPDATE) : sans inscription `accepte` dans une saison active → « لا يمكن تسجيل التقدم قبل التسجيل في الموسم الحالي ».
 - Client : crayon, « حفظ الموضع » et ± ثمن hifz désactivés pour un membre non inscrit.
+- **Convention الثمن (`0136`)** : `tumun_courant` = nombre de أثمان mémorisés du حزب en cours, **0 à 7**. La valeur saisie est la valeur stockée, sans conversion (`tumunUiToStored` / `tumunStoredToUi` supprimées). Position = `nb_hizb_completes × 8 + tumun_courant`.
+  - Champ « الأثمان المحفوظة من الحزب الحالي (0–7) » ; vide ou hors 0–7 → « عدد الأثمان يجب أن يكون بين 0 و 7 ». Plus de valeur par défaut cachée.
+  - Sans ligne progression : suggestion حزب = `hizbCount` de l'inscription, ثمن = 0.
+  - `nb_hizb_completes = 60` → `tumun_courant = 0` (champ bloqué à 0 ; contrainte `progression_khatm_tumun_0`).
+  - ± ثمن : `+1` à 7 → حزب suivant, ثمن 0.
+  - Aucune donnée convertie : le client écrivait déjà 0–7 dans ce sens (± et saisie manuelle). Les lignes à 8, s'il en existe, sont signalées par `0136` et laissent les contraintes `NOT VALID`.
 
 ---
 
 ## 7. Objectifs (migration `0109`)
+
+- **Départ calculé (`0135`)** : le départ de la saison n'est plus stocké. `objectifs.nb_hizb_depart` n'est plus écrit par `setMyObjectif` ni lu (colonne gardée, défaut 0, à supprimer plus tard). `public.get_member_season_progress(p_membre_id)` renvoie, pour la saison active : `position`, `depart`, `gain`, `cible`, `avancement_pct`, `fin_visee`, `etat` (`sans_position` / `sans_objectif` / `ok`), en أثمان. Règle de D : voir [statistiques.md](statistiques.md#règles-de-calcul). L'ordre de saisie (objectif puis position, ou l'inverse) ne change plus rien.
+  - Accès : le membre lui-même, l'admin, ou le superviseur de la séance de son inscription `accepte` dans la saison active.
+  - Anneau (`MemberDashboardScreen`) : `avancement_pct`, libellé « X من Y حزب » depuis `gain` et `cible`. Sans objectif : « لم يُحدد هدف لهذا الموسم بعد ». « — » ne reste qu'en repli, pour un objectif antérieur à `0137` sans position (`avancement_pct` null).
+  - `MemberProgressScreen` : « موضعك في بداية الموسم D + الهدف C = … ». RPC rechargée après « حفظ الموضع » et « حفظ الهدف ».
+- **Position requise avant l'objectif (`0137`)** : trigger `objectifs_require_position` (BEFORE INSERT, fonction `private.objectifs_require_position`, `security definer`, `search_path = ''`). Si `private.season_start_tumun(membre, saison)` est null → « احفظ موضعك أولاً قبل تحديد هدف الموسم ». Les UPDATE de `nb_hizb_cible` ne sont pas concernés.
+  - Ordre des triggers BEFORE (alphabétique) : `objectifs_require_active_enrollment` puis `objectifs_require_position`, donc le message d'inscription passe en premier.
+  - Client : sans position enregistrée (`depart` null dans la RPC ; la suggestion d'inscription ne compte pas), « حفظ الهدف » est désactivé et le message s'affiche sous le champ. « حفظ الموضع » recharge la RPC et réactive le bouton. Un refus serveur est affiché tel quel.
 
 - Trigger `objectifs_require_active_enrollment` (BEFORE INSERT/UPDATE) : inscription `accepte` requise **dans cette saison** (`saison_id = new.saison_id`) et saison active → sinon « لا يمكن تحديد الهدف قبل التسجيل في الموسم الحالي ».
 - Client (`MemberProgressScreen`) : champ en lecture seule et « حفظ الهدف » désactivé sans inscription ; la valeur existante reste visible.

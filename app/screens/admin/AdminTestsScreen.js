@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -23,7 +23,8 @@ import { rtlText, row, textAlignStart, fonts } from "../../constants/rtl";
 import { colors, radii } from "../../constants/theme";
 import { SectionCard } from "../../components/ui";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import { getAllTestsAdmin, createTest } from "../../lib/testsApi";
+import { getAllTestsAdmin, createTest, newTestId } from "../../lib/testsApi";
+import { useSubmitLock } from "../../lib/useSubmitLock";
 import {
   getTestDisplayStatus,
   TEST_TYPE_LABELS,
@@ -94,7 +95,9 @@ export default function AdminTestsScreen({ navigation, route }) {
   const [slotError, setSlotError] = useState("");
   const iosPicker = useIosDateTimePicker();
   const [tests, setTests] = useState([]);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runCreate } = useSubmitLock();
+  /** Id du test en cours de saisie : fixé à l'ouverture du formulaire, remis à null après succès. */
+  const testIdRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -134,6 +137,13 @@ export default function AdminTestsScreen({ navigation, route }) {
     const next = route?.params?.initialTab;
     if (next) setTab(next);
   }, [route?.params?.initialTab]);
+
+  // Ouverture du formulaire : un id par test saisi, conservé entre les envois.
+  useEffect(() => {
+    if (tab === "create" && !testIdRef.current) {
+      testIdRef.current = newTestId();
+    }
+  }, [tab]);
 
   const sortedTests = useMemo(() => {
     return [...tests].sort((a, b) => {
@@ -190,6 +200,8 @@ export default function AdminTestsScreen({ navigation, route }) {
     setProposedDates([]);
     setDatesAttempted(false);
     setSlotError("");
+    // Prochain formulaire = nouveau test, nouvel id à la prochaine ouverture.
+    testIdRef.current = null;
   };
 
   const openDatePicker = async () => {
@@ -215,33 +227,36 @@ export default function AdminTestsScreen({ navigation, route }) {
     setSlotError("");
   };
 
-  const handleCreate = async () => {
-    if (quantityMissing) setQuantityAttempted(true);
-    if (datesMissing) setDatesAttempted(true);
-    if (!canSubmit) return;
-    setSaving(true);
-    const created = await createTest({
-      saisonId,
-      titre: title,
-      type: testType,
-      quranQuantity,
-      dates: proposedDates,
+  const handleCreate = () =>
+    runCreate(async () => {
+      if (quantityMissing) setQuantityAttempted(true);
+      if (datesMissing) setDatesAttempted(true);
+      if (!canSubmit) return;
+      if (!testIdRef.current) testIdRef.current = newTestId();
+      const created = await createTest({
+        id: testIdRef.current,
+        saisonId,
+        titre: title,
+        type: testType,
+        quranQuantity,
+        dates: proposedDates,
+      });
+      if (!created.ok) {
+        // testIdRef conservé : un nouvel appui reprend le même test (createTest
+        // complète dates et invitations manquantes après un 23505 sur cet id).
+        Alert.alert("تنبيه", created.error);
+        return;
+      }
+      const invitedCount = created.invitedCount ?? 0;
+      if (invitedCount === 0) {
+        Alert.alert("تنبيه", "لا يوجد أعضاء مقبولون في هذا الموسم");
+      } else {
+        Alert.alert("تم الإعلان", `تمت دعوة ${invitedCount} أعضاء`);
+      }
+      resetForm();
+      setTab("upcoming");
+      loadAll();
     });
-    setSaving(false);
-    if (!created.ok) {
-      Alert.alert("تنبيه", created.error);
-      return;
-    }
-    const invitedCount = created.invitedCount ?? 0;
-    if (invitedCount === 0) {
-      Alert.alert("تنبيه", "لا يوجد أعضاء مقبولون في هذا الموسم");
-    } else {
-      Alert.alert("تم الإعلان", `تمت دعوة ${invitedCount} أعضاء`);
-    }
-    resetForm();
-    setTab("upcoming");
-    loadAll();
-  };
 
   const renderTestCard = (test) => {
     const status = testStatusOf(test);
@@ -548,6 +563,7 @@ export default function AdminTestsScreen({ navigation, route }) {
                     <TouchableOpacity
                       style={[styles.submitBtn, !canSubmit && styles.submitBtnDisabled]}
                       onPress={handleCreate}
+                      disabled={saving}
                     >
                       {saving ? (
                         <ActivityIndicator color="#fff" />

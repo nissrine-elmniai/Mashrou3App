@@ -27,7 +27,10 @@ export function memberTumunsFromPosition(nbHizbCompletes, tumunCourant) {
   return clampMemberTumuns(hizb * TUMUNS_PER_HIZB + tumun);
 }
 
-/** tumunCourant stocké : reste 0–7. L'UI saisie est 1–8 (8 = reste 0). */
+/**
+ * tumun_courant = nombre de أثمان mémorisés du حزب en cours, 0 à 7.
+ * Même valeur à l'écran et en base. 7 + 1 ثمن → حزب suivant, ثمن 0.
+ */
 export function positionFromMemberTumuns(tumuns) {
   const clamped = clampMemberTumuns(tumuns);
   return {
@@ -36,20 +39,20 @@ export function positionFromMemberTumuns(tumuns) {
   };
 }
 
-/** Saisie : الثمن من 1 إلى 8. 8 = حزب مكتمل (reste stocké 0). */
-export const TUMUN_UI_MIN = 1;
-export const TUMUN_UI_MAX = TUMUNS_PER_HIZB;
+export const TUMUN_COURANT_MAX = TUMUNS_PER_HIZB - 1;
 
-export function tumunUiToStored(tumunUi) {
-  const t = Number(tumunUi);
-  if (!Number.isInteger(t) || t === TUMUN_UI_MAX) return 0;
-  return Math.min(TUMUN_UI_MAX - 1, Math.max(0, t));
-}
+export const TUMUN_COURANT_LABEL = "أثمان إضافية (0–7)";
 
-export function tumunStoredToUi(tumunStored) {
-  const t = Number(tumunStored);
-  if (!Number.isInteger(t) || t <= 0) return TUMUN_UI_MAX;
-  return Math.min(TUMUN_UI_MAX, t);
+export const TUMUN_COURANT_ERROR = "عدد الأثمان يجب أن يكون بين 0 و 7";
+
+/** Saisie du ثمن : entier 0–7, stocké tel quel. Vide → erreur (pas de défaut). */
+export function parseTumunCourantInput(raw) {
+  const trimmed = String(raw ?? "").trim();
+  const n = trimmed === "" ? Number.NaN : Number(trimmed);
+  if (!Number.isInteger(n) || n < 0 || n > TUMUN_COURANT_MAX) {
+    return { ok: false, error: TUMUN_COURANT_ERROR };
+  }
+  return { ok: true, value: n };
 }
 
 export function tumunsToPercent(tumuns, nbHizb) {
@@ -119,8 +122,9 @@ const TUMUN_FORMS = {
 };
 
 /**
- * Compte d'أحزاب : le chiffre est toujours affiché.
- * 0 / 1 / 11+ → حزب ؛ 2 → حزبين ؛ 3–10 → أحزاب.
+ * Compte d'أحزاب, même accord que pour ثمن :
+ * 0 → « 0 حزب » ؛ 1 → « حزب واحد » ؛ 2 → « حزبان » (sans chiffre) ؛
+ * 3–10 → « n أحزاب » ؛ 11+ → « n حزبًا » (تمييز منصوب).
  * Les décimales restent au singulier (حزب).
  */
 export function formatHizbCount(count) {
@@ -133,8 +137,10 @@ export function formatHizbCount(count) {
     const label = one === Math.floor(one) ? String(one) : one.toFixed(1);
     return `${wrapLtr(label)} حزب`;
   }
-  if (n === 2) return `${wrapLtr(2)} حزبين`;
+  if (n === 1) return HIZB_FORMS.one;
+  if (n === 2) return HIZB_FORMS.dual;
   if (n >= 3 && n <= 10) return `${wrapLtr(n)} أحزاب`;
+  if (n >= 11) return `${wrapLtr(n)} حزبًا`;
   return `${wrapLtr(n)} حزب`;
 }
 
@@ -148,31 +154,51 @@ function formatUnitChunk(phrase, sign) {
 }
 
 /**
- * Libellé de rythme depuis un delta en أثمان (même règle pour saison et semaine).
- * Masqué si null ou 0. suffixe : « هذا الموسم » / « هذا الأسبوع ».
- * @param {number|null|undefined} deltaTumuns
- * @param {string} [suffix]
- * @returns {string|null}
+ * Quantité de programme « 5 أحزاب و 3 أثمان » depuis un total de أثمان.
+ * 40 → « 5 أحزاب », 43 → « 5 أحزاب و 3 أثمان », 3 → « 3 أثمان », 0 → « 0 ثمن ».
+ * Sans plafond à 480 (affichage seulement, aucune valeur stockée ne change).
  */
-export function formatHizbTumunDelta(deltaTumuns, suffix) {
-  const n = Number(deltaTumuns);
-  if (!Number.isFinite(n) || n === 0) return null;
+export function formatTumunAmount(tumuns) {
+  const total = Math.max(0, Math.round(Number(tumuns) || 0));
+  const hizb = Math.floor(total / TUMUNS_PER_HIZB);
+  const tumun = total % TUMUNS_PER_HIZB;
+  if (hizb === 0 && tumun === 0) return `${wrapLtr(0)} ثمن`;
+  if (tumun === 0) return formatHizbCount(hizb);
+  const tumunText = formatUnitChunk(arabicUnitPhrase(tumun, TUMUN_FORMS), null);
+  if (hizb === 0) return tumunText;
+  return `${formatHizbCount(hizb)} و ${tumunText}`;
+}
+
+/**
+ * Écart signé « +3 أثمان », « −حزب واحد » : signe collé à la quantité
+ * (isolat LTR), quantité au format formatTumunAmount.
+ * @returns {string|null} null si l'écart est nul.
+ */
+export function formatSignedTumunAmount(deltaTumuns) {
+  const n = Math.round(Number(deltaTumuns) || 0);
+  if (n === 0) return null;
   const sign = n > 0 ? "+" : "−";
-  const abs = Math.abs(n);
-  const hizb = Math.floor(abs / TUMUNS_PER_HIZB);
-  const tumun = abs % TUMUNS_PER_HIZB;
+  return `${wrapLtr(sign)}${formatTumunAmount(Math.abs(n))}`;
+}
 
-  const chunks = [];
-  if (hizb > 0) chunks.push(arabicUnitPhrase(hizb, HIZB_FORMS));
-  if (tumun > 0) chunks.push(arabicUnitPhrase(tumun, TUMUN_FORMS));
-  if (chunks.length === 0) return null;
+/**
+ * Écart non enregistré : « تعديلات غير محفوظة: +3 أثمان ».
+ * @returns {string|null} null si l'écart est nul.
+ */
+export function formatUnsavedTumunDelta(deltaTumuns) {
+  const signed = formatSignedTumunAmount(deltaTumuns);
+  return signed ? `تعديلات غير محفوظة: ${signed}` : null;
+}
 
-  let body = formatUnitChunk(chunks[0], sign);
-  for (let i = 1; i < chunks.length; i += 1) {
-    body += ` و ${formatUnitChunk(chunks[i], null)}`;
-  }
-  const extra = suffix ? String(suffix).trim() : "";
-  return extra ? `${body} ${extra}` : body;
+/**
+ * Position « 5 أحزاب و 3 أثمان » depuis un total de أثمان (0–480).
+ * Le ثمن est omis quand il vaut 0.
+ */
+export function formatMemberPosition(tumuns) {
+  const { nbHizbCompletes, tumunCourant } = positionFromMemberTumuns(tumuns);
+  const hizb = formatHizbCount(nbHizbCompletes);
+  if (tumunCourant === 0) return hizb;
+  return `${hizb} و ${formatUnitChunk(arabicUnitPhrase(tumunCourant, TUMUN_FORMS), null)}`;
 }
 
 export function enrichMemberProgram(program) {
