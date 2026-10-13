@@ -62,6 +62,8 @@ import PersonalInfoSection from "../../components/PersonalInfoSection";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
 import ProfileNotificationsCard from "../../components/profile/ProfileNotificationsCard";
+import ProfilePrivacyLink from "../../components/profile/ProfilePrivacyLink";
+import AccountDeletionRequest from "../../components/profile/AccountDeletionRequest";
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
@@ -1301,6 +1303,13 @@ export default function MemberDashboardScreen({ navigation, route }) {
               <ProfilePasswordCard onChange={() => setPasswordModal(true)} />
               <ProfileNotificationsCard
                 onPress={() => navigation.navigate("NotificationSettings")}
+              />
+              <ProfilePrivacyLink />
+              <AccountDeletionRequest
+                fullName={fullName}
+                email={currentUser?.email}
+                phone={contactFields.phone}
+                seanceName={sessionState.groupName}
               />
             </View>
           </View>
