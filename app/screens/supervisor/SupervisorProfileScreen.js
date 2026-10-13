@@ -30,6 +30,7 @@ import EditableAvatar from "../../components/EditableAvatar";
 import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
 import EditSupervisorProfileModal from "../../components/profile/EditSupervisorProfileModal";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
+import ProfilePrivacyLink from "../../components/profile/ProfilePrivacyLink";
 import { displayProfileEmail } from "../../lib/authEmail";
 
 function displayValue(value) {
@@ -312,6 +313,7 @@ export default function SupervisorProfileScreen({ navigation }) {
             <Ionicons name={arrowForward} size={18} color={colors.muted} />
           </TouchableOpacity>
         </SectionCard>
+        <ProfilePrivacyLink style={styles.privacyLink} />
       </ScrollView>
 
       <ChangePasswordModal
@@ -339,6 +341,7 @@ export default function SupervisorProfileScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, paddingBottom: 32 },
+  privacyLink: { marginBottom: 14 },
 
   header: {
     flexDirection: rtlRow,

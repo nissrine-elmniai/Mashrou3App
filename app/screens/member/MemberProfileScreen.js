@@ -7,15 +7,19 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Linking,
+  Modal,
+  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
-import { colors } from "../../constants/theme";
-import { rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
-import { getMemberProfileFields, getMyActiveEnrollment } from "../../lib/membersApi";
+import { colors, radii } from "../../constants/theme";
+import { rtlText, rtlTextBold, rtlTextCenter, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
+import { ROLES, userHasRole } from "../../constants/roles";
+import { getMemberProfileFields, getMyActiveEnrollment, getProfileRoles } from "../../lib/membersApi";
 import { getMyCurrentInscription } from "../../lib/messagesApi";
 import {
   getMyProgress,
@@ -32,6 +36,12 @@ import ProfileNotificationsCard from "../../components/profile/ProfileNotificati
 import SessionCard from "../../components/profile/SessionCard";
 import ProgressCard from "../../components/profile/ProgressCard";
 import AttendanceCard from "../../components/profile/AttendanceCard";
+import ProfilePrivacyLink from "../../components/profile/ProfilePrivacyLink";
+
+const DELETE_REQUEST_EMAIL = "altruisme.ensao@gmail.com";
+const DELETE_REQUEST_SUBJECT = "طلب حذف الحساب";
+const DELETE_REQUEST_CONFIRM =
+  "سيتم حذف حسابك وبياناته (الملف الشخصي، التقدم، الحضور، الرسائل، الصورة) خلال 30 يومًا من استلام طلبك. يُحذف طلب الانضمام عند إطلاق الموسم المقبل. سيُفتح تطبيق البريد لإرسال الطلب.";
 
 /**
  * Self-view membre — الملف الشخصي.
@@ -82,6 +92,13 @@ export default function MemberProfileScreen({ navigation }) {
     absentCount: 0,
     records: [],
   });
+  const [canRequestDeletion, setCanRequestDeletion] = useState(false);
+  const [mailFallback, setMailFallback] = useState(false);
+  const [trackedAuthId, setTrackedAuthId] = useState(authId);
+  if (trackedAuthId !== authId) {
+    setTrackedAuthId(authId);
+    setCanRequestDeletion(false);
+  }
 
   const handleLogout = () => {
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
@@ -248,6 +265,40 @@ export default function MemberProfileScreen({ navigation }) {
   );
 
   useEffect(() => {
+    if (!authId) return undefined;
+    let cancelled = false;
+    setCanRequestDeletion(false);
+    void (async () => {
+      const res = await getProfileRoles(authId);
+      if (cancelled || !res.ok) return;
+      const account = { role: res.role, roles: res.roles };
+      const blocked =
+        userHasRole(account, ROLES.ADMIN) || userHasRole(account, ROLES.SUPERVISOR);
+      if (!blocked) setCanRequestDeletion(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authId]);
+
+  const openDeletionMailto = async () => {
+    const email = String(currentUser?.email || "").trim();
+    const url = `mailto:${DELETE_REQUEST_EMAIL}?subject=${encodeURIComponent(DELETE_REQUEST_SUBJECT)}&body=${encodeURIComponent(email)}`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      setMailFallback(true);
+    }
+  };
+
+  const confirmDeletionRequest = () => {
+    Alert.alert("حذف الحساب", DELETE_REQUEST_CONFIRM, [
+      { text: "إلغاء", style: "cancel" },
+      { text: "متابعة", onPress: openDeletionMailto },
+    ]);
+  };
+
+  useEffect(() => {
     setContactFields((prev) => ({
       phone: prev.phone || currentUser?.phone || null,
       school: prev.school || currentUser?.school || null,
@@ -321,8 +372,51 @@ export default function MemberProfileScreen({ navigation }) {
           <ProfileNotificationsCard
             onPress={() => navigation.navigate("NotificationSettings")}
           />
+
+          <ProfilePrivacyLink />
+
+          {canRequestDeletion ? (
+            <TouchableOpacity
+              style={styles.deleteAccountBtn}
+              onPress={confirmDeletionRequest}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="حذف الحساب"
+            >
+              <Text style={styles.deleteAccountText}>حذف الحساب</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={mailFallback}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMailFallback(false)}
+      >
+        <View style={styles.fallbackOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setMailFallback(false)}
+          />
+          <View style={styles.fallbackCard}>
+            <Text style={styles.fallbackText}>
+              أرسل طلب حذف الحساب من بريد حسابك إلى العنوان التالي:
+            </Text>
+            <Text selectable style={styles.fallbackEmail}>
+              {DELETE_REQUEST_EMAIL}
+            </Text>
+            <TouchableOpacity
+              style={styles.fallbackClose}
+              onPress={() => setMailFallback(false)}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.fallbackCloseText}>إغلاق</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -358,4 +452,53 @@ const styles = StyleSheet.create({
     ...rtlTextBold,
   },
   pageLoader: { marginVertical: 8 },
+  deleteAccountBtn: {
+    backgroundColor: "#FFEBEE",
+    borderRadius: radii.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: "center",
+  },
+  deleteAccountText: {
+    color: colors.red,
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    ...rtlTextCenter,
+  },
+  fallbackOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  fallbackCard: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: 20,
+  },
+  fallbackText: {
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    color: colors.text,
+    ...rtlText,
+  },
+  fallbackEmail: {
+    marginTop: 12,
+    fontFamily: fonts.semiBold,
+    fontSize: 16,
+    color: colors.primary,
+    textAlign: "center",
+    writingDirection: "ltr",
+  },
+  fallbackClose: {
+    marginTop: 16,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  fallbackCloseText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 16,
+    color: colors.text,
+    ...rtlTextCenter,
+  },
 });

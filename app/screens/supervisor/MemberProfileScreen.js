@@ -11,7 +11,7 @@
  * date_naissance : profiles.date_naissance via getMemberProfileFields.
  * phone, school, level, hifz_amount, genre viennent de profiles.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -22,6 +22,9 @@ import {
   Alert,
   Modal,
   Pressable,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -30,7 +33,7 @@ import { useApp } from "../../context/AppContext";
 import { ROLES, userHasRole } from "../../constants/roles";
 import MemberSeasonHistory from "../../components/admin/MemberSeasonHistory";
 import { colors, radii, shadows } from "../../constants/theme";
-import { rtlText, rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
+import { rtlText, rtlTextBold, rtlTextCenter, fonts, arrowBack, row as rtlRow, textAlignStart } from "../../constants/rtl";
 import {
   getMemberProgressEntries,
   getCurrentProgressPosition,
@@ -45,7 +48,9 @@ import {
   updateMemberSeance,
   findAdminSeanceAssignmentSeason,
   formatGenderLabel,
+  getProfileRoles,
 } from "../../lib/membersApi";
+import { deleteMemberAccount } from "../../lib/supervisorInvitationsApi";
 import { displayProfileEmail } from "../../lib/authEmail";
 import PersonalInfoSection from "../../components/PersonalInfoSection";
 import {
@@ -296,6 +301,22 @@ export default function MemberProfileScreen({ navigation, route }) {
     gender: formatGenderLabel(gender) || null,
   });
   const [removingFromSeance, setRemovingFromSeance] = useState(false);
+  const [memberDeleteEmail, setMemberDeleteEmail] = useState(null);
+  const [canDeleteMember, setCanDeleteMember] = useState(false);
+  const [deleteSheet, setDeleteSheet] = useState(false);
+  const [typedEmail, setTypedEmail] = useState("");
+  const [deletingMember, setDeletingMember] = useState(false);
+  const deletingMemberRef = useRef(false);
+  const [trackedMemberId, setTrackedMemberId] = useState(memberId);
+  if (trackedMemberId !== memberId) {
+    setTrackedMemberId(memberId);
+    setMemberDeleteEmail(null);
+    setCanDeleteMember(false);
+    setDeleteSheet(false);
+    setTypedEmail("");
+    setDeletingMember(false);
+    deletingMemberRef.current = false;
+  }
 
   // L'admin affecte toujours dans le musim actif (un membre d'une ancienne
   // version peut ainsi être ajouté à une séance de la version en cours).
@@ -423,12 +444,17 @@ export default function MemberProfileScreen({ navigation, route }) {
   useEffect(() => {
     if (!memberId) return;
     let cancelled = false;
-    (async () => {
+    if (isAdminViewer) setMemberDeleteEmail(null);
+    void (async () => {
       const res = await getMemberProfileFields(memberId);
       if (cancelled || !res.ok) return;
       if (res.profileMissing && isAdminViewer) {
         navigation.replace("AdminRegistrations");
         return;
+      }
+      if (isAdminViewer) {
+        const mail = String(res.email || "").trim();
+        setMemberDeleteEmail(mail || null);
       }
       setAvatarUri(res.avatarUrl || avatarUrl || null);
       setMemberInfo(res);
@@ -458,6 +484,23 @@ export default function MemberProfileScreen({ navigation, route }) {
     isAdminViewer,
     navigation,
   ]);
+
+  useEffect(() => {
+    if (!isAdminViewer || !memberId) return undefined;
+    let cancelled = false;
+    setCanDeleteMember(false);
+    void (async () => {
+      const res = await getProfileRoles(memberId);
+      if (cancelled || !res.ok) return;
+      const account = { role: res.role, roles: res.roles };
+      const blocked =
+        userHasRole(account, ROLES.ADMIN) || userHasRole(account, ROLES.SUPERVISOR);
+      if (!blocked) setCanDeleteMember(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdminViewer, memberId]);
 
   useEffect(() => {
     if (!memberId) {
@@ -565,6 +608,54 @@ export default function MemberProfileScreen({ navigation, route }) {
       cancelled = true;
     };
   }, [memberId, seanceId, saisonId, activeSeasonId]);
+
+  const showDeleteMember =
+    isAdminViewer && canDeleteMember && !!memberDeleteEmail;
+  const emailMatches =
+    !!memberDeleteEmail &&
+    typedEmail.trim().toLowerCase() === memberDeleteEmail.trim().toLowerCase();
+
+  const closeDeleteSheet = () => {
+    if (deletingMember) return;
+    setDeleteSheet(false);
+    setTypedEmail("");
+  };
+
+  const confirmDeleteMember = () => {
+    Alert.alert(
+      "حذف الحساب",
+      "سيتم حذف حساب هذا العضو وجميع بياناته نهائيًا. لا يمكن التراجع عن هذا الإجراء.",
+      [
+        { text: "إلغاء", style: "cancel" },
+        {
+          text: "متابعة",
+          onPress: () => {
+            setTypedEmail("");
+            setDeleteSheet(true);
+          },
+        },
+      ]
+    );
+  };
+
+  const submitDeleteMember = async () => {
+    if (deletingMemberRef.current || !emailMatches || !memberId) return;
+    deletingMemberRef.current = true;
+    setDeletingMember(true);
+    const res = await deleteMemberAccount({ userId: memberId });
+    if (!res.ok) {
+      deletingMemberRef.current = false;
+      setDeletingMember(false);
+      const message =
+        res.status === 409
+          ? "يجب أولاً تعيين مشرف آخر للحصة"
+          : res.error || "فشل حذف الحساب";
+      Alert.alert("خطأ", message);
+      return;
+    }
+    setDeleteSheet(false);
+    navigation.goBack();
+  };
 
   const headerIconColor = adminTheme ? "#333333" : "white";
   const trashColor = adminTheme ? "#D32F2F" : "white";
@@ -677,6 +768,18 @@ export default function MemberProfileScreen({ navigation, route }) {
             styles={styles}
           />
         </View>
+
+        {showDeleteMember ? (
+          <TouchableOpacity
+            style={styles.deleteMemberBtn}
+            onPress={confirmDeleteMember}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="حذف الحساب"
+          >
+            <Text style={styles.deleteMemberText}>حذف الحساب</Text>
+          </TouchableOpacity>
+        ) : null}
       </ScrollView>
 
       <Modal
@@ -767,6 +870,68 @@ export default function MemberProfileScreen({ navigation, route }) {
             )}
           </View>
         </View>
+      </Modal>
+
+      <Modal
+        visible={deleteSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={closeDeleteSheet}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeDeleteSheet}
+          />
+          <View
+            style={[
+              styles.modalCard,
+              { paddingBottom: Math.max(insets.bottom, 16) + 12 },
+            ]}
+          >
+            <Text style={styles.modalTitle}>حذف الحساب</Text>
+            <Text style={styles.modalHint}>اكتب البريد الإلكتروني للعضو للتأكيد</Text>
+            <TextInput
+              style={styles.deleteEmailInput}
+              value={typedEmail}
+              onChangeText={setTypedEmail}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              editable={!deletingMember}
+              textAlign={textAlignStart}
+              accessibilityLabel="البريد الإلكتروني للعضو"
+            />
+            <TouchableOpacity
+              style={[
+                styles.deleteConfirmBtn,
+                (!emailMatches || deletingMember) && styles.deleteConfirmBtnDisabled,
+              ]}
+              onPress={submitDeleteMember}
+              disabled={!emailMatches || deletingMember}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="حذف الحساب"
+            >
+              {deletingMember ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.deleteConfirmText}>حذف الحساب</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={closeDeleteSheet}
+              disabled={deletingMember}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.modalCloseBtnText}>إلغاء</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -1035,5 +1200,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: fonts.semiBold,
     ...rtlText,
+  },
+  deleteMemberBtn: {
+    marginTop: 14,
+    backgroundColor: "#FFEBEE",
+    borderRadius: radii.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: "center",
+  },
+  deleteMemberText: {
+    color: colors.red,
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    ...rtlTextCenter,
+  },
+  deleteEmailInput: {
+    backgroundColor: colors.inputBg,
+    borderRadius: radii.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: fonts.regular,
+    color: colors.text,
+    marginBottom: 4,
+  },
+  deleteConfirmBtn: {
+    marginTop: 12,
+    paddingVertical: 14,
+    borderRadius: radii.md,
+    backgroundColor: colors.red,
+    alignItems: "center",
+  },
+  deleteConfirmBtnDisabled: {
+    backgroundColor: colors.disabled,
+  },
+  deleteConfirmText: {
+    color: "#fff",
+    fontFamily: fonts.semiBold,
+    fontSize: 16,
+    ...rtlTextCenter,
   },
 });
