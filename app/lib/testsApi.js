@@ -313,6 +313,59 @@ export async function getMyTestResults() {
 }
 
 /**
+ * Membres au statut « accepte » dans une séance de la saison, sans doublon.
+ * Une expiration de requête est laissée au catch de l'appelant (createTest).
+ * @param {string} saisonId
+ * @returns {Promise<{ ok: boolean, ids: string[], error?: string }>}
+ */
+export async function getEligibleMemberIds(saisonId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", ids: [] };
+  }
+  const seasonId = String(saisonId || "").trim();
+  if (!seasonId) {
+    return { ok: false, error: "معرّف الموسم مفقود", ids: [] };
+  }
+  const { data: accepted, error: membersError } = await withTimeout(
+    supabase
+      .from("inscriptions")
+      .select("membre_id, seance:seances!inscriptions_seance_id_fkey!inner(saison_id)")
+      .eq("statut", "accepte")
+      .eq("seance.saison_id", seasonId),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة أعضاء الموسم"
+  );
+  if (membersError) {
+    return { ok: false, error: mapTableError(membersError, "inscriptions"), ids: [] };
+  }
+  return {
+    ok: true,
+    ids: [...new Set((accepted || []).map((row) => row.membre_id).filter(Boolean))],
+  };
+}
+
+/**
+ * Éligibles qui n'ont pas encore de ligne test_invitations pour ce test.
+ * @returns {Promise<{ ok: boolean, ids: string[], error?: string }>}
+ */
+async function listMissingInviteeIds(testId, saisonId) {
+  const eligible = await getEligibleMemberIds(saisonId);
+  if (!eligible.ok) return { ok: false, error: eligible.error, ids: [] };
+  if (eligible.ids.length === 0) return { ok: true, ids: [] };
+
+  const { data, error } = await withTimeout(
+    supabase.from("test_invitations").select("membre_id").eq("test_id", testId),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة الدعوات"
+  );
+  if (error) {
+    return { ok: false, error: mapTableError(error, "test_invitations"), ids: [] };
+  }
+  const invited = new Set((data || []).map((row) => row.membre_id).filter(Boolean));
+  return { ok: true, ids: eligible.ids.filter((id) => !invited.has(id)) };
+}
+
+/**
  * (Admin) Crée un test de saison puis invite tous les membres acceptés
  * dans une séance de cette saison. saisonId est obligatoire.
  * @param {object} payload { saisonId, titre, type, quranQuantity?, dates: { date, heure }[] }
@@ -384,24 +437,12 @@ export async function createTest({
       return { ok: false, error: mapTableError(datesError, "test_dates") };
     }
 
-    const { data: accepted, error: membersError } = await withTimeout(
-      supabase
-        .from("inscriptions")
-        .select(
-          "membre_id, seance:seances!inscriptions_seance_id_fkey!inner(saison_id)"
-        )
-        .eq("statut", "accepte")
-        .eq("seance.saison_id", seasonId),
-      SUPABASE_TIMEOUT_MS,
-      "قراءة أعضاء الموسم"
-    );
-    if (membersError) {
-      return { ok: false, error: mapTableError(membersError, "inscriptions"), test: data };
+    const eligible = await getEligibleMemberIds(seasonId);
+    if (!eligible.ok) {
+      return { ok: false, error: eligible.error, test: data };
     }
 
-    const membreIds = [
-      ...new Set((accepted || []).map((row) => row.membre_id).filter(Boolean)),
-    ];
+    const membreIds = eligible.ids;
     if (membreIds.length === 0) {
       return { ok: true, test: data, invitations: [], invitedCount: 0 };
     }
@@ -429,6 +470,67 @@ export async function createTest({
     return { ok: true, test: data, invitations: invited, invitedCount: invited.length };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
+/**
+ * (Admin) Nombre de membres éligibles sans ligne dans test_invitations.
+ * @returns { ok, count }
+ */
+export async function getMissingInviteesCount(testId, saisonId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", count: 0 };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود", count: 0 };
+  }
+  try {
+    const missing = await listMissingInviteeIds(testId, saisonId);
+    if (!missing.ok) return { ok: false, error: missing.error, count: 0 };
+    return { ok: true, count: missing.ids.length };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", count: 0 };
+  }
+}
+
+/**
+ * (Admin) Invite les membres éligibles encore absents de ce test.
+ * Le trigger d'annonce (0094) envoie la notification.
+ * @returns { ok, count }
+ */
+export async function inviteMissingMembers(testId, saisonId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل", count: 0 };
+  }
+  if (!testId) {
+    return { ok: false, error: "معرّف الاختبار مفقود", count: 0 };
+  }
+  try {
+    const missing = await listMissingInviteeIds(testId, saisonId);
+    if (!missing.ok) return { ok: false, error: missing.error, count: 0 };
+    if (missing.ids.length === 0) return { ok: true, count: 0 };
+
+    const { data, error } = await withTimeout(
+      supabase
+        .from("test_invitations")
+        .upsert(
+          missing.ids.map((membre_id) => ({
+            test_id: testId,
+            membre_id,
+            statut: "invite",
+          })),
+          { onConflict: "test_id,membre_id", ignoreDuplicates: true }
+        )
+        .select("id"),
+      SUPABASE_TIMEOUT_MS,
+      "إرسال الدعوات"
+    );
+    if (error) {
+      return { ok: false, error: mapTableError(error, "test_invitations"), count: 0 };
+    }
+    return { ok: true, count: (data || []).length };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase", count: 0 };
   }
 }
 

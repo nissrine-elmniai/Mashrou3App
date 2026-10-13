@@ -340,7 +340,9 @@ function stackForRole(role) {
 export default function RootNavigator() {
   const navigationRef = useRef(null);
   const [navTick, setNavTick] = React.useState(0);
-  const { currentUser } = useApp();
+  const { currentUser, refreshCurrentUser } = useApp();
+  const refreshUserRef = useRef(refreshCurrentUser);
+  refreshUserRef.current = refreshCurrentUser;
   const signedIn = Boolean(currentUser?.role);
 
   useEffect(() => {
@@ -359,8 +361,24 @@ export default function RootNavigator() {
     const processUrl = async (url) => {
       if (!url) return;
       const result = await handleAuthDeepLink(url);
+      if (result.emailChangeError) {
+        Alert.alert(
+          "تنبيه",
+          "انتهت صلاحية الرابط أو سبق استعماله. أعد طلب تغيير البريد."
+        );
+        return;
+      }
       if (result.error) {
         Alert.alert("خطأ", result.error);
+        return;
+      }
+      if (result.isEmailChange) {
+        try {
+          await refreshUserRef.current({ fromEmailChangeLink: true });
+        } catch {
+          /* le focus du profil rechargera profiles */
+        }
+        Alert.alert("تم", "تم تغيير بريدك الإلكتروني بنجاح.");
         return;
       }
       if (result.isRecovery) {

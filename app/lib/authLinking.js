@@ -14,6 +14,30 @@ export function getPasswordResetAppDeepLink() {
   return "mashrou3app://reset-password";
 }
 
+/**
+ * Retour après confirmation du changement d'e-mail.
+ * Chemin absent de la config linking : React Navigation ne navigue pas.
+ */
+export function getEmailChangeRedirectUrl() {
+  return "mashrou3app://email-change";
+}
+
+function isEmailChangeUrl(url, type) {
+  if (type === "email_change") return true;
+  const path = String(url || "").split(/[?#]/)[0];
+  return /email-change\/?$/i.test(path);
+}
+
+/** Journal de dev : forme des paramètres, sans jetons. */
+function logAuthUrlDev(url) {
+  if (!__DEV__) return;
+  const safe = String(url || "").replace(
+    /([?#&])(access_token|refresh_token|token_hash|code|provider_token|id_token)=[^&#]*/gi,
+    "$1$2=[redacted]"
+  );
+  console.log("[auth-link]", safe);
+}
+
 /** Regroupe les paramètres de query (?a=1) et de fragment (#a=1) d'une URL de deep link */
 function extractUrlParams(url) {
   const params = {};
@@ -49,7 +73,30 @@ export async function handleAuthDeepLink(url) {
     resolved = decodeURIComponent(nested[1]);
   }
 
+  logAuthUrlDev(resolved);
+
   const params = extractUrlParams(resolved);
+  const type = params.type || "";
+
+  // Changement d'e-mail : ne pas tomber dans le flux recovery (type vide
+  // y est traité comme une récupération de mot de passe).
+  if (isEmailChangeUrl(resolved, type)) {
+    if (params.error_description || params.error) {
+      return { isRecovery: false, emailChangeError: true };
+    }
+    if (params.access_token) {
+      const { error } = await supabase.auth.setSession({
+        access_token: params.access_token,
+        refresh_token: params.refresh_token || "",
+      });
+      return {
+        isRecovery: false,
+        isEmailChange: !error,
+        error: error?.message,
+      };
+    }
+    return { isRecovery: false };
+  }
 
   if (params.error_description || params.error) {
     return {
@@ -60,7 +107,6 @@ export async function handleAuthDeepLink(url) {
     };
   }
 
-  const type = params.type || "";
   const isRecoveryHint =
     type === "recovery" ||
     /reset-password/i.test(resolved) ||

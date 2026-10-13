@@ -28,6 +28,7 @@ import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import { STATS_LABELS } from "../../lib/statsLabels";
 import {
   countPendingApplications,
+  getApplicationEventDate,
   listRecentMemberApplications,
 } from "../../lib/memberApplicationsApi";
 import { listRecentAlertsAdmin } from "../../lib/alertsApi";
@@ -100,22 +101,44 @@ function parseActivityDate(value) {
   return null;
 }
 
+const ACTIVITY_LABELS = {
+  newRequest: "طلب تسجيل جديد",
+  accepted: "تم قبول طلب",
+  accountCreated: "تم إنشاء حساب العضو",
+  rejected: "تم رفض طلب",
+  newTest: "اختبار جديد",
+  alertFallback: "تنبيه",
+};
+
+/** Accord arabe : 1 singulier, 2 duel, 3–10 pluriel, 11+ singulier. */
+function formatArabicAgo(count, unit) {
+  const forms = {
+    minute: { one: "دقيقة", two: "دقيقتين", few: "دقائق", many: "دقيقة" },
+    hour: { one: "ساعة", two: "ساعتين", few: "ساعات", many: "ساعة" },
+    day: { one: "يوم", two: "يومين", few: "أيام", many: "أيام" },
+  };
+  const word = forms[unit];
+  if (count === 1) return `منذ ${word.one}`;
+  if (count === 2) return `منذ ${word.two}`;
+  if (count >= 3 && count <= 10) return `منذ ${count} ${word.few}`;
+  return `منذ ${count} ${word.many}`;
+}
+
 function formatRelativeTime(date) {
   if (!date || Number.isNaN(date.getTime())) return "";
   const diffMs = Date.now() - date.getTime();
   if (diffMs < 0) return "الآن";
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return "الآن";
-  if (mins < 60) return `منذ ${mins} دقيقة`;
+  if (mins < 60) return formatArabicAgo(mins, "minute");
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `منذ ${hours} ساعة`;
+  if (hours < 24) return formatArabicAgo(hours, "hour");
   const days = Math.floor(hours / 24);
-  if (days === 1) return "منذ يوم";
-  if (days < 7) return `منذ ${days} أيام`;
-  return date.toLocaleDateString("ar-MA", {
-    day: "numeric",
-    month: "short",
-  });
+  if (days < 7) return formatArabicAgo(days, "day");
+  const now = new Date();
+  const options = { day: "numeric", month: "short" };
+  if (date.getFullYear() !== now.getFullYear()) options.year = "numeric";
+  return date.toLocaleDateString("ar-MA", options);
 }
 
 function buildRecentActivities({
@@ -126,6 +149,8 @@ function buildRecentActivities({
   const items = [];
 
   registrations.forEach((r) => {
+    const at = parseActivityDate(getApplicationEventDate(r));
+    if (!at) return;
     const name = r.fullName || r.email || "مترشح";
     const icon =
       r.kind === REGISTRATION_KIND.SEASON_RENEWAL ? RefreshCw : FileText;
@@ -134,8 +159,8 @@ function buildRecentActivities({
         id: `reg-pending-${r.id}`,
         icon,
         color: colors.gold,
-        text: `طلب تسجيل جديد: ${name}`,
-        at: parseActivityDate(r.createdAt) || new Date(0),
+        text: `${ACTIVITY_LABELS.newRequest}: ${name}`,
+        at,
       });
     } else if (
       r.status === REGISTRATION_STATUS.INVITED ||
@@ -145,54 +170,50 @@ function buildRecentActivities({
         id: `reg-accepted-${r.id}`,
         icon,
         color: colors.primary,
-        text: `تم قبول طلب: ${name}`,
-        at:
-          parseActivityDate(r.acceptedAt) ||
-          parseActivityDate(r.createdAt) ||
-          new Date(0),
+        text: `${ACTIVITY_LABELS.accepted}: ${name}`,
+        at,
       });
     } else if (r.status === REGISTRATION_STATUS.ACTIVATED) {
       items.push({
         id: `reg-activated-${r.id}`,
         icon,
         color: colors.primary,
-        text: `تم إنشاء حساب العضو: ${name}`,
-        at:
-          parseActivityDate(r.acceptedAt) ||
-          parseActivityDate(r.createdAt) ||
-          new Date(0),
+        text: `${ACTIVITY_LABELS.accountCreated}: ${name}`,
+        at,
       });
     } else if (r.status === REGISTRATION_STATUS.REJECTED) {
       items.push({
         id: `reg-rejected-${r.id}`,
         icon,
         color: colors.red,
-        text: `تم رفض طلب: ${name}`,
-        at: parseActivityDate(r.createdAt) || new Date(0),
+        text: `${ACTIVITY_LABELS.rejected}: ${name}`,
+        at,
       });
     }
   });
 
   exams.forEach((exam) => {
-    const display = exam.displayStatus;
-    if (!display) return;
+    const at = parseActivityDate(exam.createdAt);
+    if (!at) return;
     items.push({
-      id: `exam-${display.key}-${exam.id}`,
+      id: `exam-${exam.id}`,
       icon: ClipboardList,
-      color: display.color,
-      text: `${display.label}: ${exam.title || "اختبار"}`,
-      at: parseActivityDate(exam.createdAt) || parseActivityDate(exam.date) || new Date(0),
+      color: colors.primary,
+      text: `${ACTIVITY_LABELS.newTest}: ${exam.title || "اختبار"}`,
+      at,
     });
   });
 
   alerts.forEach((alert) => {
-    const text = alert.message || alert.title || "تنبيه";
+    const at = parseActivityDate(alert.createdAt);
+    if (!at) return;
+    const text = alert.message || alert.title || ACTIVITY_LABELS.alertFallback;
     items.push({
       id: `alert-${alert.id}`,
       icon: Bell,
       color: colors.red,
       text,
-      at: parseActivityDate(alert.createdAt) || new Date(0),
+      at,
     });
   });
 
@@ -395,7 +416,7 @@ export default function AdminDashboard({ navigation }) {
           countTestsAdmin(null, activeSeason.id),
           listRecentTestsAdmin(8, activeSeason.id),
           countPendingApplications(activeSeason.id),
-          listRecentMemberApplications(activeSeason.id, 10),
+          listRecentMemberApplications(activeSeason.id, 30),
           listRecentAlertsAdmin(activeSeason.id, 10),
         ]);
         if (cancelled) return;
