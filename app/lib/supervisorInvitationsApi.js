@@ -492,3 +492,84 @@ export async function deleteSupervisorAccount({ userId }) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
 }
+
+function httpStatusFromInvoke(error, response) {
+  const raw = response?.status ?? error?.context?.status;
+  const status = Number(raw);
+  return Number.isFinite(status) && status > 0 ? status : null;
+}
+
+async function readDeleteUserServerError(error) {
+  const ctx = error?.context;
+  if (!ctx || typeof ctx.clone !== "function") return "";
+  try {
+    const copy = ctx.clone();
+    const text = typeof copy.text === "function" ? await copy.text() : "";
+    if (!text) return "";
+    try {
+      const body = JSON.parse(text);
+      return String(body?.error || body?.message || "").trim();
+    } catch {
+      return String(text).trim();
+    }
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * (Admin) Suppression d'un compte membre via delete-user.
+ * Même appel que deleteSupervisorAccount, avec le statut HTTP en plus.
+ * @param {string} userId UUID du membre
+ * @returns {{ ok: true } | { ok: false, status: number|null, error: string }}
+ */
+export async function deleteMemberAccount({ userId }) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, status: null, error: "Supabase غير مفعّل" };
+  }
+  if (!userId) {
+    return { ok: false, status: null, error: "معرّف المستخدم مفقود" };
+  }
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    let accessToken = sessionData?.session?.access_token || "";
+    const expiresAt = sessionData?.session?.expires_at;
+    if (!accessToken || (expiresAt && expiresAt * 1000 < Date.now() + 60_000)) {
+      const refreshed = await supabase.auth.refreshSession();
+      accessToken = refreshed.data?.session?.access_token || accessToken;
+    }
+    const invokePromise = supabase.functions.invoke("delete-user", {
+      body: { userId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
+    const { data, error, response } = await withTimeout(
+      invokePromise,
+      SUPABASE_TIMEOUT_MS,
+      "حذف الحساب"
+    );
+
+    if (error) {
+      const status = httpStatusFromInvoke(error, response);
+      let serverError = await readDeleteUserServerError(error);
+      if (!serverError || /edge function returned a non-2xx status code/i.test(serverError)) {
+        serverError = await parseEdgeFunctionError(error, "فشل حذف الحساب", {
+          functionName: "delete-user",
+        });
+      }
+      return { ok: false, status, error: serverError || "فشل حذف الحساب" };
+    }
+
+    if (data?.ok === false) {
+      return {
+        ok: false,
+        status: httpStatusFromInvoke(null, response),
+        error: String(data.error || "فشل حذف الحساب"),
+      };
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, status: null, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}

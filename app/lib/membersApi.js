@@ -461,6 +461,37 @@ export async function getMemberProfileFields(membreId) {
   }
 }
 
+/**
+ * role et roles d'un profil, pour décider d'afficher « حذف الحساب ».
+ * Lecture seule : n'altère pas getMemberProfileFields.
+ * @returns {{ ok: true, role: string|null, roles: string[] } | { ok: false, error: string }}
+ */
+export async function getProfileRoles(profileId) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, error: "Supabase غير مفعّل" };
+  }
+  if (!profileId) {
+    return { ok: false, error: "معرّف الحساب مفقود" };
+  }
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from("profiles").select("role, roles").eq("id", profileId).maybeSingle(),
+      SUPABASE_TIMEOUT_MS,
+      "قراءة أدوار الحساب"
+    );
+    if (error || !data) {
+      return { ok: false, error: error?.message || "تعذر قراءة أدوار الحساب" };
+    }
+    return {
+      ok: true,
+      role: data.role || null,
+      roles: Array.isArray(data.roles) ? data.roles : [],
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+  }
+}
+
 function buildEditableProfilePayload(fields = {}) {
   const payload = {};
   if (fields.phone !== undefined) {
