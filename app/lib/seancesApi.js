@@ -962,10 +962,11 @@ export async function getMemberProfiles() {
     return { ok: false, error: "Supabase غير مفعّل" };
   }
   try {
+    // genre : profiles.genre (0052), « ذكر » / « أنثى » ou null.
     const selectWithAvatar =
-      "id, first_name, last_name, email, phone, school, level, hifz_amount, account_status, created_at, avatar_url";
+      "id, first_name, last_name, email, phone, school, level, hifz_amount, genre, account_status, created_at, avatar_url";
     const selectWithoutAvatar =
-      "id, first_name, last_name, email, phone, school, level, hifz_amount, account_status, created_at";
+      "id, first_name, last_name, email, phone, school, level, hifz_amount, genre, account_status, created_at";
 
     let { data, error } = await withTimeout(
       supabase
