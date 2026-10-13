@@ -7,7 +7,8 @@ const SUPABASE_TIMEOUT_MS = 15000;
 /** UUID v4 de profile — tout autre valeur (ex. "admin") est refusée. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function newUuid() {
+/** UUID v4 client (repli sans crypto.randomUUID, ex. Hermes). Réutilisé par testsApi. */
+export function newUuid() {
   const c = globalThis.crypto;
   if (c && typeof c.randomUUID === "function") return c.randomUUID();
   const bytes = new Uint8Array(16);

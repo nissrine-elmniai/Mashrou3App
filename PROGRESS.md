@@ -14,7 +14,13 @@ Stack, flux, décisions et migration `0129` (écrite, non exécutée) : [docs/al
 
 `0131_push_dispatch_sans_boucle_et_purge_cron.sql` est écrite, non exécutée. Elle arrête la réécriture cron de `dispatch_request_id`. Détail : [docs/nettoyage-bdd.md](docs/nettoyage-bdd.md).
 
-Prochain numéro libre : `0135`.
+## Départ de saison calculé — oct. 2026
+
+`0135_progression_depart_calcule.sql` et `0136_tumun_courant_0_7.sql` sont écrites, non exécutées. `0135` : le départ de la saison est calculé par le serveur (`get_member_season_progress`, stats). `objectifs.nb_hizb_depart` n'est plus lu ni écrit. `0136` : contrainte `tumun_courant` 0–7 et 60 حزب → ثمن 0, sans conversion de données. Détail : [docs/statistiques.md](docs/statistiques.md), [docs/cycle-de-vie-saison.md](docs/cycle-de-vie-saison.md) §6–7.
+
+`0137_objectifs_require_position.sql` est écrite, non exécutée : un objectif ne peut être créé que si le membre a une position (départ de saison connu). Détail : [docs/cycle-de-vie-saison.md](docs/cycle-de-vie-saison.md) §7.
+
+Prochain numéro libre : `0138`.
 
 ## Reste à faire
 

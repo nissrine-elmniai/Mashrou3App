@@ -37,7 +37,7 @@ Une ligne par `(saison_id, membre_id)`.
 
 - `seance_id` et `superviseur_id` n'ont pas de clé étrangère : les séances et les comptes superviseurs sont supprimés au reset. `seance_nom` et `superviseur_nom` sont des copies.
 - `source` : `snapshot` (figé par `snapshot_season`) ou `rattrapage` (migration `0125`).
-- Positions en **tumun**, de 0 à 480 : `nb_hizb_completes × 8 + tumun_courant`, plafonné à 480. `tumun_courant` null compte comme 0. `nb_hizb_completes` null : pas de position.
+- Positions en **tumun**, de 0 à 480 : `nb_hizb_completes × 8 + tumun_courant`, plafonné à 480. `tumun_courant` = أثمان mémorisés du حزب en cours, 0 à 7 (`0136`). `tumun_courant` null compte comme 0. `nb_hizb_completes` null : pas de position.
 - RLS : policy ALL `private.is_admin()`.
 
 ## Qui calcule
@@ -48,6 +48,8 @@ Une ligne par `(saison_id, membre_id)`.
 | `public.compute_season_stats(text)` | JSON v2, aucune écriture. `stable`, `security definer`. |
 | `public.compute_season_member_stats(text)` | Une ligne par membre `accepte`. |
 | `public.snapshot_season(text)` | Upsert `season_stats`, puis remplacement des lignes `season_member_stats` de la saison. |
+| `private.season_start_tumun(uuid, text)` | D, position de début d'un membre dans une saison (`0135`). |
+| `public.get_member_season_progress(uuid)` | Avancement vers l'objectif, saison active (`0135`). Membre lui-même, admin ou superviseur de sa séance. |
 
 Les trois fonctions publiques lèvent `هذه العملية للمشرف العام فقط` si l'appelant n'est pas admin.
 
@@ -77,9 +79,9 @@ Présence : marques `present` et `absent` du membre **sur la séance de son insc
 
 Position de fin (snapshot normal) : dernière ligne `progression` du membre, **toutes saisons**, tri `date desc, id desc`. Jamais `date_saisie`.
 
-Position de début : dernière ligne strictement antérieure à la première ligne de la saison (`date`, puis `id`) ; à défaut, cette première ligne ; à défaut, null.
+Position de début (D, migration `0135`, `private.season_start_tumun`) : **minimum** entre la dernière position avant le début de la saison (`progression.date < saisons.start_date` à 00:00 `Africa/Casablanca`, tri `date desc, id desc`) et toutes les lignes de la saison (`saison_id` = saison). Une correction à la baisse pendant la saison abaisse donc D. `start_date` null : seules les lignes de la saison comptent. Aucune ligne : null. C'est la même règle que l'anneau de l'écran membre (`get_member_season_progress`).
 
-Gain = fin − début, en tumun. `gainMoyenHizb` et `gainTotalHizb` = moyenne et somme des gains ÷ 8, arrondies au centième. Null s'il n'y a aucun gain.
+Gain = fin − début, en tumun. Pour la saison active, le gain est toujours ≥ 0 : D est au plus égal à chaque ligne de la saison, et la position de fin est la dernière d'entre elles. Seule une ligne postérieure hors saison (`saison_id` null ou autre saison) pourrait être plus basse que D ; la RPC membre ramène alors le gain à 0. `gainMoyenHizb` et `gainTotalHizb` = moyenne et somme des gains ÷ 8, arrondies au centième. Null s'il n'y a aucun gain.
 
 Pourcentage de position = `least(100, round(100 × pos / 480))`. La moyenne `avgPositionPct` est la moyenne de ces pourcentages, arrondie. Null s'il n'y a aucune position. `khatm` = membres dont `pos_fin = 480`.
 
@@ -108,7 +110,13 @@ Demandes (`member_applications` de la saison) :
 
 Tests : tous les `tests` de la saison et toutes leurs `test_invitations`, y compris un membre qui n'est plus `accepte`. Une note compte si `statut = 'note'` et `note` n'est pas null. Barème unique 0–20 (`test_invitations_note_0_20`, migration `0090`) : tranches `0-5`, `5-10`, `10-15`, `15-20` (`15` inclus dans la dernière, `20` inclus). `parTest.date` = `min(test_dates.date_proposee)`. `tests.date_test` a été supprimée par `0090`.
 
-Objectifs : seulement les membres `accepte` qui ont une ligne `objectifs` pour la saison. `nb_hizb_cible` et `nb_hizb_depart` sont des **hizb** (1–60 et 0–60, migrations `0057` et `0062`). Atteint si `(pos_fin ou 0) − nb_hizb_depart × 8 ≥ nb_hizb_cible × 8`. `taux` null s'il n'y a aucun objectif. `realisationMoyennePct` = moyenne, par objectif, de `100 × progression / (cible × 8)`, chaque ratio borné à `[0, 100]`, arrondie au centième. Null s'il n'y a aucun objectif.
+Objectifs : seulement les membres `accepte` qui ont une ligne `objectifs` pour la saison. `nb_hizb_cible` est en **hizb** (1–60, migration `0057`) ; C = `nb_hizb_cible × 8`. Le départ est D (position de début ci-dessus), plus `objectifs.nb_hizb_depart` : cette colonne (`0062`, défaut 0) était figée à la création de l'objectif, donc à 0 si le membre n'avait encore aucune position. Elle n'est plus lue depuis `0135`.
+
+- Atteint si `pos_fin − D ≥ C`. D null (aucune position) : `objectif_atteint` null. Le membre compte dans `fixes` mais pas dans `atteints`.
+- `season_member_stats.objectif_depart` reste en **hizb** : `floor(D / 8)`. Le calcul de `objectif_atteint` utilise D exact (`pos_debut`, en tumun).
+- `taux` null s'il n'y a aucun objectif.
+- `realisationMoyennePct` = moyenne, par objectif, de `100 × (pos_fin − D) / C`, chaque ratio borné à `[0, 100]`, arrondie au centième. Les objectifs sans position (D null) sont exclus de la moyenne. Null s'il n'y a aucun objectif avec position.
+- Snapshots déjà figés (saisons closes) : non recalculés, ils gardent l'ancien départ.
 
 Toute moyenne sans dénominateur est **null** dans le JSON, jamais 0. Les colonnes scalaires `avg_*_pct`, elles, stockent 0 quand le JSON est null (contrainte `NOT NULL`).
 

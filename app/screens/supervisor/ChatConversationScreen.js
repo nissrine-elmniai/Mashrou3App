@@ -11,8 +11,10 @@ import {
   StatusBar,
   Image,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSubmitLock } from "../../lib/useSubmitLock";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../constants/theme";
@@ -61,6 +63,8 @@ export default function ChatConversationScreen({ navigation, route }) {
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
+  /** Verrou synchrone : un seul envoi en cours (connexion lente). */
+  const { busy: sending, run: runSend } = useSubmitLock();
   const [conversation, setConversation] = useState({ otherId: null, seanceId: null });
   const [headerAvatarUrl, setHeaderAvatarUrl] = useState(contactAvatarUrl || null);
 
@@ -193,33 +197,34 @@ export default function ChatConversationScreen({ navigation, route }) {
     return unsubscribe;
   }, [authId, conversation.otherId]);
 
-  const handleSend = async () => {
-    const trimmed = inputText.trim();
-    if (!trimmed) return;
-    if (!conversation.otherId || !authId) return;
-    if (isMember && !conversation.seanceId) {
-      Alert.alert("تعذر الإرسال", "لا توجد حصة مرتبطة بالمشرف");
-      return;
-    }
-    setInputText("");
-    const res = await sendMessage({
-      recipientId: conversation.otherId,
-      seanceId: conversation.seanceId,
-      contenu: trimmed,
+  const handleSend = () =>
+    runSend(async () => {
+      const trimmed = inputText.trim();
+      if (!trimmed) return;
+      if (!conversation.otherId || !authId) return;
+      if (isMember && !conversation.seanceId) {
+        Alert.alert("تعذر الإرسال", "لا توجد حصة مرتبطة بالمشرف");
+        return;
+      }
+      setInputText("");
+      const res = await sendMessage({
+        recipientId: conversation.otherId,
+        seanceId: conversation.seanceId,
+        contenu: trimmed,
+      });
+      if (!res.ok) {
+        setInputText(trimmed);
+        Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
+        return;
+      }
+      if (res.message) {
+        setMessages((prev) =>
+          prev.some((m) => m.id === res.message.id)
+            ? prev
+            : [...prev, normalizeMessage(res.message, authId)]
+        );
+      }
     });
-    if (!res.ok) {
-      setInputText(trimmed);
-      Alert.alert("تعذر الإرسال", res.error || "حاول مرة أخرى");
-      return;
-    }
-    if (res.message) {
-      setMessages((prev) =>
-        prev.some((m) => m.id === res.message.id)
-          ? prev
-          : [...prev, normalizeMessage(res.message, authId)]
-      );
-    }
-  };
 
   const renderMessage = ({ item }) => {
     const isMine = item.sent;
@@ -298,8 +303,17 @@ export default function ChatConversationScreen({ navigation, route }) {
             textAlign={textAlignStart}
             onSubmitEditing={handleSend}
           />
-          <TouchableOpacity style={styles.sendBtn} onPress={handleSend} activeOpacity={0.8}>
-            <Ionicons name="send" size={20} color="white" style={styles.sendIcon} />
+          <TouchableOpacity
+            style={[styles.sendBtn, sending && styles.sendBtnBusy]}
+            onPress={handleSend}
+            disabled={sending}
+            activeOpacity={0.8}
+          >
+            {sending ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <Ionicons name="send" size={20} color="white" style={styles.sendIcon} />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -385,6 +399,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.regular,
   },
+  sendBtnBusy: { opacity: 0.7 },
   sendBtn: {
     width: 40,
     height: 40,

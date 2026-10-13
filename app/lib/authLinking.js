@@ -1,20 +1,6 @@
 import { supabase } from "./supabase";
 
 /**
- * redirectTo exigé par resetPasswordForEmail.
- * On privilégie le flux OTP dans l'app (le HTML sur *.supabase.co
- * est forcé en text/plain et ne s'affiche pas).
- */
-export function getPasswordResetRedirectUrl() {
-  return "mashrou3app://reset-password";
-}
-
-/** Deep link natif de l'app (utilisé par la page auth-redirect) */
-export function getPasswordResetAppDeepLink() {
-  return "mashrou3app://reset-password";
-}
-
-/**
  * Retour après confirmation du changement d'e-mail.
  * Chemin absent de la config linking : React Navigation ne navigue pas.
  */
@@ -57,14 +43,12 @@ function extractUrlParams(url) {
 }
 
 /**
- * Traite un lien de deep link entrant (récupération mot de passe).
- * Supporte :
- * - access_token + refresh_token (+ type=recovery)
- * - token_hash + type=recovery (verifyOtp)
- * - code (PKCE exchangeCodeForSession)
+ * Traite un lien entrant.
+ * Le changement d'e-mail est reconnu en premier et ne partage pas
+ * la suite (jetons, token_hash, code PKCE) avec un autre classement.
  */
 export async function handleAuthDeepLink(url) {
-  if (!url) return { isRecovery: false };
+  if (!url) return {};
 
   // Liens wrappés par Google / clients mail
   let resolved = String(url);
@@ -78,11 +62,10 @@ export async function handleAuthDeepLink(url) {
   const params = extractUrlParams(resolved);
   const type = params.type || "";
 
-  // Changement d'e-mail : ne pas tomber dans le flux recovery (type vide
-  // y est traité comme une récupération de mot de passe).
+  // Changement d'e-mail : traité seul, avant les autres jetons.
   if (isEmailChangeUrl(resolved, type)) {
     if (params.error_description || params.error) {
-      return { isRecovery: false, emailChangeError: true };
+      return { emailChangeError: true };
     }
     if (params.access_token) {
       const { error } = await supabase.auth.setSession({
@@ -90,57 +73,49 @@ export async function handleAuthDeepLink(url) {
         refresh_token: params.refresh_token || "",
       });
       return {
-        isRecovery: false,
         isEmailChange: !error,
         error: error?.message,
       };
     }
-    return { isRecovery: false };
+    return {};
   }
 
   if (params.error_description || params.error) {
     return {
-      isRecovery: false,
       error: decodeURIComponent(
         String(params.error_description || params.error).replace(/\+/g, " ")
       ),
     };
   }
 
-  const isRecoveryHint =
-    type === "recovery" ||
-    /reset-password/i.test(resolved) ||
-    /type=recovery/i.test(resolved);
+  // Lien de récupération de mot de passe : parcours retiré, aucune session.
+  if (type === "recovery") {
+    return {};
+  }
 
-  // 1) Tokens directs (hash ou query)
+  // Jetons directs (hash ou query), hors changement d'e-mail.
   if (params.access_token) {
     const { error } = await supabase.auth.setSession({
       access_token: params.access_token,
       refresh_token: params.refresh_token || "",
     });
-    return {
-      isRecovery: isRecoveryHint || type === "recovery" || !type,
-      error: error?.message,
-    };
+    return { error: error?.message };
   }
 
-  // 2) token_hash (flux verify)
-  if (params.token_hash && (type === "recovery" || !type)) {
+  // token_hash sans type (verifyOtp), hors changement d'e-mail.
+  if (params.token_hash && !type) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: params.token_hash,
       type: "recovery",
     });
-    return { isRecovery: true, error: error?.message };
+    return { error: error?.message };
   }
 
-  // 3) PKCE code
+  // Code PKCE.
   if (params.code) {
     const { error } = await supabase.auth.exchangeCodeForSession(params.code);
-    return {
-      isRecovery: isRecoveryHint,
-      error: error?.message,
-    };
+    return { error: error?.message };
   }
 
-  return { isRecovery: false };
+  return {};
 }

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -21,10 +21,14 @@ import {
   isPasswordTooShort,
   passwordTooShortMessage,
 } from "../constants/security";
+import {
+  abandonPasswordRecovery,
+  updatePasswordAfterRecovery,
+  verifyPasswordResetOtp,
+} from "../lib/auth";
 
 export default function ForgotPasswordScreen({ navigation }) {
-  const { resetPassword, confirmPasswordReset, isSupabaseConfigured } =
-    useApp();
+  const { resetPassword, isSupabaseConfigured } = useApp();
   const [step, setStep] = useState("email"); // email | code
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -33,6 +37,16 @@ export default function ForgotPasswordScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Code déjà accepté : ne plus rappeler verifyOtp, seulement updateUser.
+  const [codeAccepted, setCodeAccepted] = useState(false);
+  const [samePassword, setSamePassword] = useState(false);
+
+  // Quitter l'écran avec une session de récupération ouverte : déconnexion.
+  useEffect(() => {
+    return () => {
+      abandonPasswordRecovery();
+    };
+  }, []);
 
   const handleSendCode = async () => {
     if (!email) {
@@ -71,8 +85,14 @@ export default function ForgotPasswordScreen({ navigation }) {
     navigation.navigate("Login");
   };
 
+  const leaveToLogin = async () => {
+    await abandonPasswordRecovery();
+    navigation.navigate("Login");
+  };
+
   const handleConfirmReset = async () => {
-    if (!otp.trim()) {
+    // Contrôles locaux : aucun appel Supabase si le formulaire est invalide.
+    if (!codeAccepted && !otp.trim()) {
       Alert.alert("خطأ", "أدخل رمز التحقق المرسل إلى بريدك");
       return;
     }
@@ -90,10 +110,23 @@ export default function ForgotPasswordScreen({ navigation }) {
     }
 
     setSubmitting(true);
-    const result = await confirmPasswordReset(email, otp, password);
+    setSamePassword(false);
+
+    if (!codeAccepted) {
+      const verified = await verifyPasswordResetOtp(email, otp);
+      if (!verified.ok) {
+        setSubmitting(false);
+        Alert.alert("خطأ", verified.error);
+        return;
+      }
+      setCodeAccepted(true);
+    }
+
+    const saved = await updatePasswordAfterRecovery(password);
     setSubmitting(false);
-    if (!result.ok) {
-      Alert.alert("خطأ", result.error);
+    if (!saved.ok) {
+      if (saved.reason === "same_password") setSamePassword(true);
+      Alert.alert("خطأ", saved.error);
       return;
     }
     Alert.alert("تم", "تم تحديث كلمة المرور. سجّل الدخول بكلمة المرور الجديدة.");
@@ -158,6 +191,7 @@ export default function ForgotPasswordScreen({ navigation }) {
                     onChangeText={setOtp}
                     keyboardType="number-pad"
                     maxLength={8}
+                    editable={!codeAccepted}
                     textAlign={textAlignStart}
                   />
                 </View>
@@ -280,7 +314,18 @@ export default function ForgotPasswordScreen({ navigation }) {
               </Text>
             </TouchableOpacity>
 
-            {isSupabaseConfigured && step === "code" && (
+            {isSupabaseConfigured && step === "code" && samePassword && (
+              <>
+                <Text style={styles.samePasswordText}>
+                  هذه هي كلمة المرور الحالية، يمكنك تسجيل الدخول بها
+                </Text>
+                <TouchableOpacity style={styles.backButton} onPress={leaveToLogin}>
+                  <Text style={styles.backButtonText}>تسجيل الدخول</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {isSupabaseConfigured && step === "code" && !codeAccepted && (
               <TouchableOpacity
                 style={styles.backButton}
                 onPress={() => {
@@ -288,16 +333,14 @@ export default function ForgotPasswordScreen({ navigation }) {
                   setOtp("");
                   setPassword("");
                   setConfirm("");
+                  setSamePassword(false);
                 }}
               >
                 <Text style={styles.backButtonText}>إعادة إرسال الرمز</Text>
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
+            <TouchableOpacity style={styles.backButton} onPress={leaveToLogin}>
               <Text style={styles.backButtonText}>العودة إلى تسجيل الدخول</Text>
             </TouchableOpacity>
           </View>
@@ -408,6 +451,14 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  samePasswordText: {
+    color: colors.muted,
+    fontSize: 14,
+    textAlign: "center",
+    writingDirection: "rtl",
+    lineHeight: 22,
+    marginBottom: 4,
   },
   backButton: { paddingVertical: 12, alignItems: "center" },
   backButtonText: {

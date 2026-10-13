@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
 import {
   hasEmailMarker,
@@ -531,6 +532,136 @@ export async function signOutAuth() {
   return { ok: true };
 }
 
+/**
+ * Session créée par verifyOtp (recovery) : tant qu'elle est ouverte,
+ * l'app ne doit pas basculer sur l'utilisateur connecté.
+ * La clé AsyncStorage survit à une fermeture forcée.
+ */
+const PASSWORD_RECOVERY_STORAGE_KEY = "@mashrou3/password_recovery";
+let passwordRecoveryActive = false;
+const passwordRecoveryListeners = new Set();
+
+async function writePasswordRecoveryMarker() {
+  try {
+    await AsyncStorage.setItem(PASSWORD_RECOVERY_STORAGE_KEY, "1");
+  } catch {
+    /* le drapeau mémoire couvre la session encore ouverte */
+  }
+}
+
+async function clearPasswordRecoveryMarker() {
+  try {
+    await AsyncStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY);
+  } catch {
+    /* le prochain démarrage réessaiera le signOut */
+  }
+}
+
+/**
+ * Efface la clé seulement si signOut n'a pas d'erreur et que getSession()
+ * ne voit plus de session locale. Hors ligne, la clé reste pour un nouvel essai.
+ * @returns {Promise<boolean>} true si la clé a été effacée
+ */
+async function signOutAndMaybeClearRecoveryMarker() {
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) return false;
+    const { data, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || data?.session) return false;
+    await clearPasswordRecoveryMarker();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Démarrage : une récupération interrompue ne doit pas restaurer l'utilisateur.
+ * signOut, puis effacement de la clé seulement si la session locale est vide.
+ * true = rester sur le login (la clé peut rester pour le prochain démarrage).
+ */
+export async function discardPersistedPasswordRecovery() {
+  let marked = false;
+  try {
+    marked = (await AsyncStorage.getItem(PASSWORD_RECOVERY_STORAGE_KEY)) != null;
+  } catch {
+    return false;
+  }
+  if (!marked) return false;
+  if (isSupabaseConfigured()) {
+    await signOutAndMaybeClearRecoveryMarker();
+  }
+  setPasswordRecoveryActive(false);
+  return true;
+}
+
+export function isPasswordRecoveryInProgress() {
+  return passwordRecoveryActive;
+}
+
+export function subscribePasswordRecovery(listener) {
+  passwordRecoveryListeners.add(listener);
+  return () => passwordRecoveryListeners.delete(listener);
+}
+
+function setPasswordRecoveryActive(active) {
+  if (passwordRecoveryActive === active) return;
+  passwordRecoveryActive = active;
+  passwordRecoveryListeners.forEach((listener) => listener(active));
+}
+
+/** signOut puis baisse du drapeau. Un second appel rejoint le premier. */
+let abandonTask = null;
+
+export function abandonPasswordRecovery() {
+  if (!passwordRecoveryActive) return Promise.resolve({ ok: true });
+  if (abandonTask) return abandonTask;
+  abandonTask = (async () => {
+    try {
+      await signOutAndMaybeClearRecoveryMarker();
+      return { ok: true };
+    } finally {
+      setPasswordRecoveryActive(false);
+      abandonTask = null;
+    }
+  })();
+  return abandonTask;
+}
+
+function passwordUpdateFailure(error) {
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "");
+  if (
+    code === "same_password" ||
+    /same password|should be different from the old password/i.test(msg)
+  ) {
+    return {
+      ok: false,
+      reason: "same_password",
+      error: "هذه هي كلمة المرور الحالية، يمكنك تسجيل الدخول بها",
+    };
+  }
+  if (code === "weak_password" || /weak password|known to be weak|pwned/i.test(msg)) {
+    return {
+      ok: false,
+      reason: "weak_password",
+      error: "كلمة المرور ضعيفة، اختر كلمة أطول",
+    };
+  }
+  if (isNetworkError(error)) {
+    return {
+      ok: false,
+      reason: "network",
+      error: mapSupabaseAuthError(error),
+    };
+  }
+  return {
+    ok: false,
+    reason: "save",
+    error: "تعذّر حفظ كلمة المرور، حاول مرة أخرى",
+  };
+}
+
 export async function requestPasswordReset(email) {
   const mail = String(email || "").trim().toLowerCase();
   if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
@@ -555,33 +686,76 @@ export async function requestPasswordReset(email) {
   return { ok: true };
 }
 
-/** Vérifie le code reçu par e-mail puis définit le nouveau mot de passe */
-export async function confirmPasswordResetWithOtp(email, token, newPassword) {
+/**
+ * Premier temps : vérifie le code une seule fois et ouvre la session de récupération.
+ * Le drapeau est levé avant verifyOtp et baissé si le code est refusé (pas de session).
+ */
+export async function verifyPasswordResetOtp(email, token) {
   const mail = String(email || "").trim().toLowerCase();
   const code = String(token || "").trim();
-  if (!mail) return { ok: false, error: "أدخل البريد الإلكتروني" };
-  if (!code) return { ok: false, error: "أدخل رمز التحقق" };
-  if (isPasswordTooShort(newPassword)) {
-    return { ok: false, error: passwordTooShortMessage() };
-  }
+  if (!mail) return { ok: false, reason: "email", error: "أدخل البريد الإلكتروني" };
+  if (!code) return { ok: false, reason: "otp", error: "أدخل رمز التحقق" };
 
-  const { error: verifyError } = await supabase.auth.verifyOtp({
-    email: mail,
-    token: code,
-    type: "recovery",
-  });
-  if (verifyError) {
-    return { ok: false, error: mapSupabaseAuthError(verifyError) };
+  setPasswordRecoveryActive(true);
+  await writePasswordRecoveryMarker();
+  try {
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: mail,
+      token: code,
+      type: "recovery",
+    });
+    if (verifyError) {
+      setPasswordRecoveryActive(false);
+      await clearPasswordRecoveryMarker();
+      if (isNetworkError(verifyError)) {
+        return {
+          ok: false,
+          reason: "network",
+          error: mapSupabaseAuthError(verifyError),
+        };
+      }
+      return {
+        ok: false,
+        reason: "otp",
+        error: "الرمز غير صحيح أو منتهي الصلاحية",
+      };
+    }
+    return { ok: true };
+  } catch (error) {
+    setPasswordRecoveryActive(false);
+    await clearPasswordRecoveryMarker();
+    if (isNetworkError(error)) {
+      return {
+        ok: false,
+        reason: "network",
+        error: mapSupabaseAuthError(error),
+      };
+    }
+    return {
+      ok: false,
+      reason: "otp",
+      error: "الرمز غير صحيح أو منتهي الصلاحية",
+    };
+  }
+}
+
+/**
+ * Second temps : enregistre le mot de passe. Relançable tant que la session
+ * de récupération est ouverte (le code n'est pas revérifié).
+ */
+export async function updatePasswordAfterRecovery(newPassword) {
+  if (isPasswordTooShort(newPassword)) {
+    return { ok: false, reason: "short", error: passwordTooShortMessage() };
   }
 
   const { error: updateError } = await supabase.auth.updateUser({
     password: newPassword,
   });
   if (updateError) {
-    return { ok: false, error: mapSupabaseAuthError(updateError) };
+    return passwordUpdateFailure(updateError);
   }
 
-  await supabase.auth.signOut();
+  await abandonPasswordRecovery();
   return { ok: true };
 }
 

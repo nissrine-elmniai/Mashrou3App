@@ -7,33 +7,31 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
 import {
   flushMemberProgressDelta,
-  scheduleMemberProgressDelta,
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
-import { getActiveSeason } from "../../lib/seasonScope";
 import { getMyActiveEnrollment } from "../../lib/membersApi";
-import { TUMUNS_PER_HIZB, hizbBreakdown } from "../../lib/tumun";
+import {
+  TUMUNS_PER_HIZB,
+  formatHizbCount,
+  formatTumunAmount,
+  formatUnsavedTumunDelta,
+} from "../../lib/tumun";
 import { isHifzProgram } from "../../lib/memberProgramsApi";
+import { useProgramTumunDraft } from "../../lib/useProgramTumunDraft";
 import { row as rtlRow, rtlText } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
   const routeProgram = route.params?.programme;
-  const {
-    getMemberPrograms,
-    adjustMemberProgramTumuns,
-    deleteMemberProgram,
-    seasons,
-  } = useApp();
+  const { getMemberPrograms, deleteMemberProgram } = useApp();
 
-  const activeSeasonIdRef = useRef(null);
-  activeSeasonIdRef.current = getActiveSeason(seasons)?.id ?? null;
   const [progressLocked, setProgressLocked] = useState(false);
 
   useEffect(() => {
@@ -91,31 +89,29 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     };
   }, [programFromContext, routeProgram]);
 
-  const { completed: hizbCompletes, remaining: hizbRestants } = hizbBreakdown(
-    programData.completedTumuns,
-    programData.nbHizb
-  );
+  // ± ثمن : écart local, enregistré seulement sur « حفظ » (une écriture).
+  const draft = useProgramTumunDraft(programFromContext ? programData : null, {
+    locked: progressLocked,
+  });
+  const shownTumuns = programFromContext
+    ? draft.predicted
+    : programData.completedTumuns;
+  const shownPct = programFromContext ? draft.predictedPct : programData.progression;
+  const remainingTumuns = Math.max(0, (programData.totalTumuns || 0) - shownTumuns);
+  const unsavedLabel = formatUnsavedTumunDelta(draft.pendingDelta);
 
-  const handleAdjustTumuns = async (delta) => {
-    if (!programData.id) return;
-    if (progressLocked && isHifzProgram(programData)) {
-      Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
-      return;
-    }
-    const result = await adjustMemberProgramTumuns(programData.id, delta);
-    if (!result.ok) {
-      Alert.alert("خطأ", result.error || "تعذر تحديث التقدم");
-      return;
-    }
-    if (result.unchanged) return;
-    if (isHifzProgram(result.program)) {
-      scheduleMemberProgressDelta({
-        delta,
-        saisonId: activeSeasonIdRef.current,
-        notes: result.program.title || programData.nom || null,
-      });
-    }
-  };
+  // Sortie (retour, navigation) avec un écart non enregistré.
+  const guardLeaveRef = useRef(draft.guardLeave);
+  guardLeaveRef.current = draft.guardLeave;
+  useEffect(
+    () =>
+      navigation.addListener("beforeRemove", (e) => {
+        if (draft.pendingRef.current === 0) return;
+        e.preventDefault();
+        guardLeaveRef.current(() => navigation.dispatch(e.data.action));
+      }),
+    [navigation, draft.pendingRef]
+  );
 
   useEffect(
     () => () => {
@@ -173,8 +169,6 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
     ? formatDate(dateFinObj)
     : "تاريخ غير محدد";
 
-  const atMin = programData.completedTumuns <= 0;
-  const atMax = programData.completedTumuns >= programData.totalTumuns;
   const hifzWriteLocked = progressLocked && isHifzProgram(programData);
 
   const handleDeleteProgramme = () => {
@@ -201,6 +195,8 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
           return;
         }
       }
+      // Programme supprimé : l'écart non enregistré n'a plus d'objet.
+      draft.discard();
       Alert.alert("✅ تم الحذف", "تم حذف البرنامج بنجاح", [
         { text: "رجوع", onPress: () => navigation.goBack() },
       ]);
@@ -235,7 +231,7 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               </View>
               <View style={styles.badgeYellow}>
                 <Text style={styles.badgeTextYellow}>
-                  {programData.nbHizb} أحزاب
+                  {formatHizbCount(programData.nbHizb)}
                 </Text>
               </View>
               <View style={styles.badgeGreen}>
@@ -247,14 +243,14 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
           </View>
 
           <StatCard
-            title="الأحزاب المكتملة"
-            value={hizbCompletes.toString()}
+            title="المحفوظ"
+            value={formatTumunAmount(shownTumuns)}
             icon="check-circle"
             color={colors.primary}
           />
           <StatCard
-            title="الأحزاب المتبقية"
-            value={hizbRestants.toString()}
+            title="المتبقي"
+            value={formatTumunAmount(remainingTumuns)}
             icon="clock-outline"
             color={colors.gold}
           />
@@ -328,9 +324,10 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
             <Text style={styles.currentProgressLabel}>التقدم الحالي</Text>
             <Text style={styles.tumunCountText}>
-              {programData.completedTumuns} / {programData.totalTumuns} ثمن
+              {formatTumunAmount(shownTumuns)} من{" "}
+              {formatTumunAmount(programData.totalTumuns)}
             </Text>
-            <Text style={styles.percentageText}>{programData.progression}%</Text>
+            <Text style={styles.percentageText}>{shownPct}%</Text>
             {hifzWriteLocked ? (
               <Text style={styles.subTitle}>{PROGRESS_LOCKED_MESSAGE}</Text>
             ) : null}
@@ -339,10 +336,10 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
               <TouchableOpacity
                 style={[
                   styles.stepperBtn,
-                  (hifzWriteLocked || atMin) && styles.stepperBtnDisabled,
+                  !draft.canDecrement && styles.stepperBtnDisabled,
                 ]}
-                onPress={() => handleAdjustTumuns(-1)}
-                disabled={hifzWriteLocked || atMin}
+                onPress={draft.decrement}
+                disabled={!draft.canDecrement}
                 activeOpacity={0.85}
               >
                 <Text style={styles.stepperBtnText}>−</Text>
@@ -350,30 +347,58 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
 
               <View style={styles.stepperValueWrap}>
                 <Text style={styles.stepperValue}>
-                  {programData.completedTumuns}
+                  {formatTumunAmount(shownTumuns)}
                 </Text>
-                <Text style={styles.stepperHint}>ثمن مكتمل</Text>
+                <Text style={styles.stepperHint}>مكتمل</Text>
               </View>
 
               <TouchableOpacity
                 style={[
                   styles.stepperBtn,
-                  (hifzWriteLocked || atMax) && styles.stepperBtnDisabled,
+                  !draft.canIncrement && styles.stepperBtnDisabled,
                 ]}
-                onPress={() => handleAdjustTumuns(1)}
-                disabled={hifzWriteLocked || atMax}
+                onPress={draft.increment}
+                disabled={!draft.canIncrement}
                 activeOpacity={0.85}
               >
                 <Text style={styles.stepperBtnText}>+</Text>
               </TouchableOpacity>
             </View>
 
+            {unsavedLabel ? (
+              <>
+                <Text style={styles.unsavedText}>{unsavedLabel}</Text>
+                <View style={styles.draftActions}>
+                  <TouchableOpacity
+                    style={[styles.draftCancelBtn, draft.saving && styles.stepperBtnDisabled]}
+                    onPress={draft.confirmDiscard}
+                    disabled={draft.saving}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.draftCancelText}>إلغاء</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.draftSaveBtn, draft.saving && styles.draftSaveBtnBusy]}
+                    onPress={draft.confirmSave}
+                    disabled={draft.saving}
+                    activeOpacity={0.85}
+                  >
+                    {draft.saving ? (
+                      <ActivityIndicator color="white" />
+                    ) : (
+                      <Text style={styles.draftSaveText}>حفظ</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
             <View style={[styles.progressBarFull, styles.progressBarRtl]}>
               <View
                 style={[
                   styles.progressBarFill,
                   styles.progressBarFillRtl,
-                  { width: `${programData.progression}%` },
+                  { width: `${shownPct}%` },
                 ]}
               />
             </View>
@@ -600,8 +625,8 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   tumunCountText: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 20,
+    fontWeight: "600",
     color: colors.primary,
     marginVertical: 4,
     ...rtlText,
@@ -643,9 +668,51 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   stepperValue: {
-    fontSize: 32,
-    fontWeight: "bold",
+    fontSize: 18,
+    fontWeight: "600",
+    color: colors.text,
+    textAlign: "center",
+  },
+  unsavedText: {
+    fontSize: 13,
+    color: colors.orange,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  draftActions: {
+    flexDirection: rtlRow,
+    gap: 10,
+    marginBottom: 16,
+  },
+  draftSaveBtn: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  draftSaveBtnBusy: { opacity: 0.7 },
+  draftSaveText: {
+    color: "white",
+    fontWeight: "700",
+    fontSize: 15,
+    ...rtlText,
+  },
+  draftCancelBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    alignItems: "center",
+    backgroundColor: colors.card,
+  },
+  draftCancelText: {
     color: colors.primary,
+    fontWeight: "700",
+    fontSize: 15,
+    ...rtlText,
   },
   stepperHint: {
     fontSize: 12,

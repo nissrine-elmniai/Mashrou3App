@@ -35,26 +35,30 @@ import {
   computeProgressMetrics,
   flushMemberProgressDelta,
   getMemberDeclaredHizbCount,
-  getMemberHizbCompletesBeforeDate,
   getMemberSeasonObjectif,
   getMyProgress,
   getMyCurrentProgressPosition,
+  getMySeasonProgress,
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
+import { useSubmitLock } from "../../lib/useSubmitLock";
 import {
   getMyObjectif,
   parseObjectifInput,
   setMyObjectif,
   OBJECTIF_LOCKED_MESSAGE,
+  OBJECTIF_POSITION_REQUIRED_MESSAGE,
 } from "../../lib/objectifsApi";
 import {
   TOTAL_HIZB,
-  TUMUN_UI_MAX,
-  TUMUN_UI_MIN,
+  TUMUNS_PER_HIZB,
+  TUMUN_COURANT_LABEL,
+  clampMemberTumuns,
   formatHizbCount,
-  tumunStoredToUi,
-  tumunUiToStored,
+  formatMemberPosition,
+  memberTumunsFromPosition,
+  parseTumunCourantInput,
 } from "../../lib/tumun";
 
 function parseHizbInput(raw) {
@@ -69,26 +73,19 @@ function parseHizbInput(raw) {
   return { ok: true, value: n };
 }
 
-function parseTumunInput(raw) {
-  const trimmed = String(raw ?? "").trim();
-  if (trimmed === "") {
-    return { ok: true, value: TUMUN_UI_MAX };
-  }
-  const n = Number(trimmed);
-  if (!Number.isInteger(n) || n < TUMUN_UI_MIN || n > TUMUN_UI_MAX) {
-    return { ok: false, error: "الثمن الحالي يجب أن يكون بين 1 و 8" };
-  }
-  return { ok: true, value: n };
+/** 60 حزب : الثمن est bloqué à 0. */
+function isKhatmInput(raw) {
+  return Number(String(raw ?? "").trim()) === TOTAL_HIZB;
 }
 
-/** nb_hizb_completes de la dernière ligne progression, 0 si aucune. */
-function departFromEntries(list) {
-  const latest = latestProgressionRow(list);
-  if (!latest) return 0;
-  const metrics = computeProgressMetrics(latest);
-  const n = Number(metrics?.nbHizbCompletes ?? latest.nb_hizb_completes ?? 0);
-  if (!Number.isInteger(n) || n < 0) return 0;
-  return Math.min(n, TOTAL_HIZB);
+/** Titre de carte + trait jaune 32 × 3 (même trait que les titres des statistiques). */
+function CardTitle({ title }) {
+  return (
+    <View style={styles.cardTitleWrap}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <View style={styles.cardTitleLine} />
+    </View>
+  );
 }
 
 /**
@@ -115,20 +112,26 @@ export default function MemberProgressScreen({ navigation }) {
   const [hizbSuggestedFromInscription, setHizbSuggestedFromInscription] =
     useState(false);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [savingObjectif, setSavingObjectif] = useState(false);
+  // Verrous synchrones contre le double appui (connexion lente).
+  const { busy: saving, run: runSavePosition } = useSubmitLock();
+  const { busy: savingObjectif, run: runSaveObjectif } = useSubmitLock();
   const [entries, setEntries] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [historyError, setHistoryError] = useState(null);
   const [progressLocked, setProgressLocked] = useState(false);
-  /** Ligne objectifs déjà persistée (départ figé). Null = pas encore créée. */
-  const [objectifRow, setObjectifRow] = useState(null);
-  /** Position au début de saison ; null = repli sur la position du jour. */
-  const [seasonStartDepart, setSeasonStartDepart] = useState(null);
+  /** Départ / gain calculés par le serveur (get_member_season_progress). */
+  const [seasonProgress, setSeasonProgress] = useState(null);
+  /** Dernière position enregistrée (résumé de la carte 1). Null = aucune. */
+  const [savedMetrics, setSavedMetrics] = useState(null);
 
   const activeSeason = getActiveRegularSeason(seasons);
   const saisonId = activeSeason?.id ?? null;
   const authId = currentUser?.authId || null;
+
+  const reloadSeasonProgress = useCallback(async () => {
+    const res = await getMySeasonProgress();
+    setSeasonProgress(res.ok ? res.progress : null);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,7 +145,7 @@ export default function MemberProgressScreen({ navigation }) {
         ? await resolveMemberSeasonAlertCutoff(authId, activeSaisonId)
         : { ok: true, sinceIso: null };
     const sinceIso = cutoffRes.sinceIso || startIso || null;
-    const [res, posRes, objRes, departRes, enrollRes] = await Promise.all([
+    const [res, posRes, objRes, progressRes, enrollRes] = await Promise.all([
       getMyProgress({
         since: sinceIso || undefined,
         saisonId: activeSaisonId,
@@ -151,29 +154,20 @@ export default function MemberProgressScreen({ navigation }) {
       activeSaisonId
         ? getMyObjectif(activeSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
-      authId && startIso
-        ? getMemberHizbCompletesBeforeDate(authId, startIso)
-        : Promise.resolve(null),
+      getMySeasonProgress(),
       getMyActiveEnrollment(),
     ]);
-    if (departRes && departRes.ok) {
-      setSeasonStartDepart(departRes.nbHizbCompletes);
-    } else {
-      setSeasonStartDepart(null);
-    }
+    setSeasonProgress(progressRes.ok ? progressRes.progress : null);
     if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
     setLoading(false);
     // Ligne objectifs existante prioritaire ; sinon suggestion d'inscription, sans écriture
     if (!objRes.ok) {
       setGoalHizb("");
       setGoalSuggestedFromInscription(false);
-      setObjectifRow(null);
     } else if (objRes.objectif?.nbHizbCible != null) {
       setGoalHizb(String(objRes.objectif.nbHizbCible));
       setGoalSuggestedFromInscription(false);
-      setObjectifRow(objRes.objectif);
     } else if (activeSaisonId && authId) {
-      setObjectifRow(null);
       const declared = await getMemberSeasonObjectif(authId, activeSaisonId);
       const parsed = declared.ok
         ? parseObjectifInput(declared.objectif)
@@ -188,7 +182,6 @@ export default function MemberProgressScreen({ navigation }) {
     } else {
       setGoalHizb("");
       setGoalSuggestedFromInscription(false);
-      setObjectifRow(null);
     }
     if (!res.ok) {
       setEntries([]);
@@ -200,24 +193,27 @@ export default function MemberProgressScreen({ navigation }) {
     if (!posRes.ok) {
       setLoadError(posRes.error);
       setHizbSuggestedFromInscription(false);
+      setSavedMetrics(null);
       return;
     }
     setLoadError(null);
     const latest = posRes.hasData ? posRes.entry : null;
+    setSavedMetrics(latest ? computeProgressMetrics(latest) : null);
     if (latest) {
       // Position réelle : jamais de suggestion inférieure à la progression
       const metrics = computeProgressMetrics(latest);
       setHizb(String(metrics?.nbHizbCompletes ?? latest.nb_hizb_completes ?? ""));
+      // Valeur stockée = valeur affichée (0–7), sans conversion.
       const tumunVal =
         latest.tumun_courant != null && latest.tumun_courant !== ""
           ? Number(latest.tumun_courant)
           : 0;
-      setTumun(String(tumunStoredToUi(Number.isFinite(tumunVal) ? tumunVal : 0)));
+      setTumun(String(Number.isFinite(tumunVal) ? tumunVal : 0));
       setNotes("");
       setHizbSuggestedFromInscription(false);
     } else {
-      // Aucune ligne progression : suggestion hizbCount, الثمن inchangé (vide)
-      setTumun("");
+      // Aucune ligne progression : suggestion حزب = hizbCount, ثمن = 0
+      setTumun("0");
       setNotes("");
       if (activeSaisonId && authId) {
         const declared = await getMemberDeclaredHizbCount(
@@ -248,7 +244,9 @@ export default function MemberProgressScreen({ navigation }) {
     }, [load])
   );
 
-  const handleSave = async () => {
+  const handleSave = () => runSavePosition(savePosition);
+
+  const savePosition = async () => {
     if (progressLocked) {
       Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
       return;
@@ -258,37 +256,49 @@ export default function MemberProgressScreen({ navigation }) {
       Alert.alert("تنبيه", hizbRes.error);
       return;
     }
-    const tumunRes = parseTumunInput(tumun);
+    // 60 حزب : ثمن bloqué à 0, quelle que soit la valeur du champ.
+    const tumunRes =
+      hizbRes.value === TOTAL_HIZB
+        ? { ok: true, value: 0 }
+        : parseTumunCourantInput(tumun);
     if (!tumunRes.ok) {
       Alert.alert("تنبيه", tumunRes.error);
       return;
     }
-    if (hizbRes.value === TOTAL_HIZB && tumunRes.value !== TUMUN_UI_MAX) {
-      Alert.alert("تنبيه", "عند إكمال 60 حزباً يكون الثمن 8");
-      return;
-    }
 
-    setSaving(true);
     const result = await addProgressEntry({
       nbHizbCompletes: hizbRes.value,
-      tumunCourant: tumunUiToStored(tumunRes.value),
+      tumunCourant: tumunRes.value,
       saisonId: getActiveSeason(seasons)?.id ?? null,
       notes: String(notes || "").trim() || null,
     });
-    setSaving(false);
     if (!result.ok) {
       Alert.alert("تنبيه", result.error || "تعذر حفظ التقدم");
       return;
     }
+    await reloadSeasonProgress();
     setHizbSuggestedFromInscription(false);
     Alert.alert("تم", "تم حفظ موضعك في القرآن", [
       { text: "حسناً", onPress: () => navigation.goBack() },
     ]);
   };
 
-  const handleSaveObjectif = async () => {
+  /**
+   * Départ de saison inconnu (aucune position enregistrée ; la suggestion
+   * d'inscription ne compte pas) : le serveur refuse l'objectif (0137).
+   */
+  const needsPosition = seasonProgress?.depart == null;
+  const objectifDisabled = savingObjectif || progressLocked || needsPosition;
+
+  const handleSaveObjectif = () => runSaveObjectif(saveObjectif);
+
+  const saveObjectif = async () => {
     if (progressLocked) {
       Alert.alert("تنبيه", OBJECTIF_LOCKED_MESSAGE);
+      return;
+    }
+    if (needsPosition) {
+      Alert.alert("تنبيه", OBJECTIF_POSITION_REQUIRED_MESSAGE);
       return;
     }
     if (!saisonId) return;
@@ -297,44 +307,36 @@ export default function MemberProgressScreen({ navigation }) {
       Alert.alert("تنبيه", parsed.error);
       return;
     }
-    setSavingObjectif(true);
-    // Départ figé à la création uniquement ; l'API ignore aussi le 3e argument si la ligne existe.
-    const isCreate = !objectifRow;
-    let nbHizbDepart;
-    if (isCreate) {
-      const startIso = seasonStartDateIso(getActiveRegularSeason(seasons));
-      if (startIso && authId) {
-        const before = await getMemberHizbCompletesBeforeDate(authId, startIso);
-        nbHizbDepart = before.ok
-          ? before.nbHizbCompletes
-          : departFromEntries(entries);
-      } else {
-        // date_debut absente / illisible : même repli que l'ancien comportement
-        nbHizbDepart = departFromEntries(entries);
-      }
-    }
-    const result = await setMyObjectif(saisonId, parsed.value, nbHizbDepart);
-    setSavingObjectif(false);
+    // Le départ n'est plus envoyé : le serveur le calcule (0135).
+    const result = await setMyObjectif(saisonId, parsed.value);
     if (!result.ok) {
+      // Refus serveur (ex. 0137 sur un état local périmé) : message tel quel.
       Alert.alert("تنبيه", result.error || "تعذر حفظ الهدف");
       return;
     }
+    await reloadSeasonProgress();
     setGoalSuggestedFromInscription(false);
-    setObjectifRow(result.objectif || objectifRow);
     Alert.alert("تم", "تم حفظ هدف الموسم");
   };
 
-  const objectifMeaning = useMemo(() => {
+  /**
+   * « بداية الموسم D + الهدف C = نهاية الموسم F ». D vient de la RPC (أثمان),
+   * C = valeur saisie (suit la frappe), F = least(480, D + C × 8).
+   * C invalide → « — » pour C et F.
+   */
+  const objectifEquation = useMemo(() => {
+    const depart = seasonProgress?.depart;
+    if (depart == null) return null;
     const parsed = parseObjectifInput(goalHizb);
-    if (!parsed.ok) return null;
-    const depart = objectifRow
-      ? Number(objectifRow.nbHizbDepart) || 0
-      : seasonStartDepart != null
-        ? seasonStartDepart
-        : departFromEntries(entries);
-    const cibleFinale = depart + parsed.value;
-    return `موضعك في بداية الموسم ${formatHizbCount(depart)} + الهدف ${formatHizbCount(parsed.value)} = ${formatHizbCount(cibleFinale)} في نهاية الموسم`;
-  }, [goalHizb, objectifRow, entries, seasonStartDepart]);
+    const fin = parsed.ok
+      ? clampMemberTumuns(depart + parsed.value * TUMUNS_PER_HIZB)
+      : null;
+    const cible = parsed.ok ? formatHizbCount(parsed.value) : "—";
+    const finLabel = fin != null ? formatMemberPosition(fin) : "—";
+    return `بداية الموسم ${formatMemberPosition(depart)} + الهدف ${cible} = نهاية الموسم ${finLabel}`;
+  }, [goalHizb, seasonProgress]);
+
+  const tumunLocked = isKhatmInput(hizb);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -355,9 +357,6 @@ export default function MemberProgressScreen({ navigation }) {
             </TouchableOpacity>
             <View style={styles.headerTextWrap}>
               <Text style={styles.headerTitle}>تسجيل التقدم</Text>
-              <Text style={styles.headerSubtitle}>
-                موضعك في الحفظ لهذا الموسم
-              </Text>
             </View>
             <Ionicons name="trending-up" size={22} color="#fff" />
           </View>
@@ -379,36 +378,40 @@ export default function MemberProgressScreen({ navigation }) {
             <Text style={styles.errorText}>{loadError}</Text>
           ) : (
             <View style={[styles.card, shadows.card]}>
-              <Text style={styles.lead}>
-                هذا مقدار حفظك الكامل في القرآن الكريم، مستقل عن برامج الحفظ
-                والمراجعة. يمكنك تصحيحه في أي وقت.
-              </Text>
-              <View style={styles.fieldsRow}>
-                <View style={styles.fieldCol}>
-                  <Text style={styles.fieldLabel}>الأحزاب المكتملة (0–60)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={hizb}
-                    onChangeText={setHizb}
-                    keyboardType="number-pad"
-                    placeholder="0"
-                    placeholderTextColor={colors.placeholder}
-                    textAlign={textAlignStart}
-                  />
+              <CardTitle title="مقدار حفظي" />
+              {savedMetrics ? (
+                <View style={styles.summary}>
+                  <Text style={styles.summaryValue}>
+                    {formatMemberPosition(savedMetrics.tumunTotal)}
+                  </Text>
+                  <Text style={styles.summaryPct}>
+                    {`${savedMetrics.globalPct}٪ من القرآن (يمكنك تصحيحه في أي وقت)`}
+                  </Text>
                 </View>
-                <View style={styles.fieldCol}>
-                  <Text style={styles.fieldLabel}>الثمن الحالي (1–8)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={tumun}
-                    onChangeText={setTumun}
-                    keyboardType="number-pad"
-                    placeholder="8"
-                    placeholderTextColor={colors.placeholder}
-                    textAlign={textAlignStart}
-                  />
-                </View>
-              </View>
+              ) : null}
+
+              <Text style={styles.fieldLabel}>عدد الأحزاب المكتملة (0–60)</Text>
+              <TextInput
+                style={styles.input}
+                value={hizb}
+                onChangeText={setHizb}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.placeholder}
+                textAlign={textAlignStart}
+              />
+              <Text style={styles.fieldLabel}>{TUMUN_COURANT_LABEL}</Text>
+              <TextInput
+                style={styles.input}
+                value={tumunLocked ? "0" : tumun}
+                onChangeText={setTumun}
+                editable={!tumunLocked}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.placeholder}
+                textAlign={textAlignStart}
+              />
+              {/* Vrai seulement sans ligne progression (load) ; remis à false après « حفظ الموضع ». */}
               {hizbSuggestedFromInscription ? (
                 <Text style={styles.hizbSuggestHint}>
                   قيمة مقترحة من أحزابك المحفوظة عند التسجيل — لم تُحفظ بعد
@@ -420,9 +423,8 @@ export default function MemberProgressScreen({ navigation }) {
                 style={[styles.input, styles.notesInput]}
                 value={notes}
                 onChangeText={setNotes}
-                placeholder="مثال: وصلت إلى سورة الكهف"
-                placeholderTextColor={colors.placeholder}
                 textAlign={textAlignStart}
+                numberOfLines={2}
                 multiline
               />
 
@@ -448,23 +450,32 @@ export default function MemberProgressScreen({ navigation }) {
             </View>
           )}
 
-          {!loading && saisonId ? (
+          {!loading && saisonId && needsPosition ? (
+            // Départ inconnu : carte grisée, une seule ligne (0137 refuserait l'objectif).
+            <View style={[styles.card, shadows.card, styles.cardMuted]}>
+              <CardTitle title="هدفي لهذا الموسم" />
+              <Text style={styles.lead}>احفظ موضعك أولاً</Text>
+            </View>
+          ) : null}
+
+          {!loading && saisonId && !needsPosition ? (
             <View style={[styles.card, shadows.card]}>
-              <Text style={styles.historyTitle}>هدف الموسم</Text>
-              <Text style={styles.objectifHint}>
-                عدد الأحزاب الإضافية التي تطمح لحفظها خلال هذا الموسم (1 إلى 60).
-              </Text>
-              {goalSuggestedFromInscription ? (
-                <Text style={styles.objectifSuggestHint}>
-                  قيمة مقترحة من استمارتك عند التسجيل — لم تُحفظ بعد كهدف
-                  للموسم.
-                </Text>
-              ) : null}
+              <CardTitle title="هدفي لهذا الموسم" />
               {progressLocked ? (
                 <Text style={styles.objectifSuggestHint}>
                   {OBJECTIF_LOCKED_MESSAGE}
                 </Text>
               ) : null}
+              <View style={styles.goalLabelRow}>
+                <Text style={styles.fieldLabelInline}>
+                  عدد الأحزاب الإضافية (1–60)
+                </Text>
+                {goalSuggestedFromInscription ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>مقترح</Text>
+                  </View>
+                ) : null}
+              </View>
               <TextInput
                 style={styles.input}
                 value={goalHizb}
@@ -475,19 +486,21 @@ export default function MemberProgressScreen({ navigation }) {
                 textAlign={textAlignStart}
                 editable={!progressLocked}
               />
-              {objectifMeaning ? (
-                <Text style={styles.objectifMeaning}>{objectifMeaning}</Text>
+              {objectifEquation ? (
+                <Text
+                  style={styles.objectifEquation}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {objectifEquation}
+                </Text>
               ) : null}
               <TouchableOpacity
-                style={[
-                  styles.saveBtn,
-                  (savingObjectif || progressLocked) && styles.saveBtnDisabled,
-                ]}
-                onPress={
-                  savingObjectif || progressLocked ? undefined : handleSaveObjectif
-                }
+                style={[styles.saveBtn, objectifDisabled && styles.saveBtnDisabled]}
+                onPress={objectifDisabled ? undefined : handleSaveObjectif}
                 activeOpacity={0.85}
-                disabled={savingObjectif || progressLocked}
+                disabled={objectifDisabled}
               >
                 {savingObjectif ? (
                   <ActivityIndicator color="white" />
@@ -517,8 +530,12 @@ export default function MemberProgressScreen({ navigation }) {
                   >
                     <View style={styles.historyMain}>
                       <Text style={styles.historyBody}>
-                        {formatHizbCount(metrics?.nbHizbCompletes ?? 0)}
-                        {` · الثمن ${tumunStoredToUi(entry.tumun_courant)}`}
+                        {formatMemberPosition(
+                          memberTumunsFromPosition(
+                            metrics?.nbHizbCompletes,
+                            entry.tumun_courant
+                          )
+                        )}
                         {metrics?.globalPct != null
                           ? ` · ${metrics.globalPct}%`
                           : ""}
@@ -552,8 +569,7 @@ const styles = StyleSheet.create({
   header: {
     borderRadius: radii.lg,
     overflow: "hidden",
-    paddingTop: 16,
-    paddingBottom: 18,
+    paddingVertical: 12,
     paddingHorizontal: 14,
   },
   headerRow: {
@@ -577,19 +593,47 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     ...rtlText,
   },
-  headerSubtitle: {
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 12,
-    marginTop: 4,
-    fontFamily: fonts.regular,
-    ...rtlText,
-  },
   content: { padding: 16, paddingBottom: 40, gap: 12 },
-  lead: {
-    fontSize: 14,
+  cardTitleWrap: {
+    alignItems: alignEdge,
+    marginBottom: 12,
+  },
+  cardTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: colors.text,
+    ...rtlTextBold,
+  },
+  cardTitleLine: {
+    width: 32,
+    height: 3,
+    marginTop: 4,
+    borderRadius: 2,
+    backgroundColor: colors.highlight,
+  },
+  cardMuted: { opacity: 0.6 },
+  summary: {
+    alignItems: alignEdge,
+    marginBottom: 10,
+  },
+  summaryValue: {
+    fontSize: 22,
+    color: colors.primary,
+    fontFamily: fonts.bold,
+    ...rtlTextBold,
+  },
+  summaryPct: {
+    fontSize: 13,
     color: colors.muted,
     fontFamily: fonts.regular,
-    lineHeight: 22,
+    marginTop: 2,
+    ...rtlText,
+  },
+  lead: {
+    fontSize: 13,
+    color: colors.muted,
+    fontFamily: fonts.regular,
+    lineHeight: 20,
     marginBottom: 12,
     ...rtlText,
   },
@@ -606,18 +650,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderGreen,
   },
-  fieldsRow: {
-    flexDirection: rtlRow,
-    alignItems: "flex-start",
-    gap: 12,
-    marginBottom: 8,
-  },
-  fieldCol: { flex: 1, minWidth: 0 },
   fieldLabel: {
     fontSize: 13,
     fontFamily: fonts.regular,
     color: colors.muted,
     marginBottom: 8,
+    ...rtlText,
+  },
+  goalLabelRow: {
+    flexDirection: rtlRow,
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  fieldLabelInline: {
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    color: colors.muted,
+    ...rtlText,
+  },
+  badge: {
+    backgroundColor: colors.goldSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  badgeText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontFamily: fonts.semiBold,
+    ...rtlText,
+  },
+  objectifEquation: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontFamily: fonts.regular,
+    marginTop: -4,
+    marginBottom: 12,
     ...rtlText,
   },
   input: {
@@ -634,14 +703,14 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   notesInput: {
-    minHeight: 88,
+    minHeight: 56,
     textAlignVertical: "top",
     fontFamily: fonts.regular,
   },
   saveBtn: {
     backgroundColor: colors.primary,
     borderRadius: radii.md,
-    paddingVertical: 12,
+    paddingVertical: 9,
     paddingHorizontal: 16,
     alignItems: "center",
   },
@@ -658,23 +727,6 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: 8,
     ...rtlTextBold,
-  },
-  objectifHint: {
-    fontSize: 13,
-    color: colors.muted,
-    fontFamily: fonts.regular,
-    marginBottom: 12,
-    lineHeight: 20,
-    ...rtlText,
-  },
-  objectifMeaning: {
-    fontSize: 13,
-    color: colors.text,
-    fontFamily: fonts.regular,
-    marginTop: -4,
-    marginBottom: 12,
-    lineHeight: 20,
-    ...rtlText,
   },
   objectifSuggestHint: {
     fontSize: 12,

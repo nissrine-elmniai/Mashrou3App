@@ -1,7 +1,28 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
 import { TEST_TYPE_LABELS, casablancaTodayIso, formatTestTime, getTestDisplayStatus } from "../constants/tests";
+import { newUuid } from "./messagesApi";
 
 export { TEST_TYPE_LABELS };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Id d'un nouveau test, généré une fois à l'ouverture du formulaire : un
+ * nouvel envoi du même formulaire vise la même ligne tests (23505 = déjà créé).
+ */
+export function newTestId() {
+  return newUuid();
+}
+
+/** 23505 sur la clé primaire de tests pour cet id précis. */
+function isDuplicateTestId(error, testId) {
+  if (!error || !testId) return false;
+  const isUnique =
+    error.code === "23505" || /duplicate key|23505/i.test(error.message || "");
+  if (!isUnique) return false;
+  const text = `${error.message || ""} ${error.details || ""}`;
+  return text.includes(testId) || /tests_pkey/i.test(text);
+}
 
 const SUPABASE_TIMEOUT_MS = 15000;
 
@@ -365,13 +386,104 @@ async function listMissingInviteeIds(testId, saisonId) {
   return { ok: true, ids: eligible.ids.filter((id) => !invited.has(id)) };
 }
 
+/** Échec de la suppression de secours : le test existe peut-être encore. */
+const CREATE_TEST_INCOMPLETE_MESSAGE = "تعذّر إكمال إنشاء الاختبار، أعد المحاولة";
+
+function isUniqueViolation(error) {
+  return error?.code === "23505" || /duplicate key|23505/i.test(error?.message || "");
+}
+
+/** Insère les dates proposées du formulaire. @returns {{ ok: true } | { ok: false, error }} */
+async function insertTestDates(testId, proposedDates) {
+  const { error } = await withTimeout(
+    supabase.from("test_dates").insert(
+      proposedDates.map((slot) => ({
+        test_id: testId,
+        date_proposee: slot.date,
+        heure_proposee: slot.heure,
+      }))
+    ),
+    SUPABASE_TIMEOUT_MS,
+    "حفظ تواريخ الاختبار"
+  );
+  if (!error) return { ok: true };
+  if (isUniqueViolation(error)) {
+    return { ok: false, error: "هذا التاريخ مضاف مسبقاً" };
+  }
+  return { ok: false, error: mapTableError(error, "test_dates") };
+}
+
+/**
+ * Invite tous les éligibles de la saison. Upsert onConflict (test_id, membre_id)
+ * avec ignoreDuplicates (ON CONFLICT DO NOTHING) : une invitation déjà présente
+ * n'est pas réinsérée, donc trg_test_invitation_announce (AFTER INSERT, 0094)
+ * ne se redéclenche pas pour elle.
+ * @returns {{ ok: true, inserted: object[] } | { ok: false, error, stage }}
+ *   stage : "eligibles" (lecture) ou "invitations" (écriture).
+ */
+async function inviteEligibleMembers(testId, seasonId) {
+  const eligible = await getEligibleMemberIds(seasonId);
+  if (!eligible.ok) {
+    return { ok: false, error: eligible.error, stage: "eligibles" };
+  }
+  if (eligible.ids.length === 0) {
+    return { ok: true, inserted: [] };
+  }
+  const { data, error } = await withTimeout(
+    supabase
+      .from("test_invitations")
+      .upsert(
+        eligible.ids.map((membre_id) => ({
+          test_id: testId,
+          membre_id,
+          statut: "invite",
+        })),
+        { onConflict: "test_id,membre_id", ignoreDuplicates: true }
+      )
+      .select("*"),
+    SUPABASE_TIMEOUT_MS,
+    "إرسال الدعوات"
+  );
+  if (error) {
+    return {
+      ok: false,
+      error: mapTableError(error, "test_invitations"),
+      stage: "invitations",
+    };
+  }
+  return { ok: true, inserted: data || [] };
+}
+
+/**
+ * Suppression de secours d'un test à moitié créé (cascade vers test_dates et
+ * test_invitations). `.select("id")` : une suppression filtrée par RLS ne
+ * renvoie pas d'erreur, seulement 0 ligne ; elle compte comme un échec.
+ * @returns {Promise<boolean>} true si la ligne a bien été supprimée.
+ */
+async function rollbackTest(testId) {
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from("tests").delete().eq("id", testId).select("id"),
+      SUPABASE_TIMEOUT_MS,
+      "إلغاء الاختبار"
+    );
+    return !error && Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * (Admin) Crée un test de saison puis invite tous les membres acceptés
  * dans une séance de cette saison. saisonId est obligatoire.
- * @param {object} payload { saisonId, titre, type, quranQuantity?, dates: { date, heure }[] }
- * @returns { ok, test?, invitations?, invitedCount? }
+ * `id` (optionnel, UUID de newTestId) : envoyé à l'insert. Si la ligne existe
+ * déjà (23505 sur cet id : envoi répété), le test est complété (dates si
+ * absentes, invitations manquantes) au lieu d'être recréé : voir resumeTest.
+ * @param {object} payload { id?, saisonId, titre, type, quranQuantity?, dates: { date, heure }[] }
+ * @returns { ok, test?, invitations?, invitedCount?, alreadyCreated? }
  */
 export async function createTest({
+  id = null,
   saisonId,
   titre = null,
   type = "hifz",
@@ -400,7 +512,9 @@ export async function createTest({
     return { ok: false, error: "يجب تسجيل الدخول" };
   }
 
+  const testId = id && UUID_RE.test(String(id)) ? String(id) : null;
   const row = {
+    ...(testId ? { id: testId } : {}),
     titre: title,
     type: testType,
     saison_id: seasonId,
@@ -415,62 +529,101 @@ export async function createTest({
       "إنشاء الاختبار"
     );
     if (error) {
+      if (isDuplicateTestId(error, testId)) {
+        // await : un délai dépassé pendant la reprise est capturé par le catch.
+        return await resumeTest(testId, seasonId, proposed.dates);
+      }
       return { ok: false, error: mapTableError(error, "tests") };
     }
 
-    const { error: datesError } = await withTimeout(
-      supabase.from("test_dates").insert(
-        proposed.dates.map((slot) => ({
-          test_id: data.id,
-          date_proposee: slot.date,
-          heure_proposee: slot.heure,
-        }))
-      ),
-      SUPABASE_TIMEOUT_MS,
-      "حفظ تواريخ الاختبار"
-    );
-    if (datesError) {
-      await supabase.from("tests").delete().eq("id", data.id);
-      if (datesError.code === "23505" || /duplicate key|23505/i.test(datesError.message || "")) {
-        return { ok: false, error: "هذا التاريخ مضاف مسبقاً" };
+    const datesRes = await insertTestDates(data.id, proposed.dates);
+    if (!datesRes.ok) {
+      if (!(await rollbackTest(data.id))) {
+        return { ok: false, error: CREATE_TEST_INCOMPLETE_MESSAGE };
       }
-      return { ok: false, error: mapTableError(datesError, "test_dates") };
+      return { ok: false, error: datesRes.error };
     }
 
-    const eligible = await getEligibleMemberIds(seasonId);
-    if (!eligible.ok) {
-      return { ok: false, error: eligible.error, test: data };
+    const inviteRes = await inviteEligibleMembers(data.id, seasonId);
+    if (!inviteRes.ok) {
+      // Lecture des éligibles impossible : le test et ses dates restent ; un
+      // nouvel appui (même id) reprend à l'étape des invitations.
+      if (inviteRes.stage === "eligibles") {
+        return { ok: false, error: inviteRes.error };
+      }
+      if (!(await rollbackTest(data.id))) {
+        return { ok: false, error: CREATE_TEST_INCOMPLETE_MESSAGE };
+      }
+      return { ok: false, error: inviteRes.error };
     }
-
-    const membreIds = eligible.ids;
-    if (membreIds.length === 0) {
-      return { ok: true, test: data, invitations: [], invitedCount: 0 };
-    }
-
-    const { data: invitations, error: inviteError } = await withTimeout(
-      supabase
-        .from("test_invitations")
-        .upsert(
-          membreIds.map((membre_id) => ({
-            test_id: data.id,
-            membre_id,
-            statut: "invite",
-          })),
-          { onConflict: "test_id,membre_id", ignoreDuplicates: true }
-        )
-        .select("*"),
-      SUPABASE_TIMEOUT_MS,
-      "إرسال الدعوات"
-    );
-    if (inviteError) {
-      await supabase.from("tests").delete().eq("id", data.id);
-      return { ok: false, error: mapTableError(inviteError, "test_invitations") };
-    }
-    const invited = invitations || [];
-    return { ok: true, test: data, invitations: invited, invitedCount: invited.length };
+    return {
+      ok: true,
+      test: data,
+      invitations: inviteRes.inserted,
+      invitedCount: inviteRes.inserted.length,
+    };
   } catch (e) {
     return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
+}
+
+/**
+ * Envoi répété d'un même formulaire : le test existe déjà sous cet id
+ * (première tentative interrompue : délai dépassé, lecture des éligibles ou
+ * suppression de secours en échec). Complète ce qui manque, sans rien supprimer :
+ *   1. aucune ligne test_dates → insère les dates du formulaire ;
+ *   2. invitations des éligibles (idempotent, pas de notification en double).
+ * Succès seulement si dates et invitations sont en place.
+ */
+async function resumeTest(testId, formSeasonId, proposedDates) {
+  const { data: test, error } = await withTimeout(
+    supabase.from("tests").select("*").eq("id", testId).maybeSingle(),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة الاختبار"
+  );
+  if (error) {
+    return { ok: false, error: mapTableError(error, "tests") };
+  }
+  if (!test) {
+    return { ok: false, error: CREATE_TEST_INCOMPLETE_MESSAGE };
+  }
+
+  const { count: datesCount, error: countError } = await withTimeout(
+    supabase
+      .from("test_dates")
+      .select("id", { count: "exact", head: true })
+      .eq("test_id", testId),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة تواريخ الاختبار"
+  );
+  if (countError) {
+    return { ok: false, error: mapTableError(countError, "test_dates") };
+  }
+  if (!datesCount) {
+    const datesRes = await insertTestDates(testId, proposedDates);
+    if (!datesRes.ok) return { ok: false, error: datesRes.error };
+  }
+
+  const seasonId = String(test.saison_id || formSeasonId || "").trim();
+  const inviteRes = await inviteEligibleMembers(testId, seasonId);
+  if (!inviteRes.ok) {
+    return { ok: false, error: inviteRes.error };
+  }
+
+  // Total (invitations de la première tentative + celles ajoutées ici).
+  const { data: invitations, error: invError } = await withTimeout(
+    supabase.from("test_invitations").select("*").eq("test_id", testId),
+    SUPABASE_TIMEOUT_MS,
+    "قراءة الدعوات"
+  );
+  const invited = invError ? inviteRes.inserted : invitations || [];
+  return {
+    ok: true,
+    test,
+    invitations: invited,
+    invitedCount: invited.length,
+    alreadyCreated: true,
+  };
 }
 
 /**

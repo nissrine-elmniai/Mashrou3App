@@ -23,7 +23,11 @@ import {
 } from "../../lib/progressApi";
 import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
 import { getMemberObjectif } from "../../lib/objectifsApi";
-import { formatHizbCount, formatHizbTumunDelta, tumunStoredToUi } from "../../lib/tumun";
+import {
+  formatSignedTumunAmount,
+  formatMemberPosition,
+  memberTumunsFromPosition,
+} from "../../lib/tumun";
 import {
   ACTIVITY_DAY_COUNT,
   HISTORY_FETCH_LIMIT,
@@ -42,9 +46,11 @@ function formatSupervisorDate(raw) {
   return sliced.replaceAll("-", "/");
 }
 
+/** tumun_courant = أثمان mémorisés du حزب en cours (0–7), affiché tel quel. */
 function formatHizbTumunPosition(entry, metrics) {
-  const hizb = metrics?.nbHizbCompletes ?? 0;
-  return `${formatHizbCount(hizb)} · الثمن ${tumunStoredToUi(entry?.tumun_courant)}`;
+  return formatMemberPosition(
+    memberTumunsFromPosition(metrics?.nbHizbCompletes, entry?.tumun_courant)
+  );
 }
 
 function progressStateFromMember(member, progressLoading, pace, objectif) {
@@ -80,7 +86,7 @@ function HistoryEntryRow({ entry, olderEntry, isFirst }) {
     olderEntry != null ? computeProgressMetrics(olderEntry)?.tumunTotal ?? 0 : null;
   const stepDelta = olderTotal != null ? currentTotal - olderTotal : null;
   const isRecul = stepDelta != null && stepDelta < 0;
-  const reculLabel = isRecul ? formatHizbTumunDelta(stepDelta) : null;
+  const reculLabel = isRecul ? formatSignedTumunAmount(stepDelta) : null;
   const when = formatSupervisorDate(
     metrics?.dateSaisie || entry.date_saisie || entry.date
   );

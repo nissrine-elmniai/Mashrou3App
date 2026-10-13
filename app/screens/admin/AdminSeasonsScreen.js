@@ -49,7 +49,6 @@ const GENRE_MALE_CHIP = { background: "#E8F1FE", text: "#1D4ED8" };
 
 const palette = {
   primary: "#2E7D32",
-  gold: "#FBC02D",
   red: "#D32F2F",
   softGreen: "#E8F5E9",
   blue: "#1976D2",
@@ -119,6 +118,19 @@ function genreLineLabel(genre) {
   return "";
 }
 
+/** Filtre local : ids = valeurs en base, jamais les libellés affichés. */
+const GENRE_FILTERS = [
+  { id: "all", label: "الكل" },
+  { id: "ذكر", label: "ذكور" },
+  { id: "أنثى", label: "إناث" },
+];
+
+function emptySeancesMessage(genreFilter) {
+  if (genreFilter === "ذكر") return "لا توجد حصص للذكور في هذا الموسم بعد";
+  if (genreFilter === "أنثى") return "لا توجد حصص للإناث في هذا الموسم بعد";
+  return "لا توجد حصص لهذا الموسم — أضف حصة أولاً";
+}
+
 function cardSupervisor(profile) {
   if (!profile) return null;
   const first = profile.first_name || "";
@@ -160,8 +172,8 @@ export default function AdminSeasonsScreen({ navigation }) {
     activeSeasons.find((season) => season.id === defaultSeasonId) ||
     null;
   const insets = useSafeAreaInsets();
-  const bottomGap = Math.max(insets.bottom, 16);
-  const fabBottom = Math.max(insets.bottom, 16) + 16;
+  // Marge pour le bouton de chat, qui reste en bas de l'écran.
+  const listBottomPad = Math.max(insets.bottom, 16) + 76;
 
   useEffect(() => {
     if (!activeSeasons.some((season) => season.id === selectedSeasonId)) {
@@ -177,8 +189,14 @@ export default function AdminSeasonsScreen({ navigation }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [timePickerField, setTimePickerField] = useState(null);
+  const [genreFilter, setGenreFilter] = useState("all");
 
   const pendingCount = stats?.pendingRegs ?? 0;
+
+  const visibleSeances = useMemo(() => {
+    if (genreFilter === "all") return seances;
+    return seances.filter((seance) => seance.genre === genreFilter);
+  }, [seances, genreFilter]);
 
   const pickerSupervisors = useMemo(() => {
     const ids = supervisorIdsForSeason(seances, activeSeason?.id || null);
@@ -468,7 +486,7 @@ export default function AdminSeasonsScreen({ navigation }) {
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: fabBottom + 72 },
+          { paddingBottom: listBottomPad },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -502,18 +520,52 @@ export default function AdminSeasonsScreen({ navigation }) {
             })}
           </View>
         ) : null}
+        <View style={styles.genreFilterRow}>
+          {/* RTL forcé : le premier enfant d'un row s'affiche à droite. */}
+          <TouchableOpacity
+            style={styles.addSeanceBtn}
+            onPress={openCreate}
+            hitSlop={4}
+            accessibilityRole="button"
+            accessibilityLabel="إضافة حصة"
+          >
+            <Plus size={20} color={palette.primary} pointerEvents="none" />
+          </TouchableOpacity>
+          {GENRE_FILTERS.map((item) => {
+            const selected = genreFilter === item.id;
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={[
+                  styles.genreFilterChip,
+                  selected && styles.genreFilterChipActive,
+                ]}
+                onPress={() => setGenreFilter(item.id)}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+              >
+                <Text
+                  style={[
+                    styles.genreFilterChipText,
+                    selected && styles.genreFilterChipTextActive,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
         {loading ? (
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
         ) : !activeSeason ? (
           <Text style={styles.emptyText}>أنشئ موسماً جديداً أولاً</Text>
-        ) : seances.length === 0 ? (
-          <Text style={styles.emptyText}>
-            لا توجد حصص لهذا الموسم — أضف حصة أولاً
-          </Text>
+        ) : visibleSeances.length === 0 ? (
+          <Text style={styles.emptyText}>{emptySeancesMessage(genreFilter)}</Text>
         ) : (
-          seances.map((seance) => {
+          visibleSeances.map((seance) => {
             const memberCount = (seance.inscriptions || []).filter(
               (i) => i.statut === "accepte"
             ).length;
@@ -605,13 +657,6 @@ export default function AdminSeasonsScreen({ navigation }) {
           })
         )}
       </ScrollView>
-
-      <TouchableOpacity
-        style={[styles.fab, { bottom: fabBottom }]}
-        onPress={openCreate}
-      >
-        <Plus size={24} color={palette.textPrimary} />
-      </TouchableOpacity>
 
       <Modal
         visible={modalVisible}
@@ -926,6 +971,40 @@ const styles = StyleSheet.create({
   seasonChipTextActive: {
     color: "#fff",
   },
+  genreFilterRow: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 16,
+  },
+  addSeanceBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.softGreen,
+  },
+  genreFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  genreFilterChipActive: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
+  },
+  genreFilterChipText: {
+    fontSize: 14,
+    color: palette.textSecondary,
+    ...rtlText,
+  },
+  genreFilterChipTextActive: {
+    color: "#fff",
+  },
   emptyText: {
     ...rtlText,
     color: palette.textSecondary,
@@ -1007,21 +1086,6 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 12,
     ...rtlText,
-  },
-  fab: {
-    position: "absolute",
-    left: 16,
-    width: 56,
-    height: 56,
-    backgroundColor: palette.gold,
-    borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 6,
   },
   modalOverlay: {
     flex: 1,

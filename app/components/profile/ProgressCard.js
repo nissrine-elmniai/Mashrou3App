@@ -2,7 +2,7 @@ import React from "react";
 import { View, Text, StyleSheet, Alert, ActivityIndicator } from "react-native";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, fonts, row as rtlRow } from "../../constants/rtl";
-import { formatHizbCount, formatHizbTumunDelta, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { formatHizbCount, formatSignedTumunAmount, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import ProfileFieldRow from "./ProfileFieldRow";
 import ProfileCardHeader from "./ProfileCardHeader";
 
@@ -26,9 +26,11 @@ function formatCardPercent(tumunTotal) {
   return `${LRI}${one.toFixed(1)}%${PDI}`;
 }
 
+/** « +3 أثمان هذا الأسبوع » : signe collé, masqué si l'écart est nul. */
 function PaceLine({ delta, suffix }) {
-  const label = formatHizbTumunDelta(delta, suffix);
-  if (!label) return null;
+  const signed = formatSignedTumunAmount(delta);
+  if (!signed) return null;
+  const label = suffix ? `${signed} ${String(suffix).trim()}` : signed;
   return (
     <Text
       style={[

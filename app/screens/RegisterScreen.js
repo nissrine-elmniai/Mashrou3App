@@ -28,6 +28,7 @@ import {
   isSeasonRegistrationAvailable,
 } from "../lib/seasonScope";
 import { parseObjectifInput } from "../lib/objectifsApi";
+import { useSubmitLock } from "../lib/useSubmitLock";
 import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
@@ -48,6 +49,16 @@ function joinSeasonId(seasons) {
   );
   if (open.length === 1) return open[0].id;
   return getActiveRegularSeason(seasons)?.id || null;
+}
+
+/** Sous-titre d'adhésion : nom de la saison déjà retenue pour season_id. */
+function joinSeasonSubtitle(seasons) {
+  const seasonId = joinSeasonId(seasons);
+  if (!seasonId) return "طلب انضمام";
+  const season = (seasons || []).find((item) => item.id === seasonId);
+  const name = season?.name;
+  if (typeof name !== "string" || name.trim() === "") return "طلب انضمام";
+  return `طلب انضمام — ${name}`;
 }
 
 const EMPTY_FORM = {
@@ -91,6 +102,14 @@ function ChipGroup({ options, value, onChange, columns = false }) {
   );
 }
 
+/** Comparaison locale : la confirmation ne quitte pas l'écran. */
+function emailsMatch(email, confirm) {
+  return (
+    String(email || "").trim().toLowerCase() ===
+    String(confirm || "").trim().toLowerCase()
+  );
+}
+
 function FieldLabel({ children, required }) {
   return (
     <Text style={styles.label}>
@@ -107,9 +126,12 @@ export default function RegisterScreen({ navigation }) {
   } = useApp();
 
   const [form, setForm] = useState(EMPTY_FORM);
+  const [emailConfirm, setEmailConfirm] = useState("");
+  const [emailMismatch, setEmailMismatch] = useState(false);
   const [availableSeances, setAvailableSeances] = useState([]);
   const [seancesLoading, setSeancesLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  // Verrou synchrone contre le double appui (connexion lente).
+  const { busy: submitting, run: runSubmit } = useSubmitLock();
   const [submitted, setSubmitted] = useState(null);
 
   const setField = (key, value) => {
@@ -200,7 +222,9 @@ export default function RegisterScreen({ navigation }) {
     };
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => runSubmit(submitApplication);
+
+  const submitApplication = async () => {
     if (!String(form.fullName || "").trim()) {
       Alert.alert("تنبيه", "أدخل الاسم الكامل");
       return;
@@ -213,6 +237,11 @@ export default function RegisterScreen({ navigation }) {
       Alert.alert("تنبيه", "أدخل بريداً إلكترونياً صالحاً");
       return;
     }
+    if (!emailsMatch(form.email, emailConfirm)) {
+      setEmailMismatch(true);
+      return;
+    }
+    setEmailMismatch(false);
     if (!form.gender) {
       Alert.alert("تنبيه", "اختر الجنس (ذكر أو أنثى)");
       return;
@@ -249,9 +278,7 @@ export default function RegisterScreen({ navigation }) {
       return;
     }
 
-    setSubmitting(true);
     const result = await submitMemberApplication(buildPayload());
-    setSubmitting(false);
     if (!result.ok) {
       Alert.alert("خطأ", result.error);
       return;
@@ -260,6 +287,7 @@ export default function RegisterScreen({ navigation }) {
   };
 
   const answers = submitted?.formAnswers || {};
+  const joinSubtitle = joinSeasonSubtitle(seasons);
 
   if (submitted) {
     return (
@@ -269,7 +297,7 @@ export default function RegisterScreen({ navigation }) {
           contentContainerStyle={styles.scrollContainer}
           showsVerticalScrollIndicator={false}
         >
-          <Header />
+          <Header subtitle={joinSubtitle} />
           <View style={styles.formContainer}>
             <View style={styles.successBadge}>
               <Ionicons name="checkmark-circle" size={28} color={colors.primary} />
@@ -362,7 +390,7 @@ export default function RegisterScreen({ navigation }) {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <Header />
+          <Header subtitle={joinSubtitle} />
 
           <View style={styles.formContainer}>
             <View style={styles.inputGroup}>
@@ -408,6 +436,31 @@ export default function RegisterScreen({ navigation }) {
                   textAlign={textAlignStart}
                 />
               </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <FieldLabel required>تأكيد البريد الإلكتروني</FieldLabel>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="quran@gmail.com"
+                  placeholderTextColor={colors.placeholder}
+                  value={emailConfirm}
+                  onChangeText={setEmailConfirm}
+                  onBlur={() =>
+                    setEmailMismatch(!emailsMatch(form.email, emailConfirm))
+                  }
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textAlign={textAlignStart}
+                />
+              </View>
+              {emailMismatch ? (
+                <Text style={styles.emailMismatch}>
+                  البريدان الإلكترونيان غير متطابقين
+                </Text>
+              ) : null}
             </View>
 
             <View style={styles.inputGroup}>
@@ -584,6 +637,7 @@ export default function RegisterScreen({ navigation }) {
             <TouchableOpacity
               style={[styles.loginButton, submitting && { opacity: 0.6 }]}
               onPress={submitting ? undefined : handleSubmit}
+              disabled={submitting}
               activeOpacity={0.85}
             >
               <Text style={styles.loginButtonText}>
@@ -606,7 +660,7 @@ export default function RegisterScreen({ navigation }) {
   );
 }
 
-function Header() {
+function Header({ subtitle }) {
   return (
     <>
       <View style={styles.logoContainer}>
@@ -618,7 +672,7 @@ function Header() {
       </View>
       <View style={styles.headerContainer}>
         <Text style={styles.titleMain}>مهندس حامل لكتاب الله</Text>
-        <Text style={styles.subtitleMain}>طلب انضمام — النسخة السادسة</Text>
+        <Text style={styles.subtitleMain}>{subtitle}</Text>
         <View style={styles.divider} />
       </View>
     </>
@@ -709,6 +763,12 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   requiredMark: { color: colors.red },
+  emailMismatch: {
+    color: colors.red,
+    fontSize: 13,
+    marginTop: 6,
+    ...rtlText,
+  },
   inputWrapper: {
     borderWidth: 1,
     borderColor: colors.border,

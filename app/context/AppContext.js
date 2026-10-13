@@ -39,7 +39,8 @@ import {
   signUpWithProfile,
   signOutAuth,
   requestPasswordReset,
-  confirmPasswordResetWithOtp,
+  isPasswordRecoveryInProgress,
+  discardPersistedPasswordRecovery,
   getCurrentAuthSession,
   fetchProfile,
   profileToAppUser,
@@ -98,6 +99,12 @@ const AppContext = createContext(null);
 
 const uid = (prefix) =>
   `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+
+/**
+ * Id d'un nouveau programme, généré une fois à l'ouverture du formulaire :
+ * un nouvel envoi du même formulaire réécrit la même ligne (upsert sur id).
+ */
+export const newMemberProgramId = () => uid("mp");
 
 /** Première occurrence par `id` — évite seed + cache / double append. */
 function uniqSeasonsById(list = []) {
@@ -282,8 +289,13 @@ export function AppProvider({ children }) {
 
       let restored = null;
       if (isSupabaseConfigured()) {
-        const sessionResult = await getCurrentAuthSession();
-        if (sessionResult.session?.user) {
+        // Avant toute restauration : une clé de récupération = signOut et login.
+        const interruptedRecovery = await discardPersistedPasswordRecovery();
+        const sessionResult = interruptedRecovery
+          ? { session: null }
+          : await getCurrentAuthSession();
+        // Récupération OTP : ne pas hydrater l'utilisateur depuis cette session.
+        if (sessionResult.session?.user && !isPasswordRecoveryInProgress()) {
           const profileResult = await fetchProfile(sessionResult.session.user.id);
           if (profileResult.ok) {
             const status = profileResult.profile.account_status;
@@ -824,13 +836,6 @@ export function AppProvider({ children }) {
       )
     );
     return { ok: true };
-  };
-
-  const confirmPasswordReset = async (email, token, newPassword) => {
-    if (!isSupabaseConfigured()) {
-      return { ok: false, error: "Supabase غير مفعّل" };
-    }
-    return confirmPasswordResetWithOtp(email, token, newPassword);
   };
 
   const startNewSeason = async ({ name, startDate, version, type }) => {
@@ -2221,6 +2226,8 @@ export function AppProvider({ children }) {
       return { ok: false, error: sync.error || "تعذر حفظ البرنامج" };
     }
 
+    // Remplace la ligne de même id (mise à jour fonctionnelle) : une réponse
+    // reçue deux fois pour le même formulaire ne crée pas de doublon à l'écran.
     setMemberPrograms((prev) => {
       const exists = prev.some((p) => p.id === row.id);
       if (exists) {
@@ -2563,7 +2570,6 @@ export function AppProvider({ children }) {
     activateInvite,
     activateSupervisorAccount,
     resetPassword,
-    confirmPasswordReset,
     startNewSeason,
     submitSeasonRegistration,
     refreshRegistrations,

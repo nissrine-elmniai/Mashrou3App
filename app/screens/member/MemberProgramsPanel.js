@@ -9,10 +9,12 @@ import {
   Alert,
   Pressable,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
-import { useApp } from "../../context/AppContext";
+import { useApp, newMemberProgramId } from "../../context/AppContext";
+import { useSubmitLock } from "../../lib/useSubmitLock";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
@@ -24,11 +26,16 @@ import {
 } from "../../lib/memberProgramsApi";
 import {
   flushMemberProgressDelta,
-  scheduleMemberProgressDelta,
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
-import { getActiveRegularSeason, getActiveSeason } from "../../lib/seasonScope";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
 import { getMyActiveEnrollment } from "../../lib/membersApi";
+import {
+  formatHizbCount,
+  formatTumunAmount,
+  formatUnsavedTumunDelta,
+} from "../../lib/tumun";
+import { useProgramTumunDraft } from "../../lib/useProgramTumunDraft";
 
 const EMPTY_FORM = {
   title: "",
@@ -79,12 +86,7 @@ function programStatus(program) {
 }
 
 export default function MemberProgramsPanel({ navigation }) {
-  const {
-    getMemberPrograms,
-    saveMemberProgram,
-    adjustMemberProgramTumuns,
-    seasons,
-  } = useApp();
+  const { getMemberPrograms, saveMemberProgram, seasons } = useApp();
 
   const programs = getMemberPrograms();
   const [modalVisible, setModalVisible] = useState(false);
@@ -92,9 +94,10 @@ export default function MemberProgramsPanel({ navigation }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const activeSeasonId = getActiveRegularSeason(seasons)?.id ?? null;
-  const progressSeasonIdRef = useRef(null);
-  progressSeasonIdRef.current = getActiveSeason(seasons)?.id ?? null;
   const [progressLocked, setProgressLocked] = useState(false);
+  /** Id du programme en création : fixé à l'ouverture du modal, réutilisé à chaque envoi. */
+  const createIdRef = useRef(null);
+  const { busy: saving, run: runSave } = useSubmitLock();
 
   useEffect(() => {
     let cancelled = false;
@@ -114,12 +117,14 @@ export default function MemberProgramsPanel({ navigation }) {
   );
 
   const openCreate = () => {
+    createIdRef.current = newMemberProgramId();
     setEditingId(null);
     setForm({ ...EMPTY_FORM, startDate: todayStr() });
     setModalVisible(true);
   };
 
   const openEdit = (program) => {
+    createIdRef.current = null;
     setEditingId(program.id);
     setForm({
       title: program.title || "",
@@ -137,50 +142,31 @@ export default function MemberProgramsPanel({ navigation }) {
     setForm(EMPTY_FORM);
   };
 
-  const handleSave = async () => {
-    const existing = editingId
-      ? programs.find((program) => program.id === editingId)
-      : null;
-    const result = await saveMemberProgram({
-      id: editingId || undefined,
-      title: form.title,
-      nbHizb: form.nbHizb,
-      durationDays: form.durationDays,
-      startDate: form.startDate,
-      completedTumuns: existing?.completedTumuns ?? 0,
-      type: normalizeProgramType(form.type),
+  const handleSave = () =>
+    runSave(async () => {
+      const existing = editingId
+        ? programs.find((program) => program.id === editingId)
+        : null;
+      // Création : même id pour tous les envois de ce formulaire (upsert).
+      const id = editingId || createIdRef.current || undefined;
+      const result = await saveMemberProgram({
+        id,
+        title: form.title,
+        nbHizb: form.nbHizb,
+        durationDays: form.durationDays,
+        startDate: form.startDate,
+        completedTumuns: existing?.completedTumuns ?? 0,
+        type: normalizeProgramType(form.type),
+      });
+      if (!result.ok) {
+        Alert.alert("تنبيه", result.error);
+        return;
+      }
+      closeModal();
     });
-    if (!result.ok) {
-      Alert.alert("تنبيه", result.error);
-      return;
-    }
-    closeModal();
-  };
-
-  const closeProgressModal = () => {
-    flushMemberProgressDelta();
-    setProgressModal(null);
-  };
 
   const quickUpdateProgress = (program) => {
     setProgressModal(program);
-  };
-
-  const handleAdjustInModal = async (delta) => {
-    if (!progressModal) return;
-    if (progressLocked && isHifzProgram(progressModal)) {
-      Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
-      return;
-    }
-    const result = await adjustMemberProgramTumuns(progressModal.id, delta);
-    if (!result.ok || result.unchanged) return;
-    if (isHifzProgram(result.program)) {
-      scheduleMemberProgressDelta({
-        delta,
-        saisonId: progressSeasonIdRef.current,
-        notes: result.program.title || null,
-      });
-    }
   };
 
   const openDetails = (program) => {
@@ -205,6 +191,22 @@ export default function MemberProgramsPanel({ navigation }) {
     : null;
   const hifzWriteLocked =
     progressLocked && isHifzProgram(progressProgram);
+
+  // ± ثمن : écart local, enregistré seulement sur « حفظ » (une écriture).
+  const draft = useProgramTumunDraft(progressProgram, { locked: progressLocked });
+  const unsavedLabel = formatUnsavedTumunDelta(draft.pendingDelta);
+
+  // Fermeture directe (après حفظ réussi ou إلغاء confirmé : plus d'écart).
+  const dismissProgressModal = () => {
+    flushMemberProgressDelta();
+    setProgressModal(null);
+  };
+
+  // X, fond, retour Android : alerte si un écart est en attente.
+  const closeProgressModal = () => {
+    if (draft.saving) return;
+    if (!draft.guardLeave(dismissProgressModal)) dismissProgressModal();
+  };
 
   return (
     <View>
@@ -258,6 +260,7 @@ export default function MemberProgramsPanel({ navigation }) {
         onChange={setForm}
         onClose={closeModal}
         onSave={handleSave}
+        saving={saving}
       />
 
       <Modal
@@ -272,7 +275,17 @@ export default function MemberProgramsPanel({ navigation }) {
             onPress={closeProgressModal}
           />
           <View style={styles.progressModalCard}>
-            <Text style={styles.modalTitle}>تحديث التقدم</Text>
+            <View style={styles.progressModalHeader}>
+              <Text style={styles.progressModalTitle}>تحديث التقدم</Text>
+              <TouchableOpacity
+                onPress={closeProgressModal}
+                hitSlop={12}
+                accessibilityRole="button"
+                accessibilityLabel="إغلاق"
+              >
+                <Ionicons name="close" size={22} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.progressModalHint}>
               {progressProgram?.title}
             </Text>
@@ -280,12 +293,10 @@ export default function MemberProgramsPanel({ navigation }) {
             {progressProgram ? (
               <>
                 <Text style={styles.tumunModalCount}>
-                  {progressProgram.completedTumuns} / {progressProgram.totalTumuns}{" "}
-                  ثمن
+                  {formatTumunAmount(draft.predicted)} من{" "}
+                  {formatTumunAmount(progressProgram.totalTumuns)}
                 </Text>
-                <Text style={styles.tumunModalPct}>
-                  {progressProgram.progression}%
-                </Text>
+                <Text style={styles.tumunModalPct}>{draft.predictedPct}%</Text>
                 {hifzWriteLocked ? (
                   <Text style={styles.progressModalHint}>
                     {PROGRESS_LOCKED_MESSAGE}
@@ -296,45 +307,63 @@ export default function MemberProgramsPanel({ navigation }) {
                   <TouchableOpacity
                     style={[
                       styles.stepperBtn,
-                      (hifzWriteLocked || progressProgram.completedTumuns <= 0) &&
-                        styles.stepperBtnDisabled,
+                      !draft.canDecrement && styles.stepperBtnDisabled,
                     ]}
-                    onPress={() => handleAdjustInModal(-1)}
-                    disabled={hifzWriteLocked || progressProgram.completedTumuns <= 0}
+                    onPress={draft.decrement}
+                    disabled={!draft.canDecrement}
                   >
                     <Text style={styles.stepperBtnText}>−</Text>
                   </TouchableOpacity>
 
                   <Text style={styles.stepperValue}>
-                    {progressProgram.completedTumuns}
+                    {formatTumunAmount(draft.predicted)}
                   </Text>
 
                   <TouchableOpacity
                     style={[
                       styles.stepperBtn,
-                      (hifzWriteLocked ||
-                        progressProgram.completedTumuns >=
-                          progressProgram.totalTumuns) &&
-                        styles.stepperBtnDisabled,
+                      !draft.canIncrement && styles.stepperBtnDisabled,
                     ]}
-                    onPress={() => handleAdjustInModal(1)}
-                    disabled={
-                      hifzWriteLocked ||
-                      progressProgram.completedTumuns >= progressProgram.totalTumuns
-                    }
+                    onPress={draft.increment}
+                    disabled={!draft.canIncrement}
                   >
                     <Text style={styles.stepperBtnText}>+</Text>
                   </TouchableOpacity>
                 </View>
+
+                {unsavedLabel ? (
+                  <>
+                    <Text style={styles.unsavedText}>{unsavedLabel}</Text>
+                    <View style={styles.draftActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.draftCancelBtn,
+                          draft.saving && styles.stepperBtnDisabled,
+                        ]}
+                        onPress={() => draft.confirmDiscard(dismissProgressModal)}
+                        disabled={draft.saving}
+                      >
+                        <Text style={styles.cancelBtnText}>إلغاء</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.draftSaveBtn,
+                          draft.saving && styles.createBtnDisabled,
+                        ]}
+                        onPress={() => draft.confirmSave(dismissProgressModal)}
+                        disabled={draft.saving}
+                      >
+                        {draft.saving ? (
+                          <ActivityIndicator color="white" />
+                        ) : (
+                          <Text style={styles.saveBtnText}>حفظ</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : null}
               </>
             ) : null}
-
-            <TouchableOpacity
-              style={styles.saveBtn}
-              onPress={closeProgressModal}
-            >
-              <Text style={styles.saveBtnText}>تأكيد</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -361,13 +390,22 @@ function MemberProgramCard({
         <TouchableOpacity style={styles.iconBtn} onPress={onEdit} hitSlop={8}>
           <Ionicons name="create-outline" size={20} color={colors.primary} />
         </TouchableOpacity>
+        {/* Indicateur seulement (même chevron que ProfileNotificationsCard) : pas un bouton. */}
+        <Ionicons
+          name="chevron-back"
+          size={18}
+          color={colors.muted}
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        />
       </View>
 
       <TouchableOpacity style={styles.cardBody} onPress={onPress} activeOpacity={0.9}>
         <Text style={styles.metaText}>
           <Text style={styles.metaType}>{typeLabel}</Text>
           {" · "}
-          {program.nbHizb} أحزاب · {program.durationDays} يوم
+          {formatHizbCount(program.nbHizb)} · {program.durationDays} يوم
         </Text>
 
         <TouchableOpacity onPress={onProgressPress} activeOpacity={0.85}>
@@ -387,7 +425,15 @@ function MemberProgramCard({
   );
 }
 
-function ProgramFormModal({ visible, editing, form, onChange, onClose, onSave }) {
+function ProgramFormModal({
+  visible,
+  editing,
+  form,
+  onChange,
+  onClose,
+  onSave,
+  saving = false,
+}) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const setField = (key, value) => onChange((prev) => ({ ...prev, [key]: value }));
 
@@ -543,13 +589,18 @@ function ProgramFormModal({ visible, editing, form, onChange, onClose, onSave })
               <Text style={styles.cancelBtnText}>إلغاء</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.createBtn}
+              style={[styles.createBtn, saving && styles.createBtnDisabled]}
               onPress={onSave}
+              disabled={saving}
               activeOpacity={0.85}
             >
-              <Text style={styles.createBtnText}>
-                {editing ? "حفظ التعديلات" : "إنشاء البرنامج"}
-              </Text>
+              {saving ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.createBtnText}>
+                  {editing ? "حفظ التعديلات" : "إنشاء البرنامج"}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -786,6 +837,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: "center",
   },
+  createBtnDisabled: { opacity: 0.7 },
   createBtnText: {
     color: "white",
     fontWeight: "700",
@@ -799,11 +851,17 @@ const styles = StyleSheet.create({
     padding: 20,
     maxHeight: "80%",
   },
-  modalTitle: {
+  progressModalHeader: {
+    flexDirection: row,
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 14,
+  },
+  progressModalTitle: {
+    flex: 1,
     fontSize: 18,
     fontWeight: "700",
     color: colors.text,
-    marginBottom: 14,
     ...rtlText,
   },
   input: {
@@ -816,13 +874,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.text,
     backgroundColor: colors.bg,
-  },
-  saveBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.md,
-    paddingVertical: 10,
-    alignItems: "center",
-    marginTop: 6,
   },
   saveBtnText: {
     color: "white",
@@ -884,10 +935,39 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   stepperValue: {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: "bold",
     color: colors.primary,
     flex: 1,
     textAlign: "center",
+  },
+  unsavedText: {
+    fontSize: 13,
+    color: colors.orange,
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: -6,
+    marginBottom: 10,
+  },
+  draftActions: {
+    flexDirection: row,
+    gap: 10,
+    marginBottom: 6,
+  },
+  draftSaveBtn: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  draftCancelBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    alignItems: "center",
+    backgroundColor: colors.card,
   },
 });

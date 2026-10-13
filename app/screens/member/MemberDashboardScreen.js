@@ -19,6 +19,7 @@ import { useApp } from "../../context/AppContext";
 import {
   getMyProgress,
   getMyCurrentProgressPosition,
+  getMySeasonProgress,
   computeProgressMetrics,
   computeProgressPace,
   PROGRESS_LOCKED_MESSAGE,
@@ -57,7 +58,7 @@ import { useChatGroups } from "../../hooks/useChatGroups";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
 import { getMyTestInvitations, getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
 import MemberTestsPanel from "../../components/member/MemberTestsPanel";
-import { formatHizbCount, tumunStoredToUi, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import { formatHizbCount, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import PersonalInfoSection from "../../components/PersonalInfoSection";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -139,8 +140,8 @@ function sessionActivitySubtitle(jour, heureDebut, withHissa) {
 
 /**
  * Position affichée pour une activité de progression.
- * n = hizb terminés, r = reste stocké 0–7.
- * Convention : reste 0 = thumn 8 du hizb terminé, pas le début du hizb suivant.
+ * n = hizb terminés, r = أثمان mémorisés du حزب en cours (0–7, valeur stockée).
+ * r ≥ 1 : r-ième ثمن du حزب n + 1. r = 0 : 8e ثمن du حزب n (حزب terminé).
  * @returns {{ kind: "skip" } | { kind: "khatma" } | { kind: "position", hizb: number, tumun: number }}
  */
 function progressActivityPosition(nRaw, rRaw) {
@@ -151,7 +152,7 @@ function progressActivityPosition(nRaw, rRaw) {
   if (r >= 1 && r <= 7) {
     return { kind: "position", hizb: Math.min(60, n + 1), tumun: r };
   }
-  return { kind: "position", hizb: n, tumun: tumunStoredToUi(0) };
+  return { kind: "position", hizb: n, tumun: TUMUNS_PER_HIZB };
 }
 
 /** 16 et non 16.0 ; 15.5 conservé. Vide si la note n'est pas un nombre. */
@@ -314,6 +315,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
   const [passwordModal, setPasswordModal] = useState(false);
   const [editInfoModal, setEditInfoModal] = useState(false);
   const [seasonObjectif, setSeasonObjectif] = useState(null);
+  /** Avancement calculé par le serveur (get_member_season_progress). */
+  const [seasonProgress, setSeasonProgress] = useState(null);
   const [memberInfo, setMemberInfo] = useState(null);
   const [contactFields, setContactFields] = useState({
     phone: currentUser?.phone || null,
@@ -496,14 +499,19 @@ export default function MemberDashboardScreen({ navigation, route }) {
     const saisonId = getActiveRegularSeason(seasons)?.id ?? null;
     if (!memberId || !saisonId) {
       setSeasonObjectif(null);
+      setSeasonProgress(null);
       return;
     }
-    const res = await getMyObjectif(saisonId);
+    const [res, progressRes] = await Promise.all([
+      getMyObjectif(saisonId),
+      getMySeasonProgress(),
+    ]);
     if (res.ok && res.objectif) {
       setSeasonObjectif(res.objectif);
     } else {
       setSeasonObjectif(null);
     }
+    setSeasonProgress(progressRes.ok ? progressRes.progress : null);
   }, [currentUser?.authId, currentUser?.id, seasons]);
 
   useFocusEffect(
@@ -696,12 +704,10 @@ export default function MemberDashboardScreen({ navigation, route }) {
     ]
   );
 
-  /** Anneau = incrément saison (position actuelle − départ) / objectif visé. */
+  /** Anneau = gain / cible, calculés par le serveur (RPC 0135). */
   const homeProgress = useMemo(() => {
-    const goal = seasonObjectif;
-    const nbHizbCible = Number(goal?.nbHizbCible);
-    const hasObjectif = Number.isInteger(nbHizbCible) && nbHizbCible >= 1;
-    const tumunTotal = memorizationMetrics?.tumunTotal ?? 0;
+    const cible = seasonProgress?.cible ?? null;
+    const hasObjectif = cible != null && cible > 0;
 
     if (!hasObjectif) {
       // Pas de 0 % : l'anneau reste vide, le centre affiche « — ».
@@ -713,25 +719,28 @@ export default function MemberDashboardScreen({ navigation, route }) {
       };
     }
 
-    const departRaw = Number(goal?.nbHizbDepart);
-    const nbHizbDepart =
-      Number.isInteger(departRaw) && departRaw >= 0 ? departRaw : 0;
-    const numerateur = Math.max(
-      0,
-      tumunTotal - nbHizbDepart * TUMUNS_PER_HIZB
-    );
-    const denom = nbHizbCible * TUMUNS_PER_HIZB;
-    const rawPct = denom > 0 ? (numerateur / denom) * 100 : 0;
-    const ring = formatRingPercent(rawPct);
-    const gainedLabel = formatHizbAmount(numerateur);
-    const cibleLabel = formatHizbCount(nbHizbCible);
+    const cibleLabel = formatHizbCount(cible / TUMUNS_PER_HIZB);
+
+    // Repli : objectif créé avant 0137 sans position (avancement NULL).
+    // Ni 0 % ni 100 % : anneau vide, « — » au centre.
+    if (seasonProgress?.avancementPct == null) {
+      return {
+        memorizationPct: 0,
+        memorizationPctLabel: "—",
+        programsHizbLabel: `— من ${cibleLabel}`,
+        ringA11y: `تقدم هدف الموسم غير متاح. الهدف: ${cibleLabel}`,
+      };
+    }
+
+    const ring = formatRingPercent(seasonProgress.avancementPct);
+    const gainedLabel = formatHizbAmount(seasonProgress.gain);
     return {
       memorizationPct: ring.progress,
       memorizationPctLabel: ring.label,
       programsHizbLabel: `${gainedLabel} من ${cibleLabel}`,
       ringA11y: `تقدم هدف الموسم: ${gainedLabel} من ${cibleLabel}`,
     };
-  }, [seasonObjectif, memorizationMetrics]);
+  }, [seasonProgress]);
 
   const { memorizationPct, memorizationPctLabel, programsHizbLabel, ringA11y } =
     homeProgress;
