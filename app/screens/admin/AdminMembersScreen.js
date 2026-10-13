@@ -33,10 +33,11 @@ import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { displayProfileEmail } from "../../lib/authEmail";
 import {
   GENDER_FILTER_ALL,
+  GENDER_TOGGLES,
   matchesGenderFilter,
   normalizeGender,
+  toggleGenderFilter,
 } from "../../lib/genderFilter";
-import GenderSegmentedControl from "../../components/admin/GenderSegmentedControl";
 
 const palette = {
   primary: "#2E7D32",
@@ -451,9 +452,17 @@ export default function AdminMembersScreen({ navigation }) {
             active={category === CATEGORY_OTHER}
             onPress={() => chooseCategory(CATEGORY_OTHER)}
           />
+          <View style={styles.filterDivider} />
+          {/* Genre : 2e appui sur la pastille active → retour à tous. */}
+          {GENDER_TOGGLES.map(([key, label]) => (
+            <FilterChip
+              key={key}
+              label={label}
+              active={genderFilter === key}
+              onPress={() => setGenderFilter((current) => toggleGenderFilter(current, key))}
+            />
+          ))}
         </ScrollView>
-
-        <GenderSegmentedControl value={genderFilter} onChange={setGenderFilter} />
 
         {loading && !refreshing ? (
           <View style={styles.emptyCard}>
@@ -702,6 +711,12 @@ const styles = StyleSheet.create({
   filterRow: {
     gap: 8,
     paddingEnd: 8,
+    alignItems: "center",
+  },
+  filterDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: palette.border,
   },
   filterChip: {
     paddingHorizontal: 12,
