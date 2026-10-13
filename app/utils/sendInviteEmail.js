@@ -1,21 +1,6 @@
 import { APP_EMAIL, USE_MOCK_EMAIL } from "../constants/email";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
-
-function mapEmailSendError(raw) {
-  const msg = String(raw || "");
-  if (/only send testing emails|verify a domain|resend.com\/domains/i.test(msg)) {
-    return [
-      "Resend في وضع الاختبار: لا يُرسل إلا إلى بريد حسابك.",
-      "لإرسال الدعوات لأي عنوان:",
-      "1) ثبّت نطاقاً في resend.com/domains",
-      "2) في Supabase Secrets ضع FROM_EMAIL مثل: مهندس حامل لكتاب الله <noreply@ton-domaine.com>",
-      "3) أعد نشر الدالة send-app-email",
-      "",
-      "الدعوة محفوظة: يمكن للمشرف إنشاء حسابه من التطبيق دون البريد.",
-    ].join("\n");
-  }
-  return msg;
-}
+import { isNetworkError, mapSupabaseAuthError } from "../lib/userError";
 
 function escapeHtml(text) {
   return String(text)
@@ -61,7 +46,9 @@ async function sendAppEmail({ toEmail, toName, subject, message, html }) {
   if (!isSupabaseConfigured()) {
     return {
       ok: false,
-      error: "Supabase غير مُعدّ — تحقق من ملف .env",
+      error: mapSupabaseAuthError({
+        message: "Supabase غير مُعدّ — تحقق من ملف .env",
+      }),
     };
   }
 
@@ -87,6 +74,10 @@ async function sendAppEmail({ toEmail, toName, subject, message, html }) {
     ]);
 
     if (error) {
+      const status = error?.context?.status ?? error?.status;
+      if (isNetworkError(error, status)) {
+        return { ok: false, error: mapSupabaseAuthError(error, status) };
+      }
       let serverError = "";
       try {
         const body = await error.context?.json();
@@ -94,24 +85,20 @@ async function sendAppEmail({ toEmail, toName, subject, message, html }) {
       } catch {
         serverError = "";
       }
-      const msg = error.message || "";
-      if (/failed to send|FunctionsRelayError|404|not found/i.test(msg)) {
-        return {
-          ok: false,
-          error:
-            "دالة الإرسال غير منشورة بعد. انشر send-app-email واضبط RESEND_API_KEY.",
-        };
-      }
       return {
         ok: false,
-        error: mapEmailSendError(serverError || msg) || "فشل استدعاء خدمة البريد",
+        error: serverError
+          ? mapSupabaseAuthError({ message: serverError })
+          : mapSupabaseAuthError(error, status),
       };
     }
 
     if (data && data.ok === false) {
       return {
         ok: false,
-        error: mapEmailSendError(data.error) || "فشل إرسال البريد",
+        error: mapSupabaseAuthError({
+          message: String(data.error || "فشل إرسال البريد"),
+        }),
       };
     }
 
@@ -122,7 +109,7 @@ async function sendAppEmail({ toEmail, toName, subject, message, html }) {
       id: data?.id,
     };
   } catch (e) {
-    return { ok: false, error: e?.message || "فشل إرسال البريد" };
+    return { ok: false, error: mapSupabaseAuthError(e) };
   }
 }
 

@@ -622,9 +622,17 @@ export function AppProvider({ children }) {
     await signOutAuth();
   };
 
-  /** Recharge currentUser depuis profiles (focus profil, après édition). Erreur → no-op. */
-  const refreshCurrentUser = async () => {
-    const authId = currentUser?.authId || supabaseSession?.user?.id;
+  /**
+   * Recharge currentUser depuis profiles (focus profil, après édition). Erreur → no-op.
+   * fromEmailChangeLink : seul le retour du lien peut lire la session Auth
+   * quand l'état React n'a pas encore d'utilisateur.
+   */
+  const refreshCurrentUser = async ({ fromEmailChangeLink = false } = {}) => {
+    let authId = currentUser?.authId || supabaseSession?.user?.id;
+    if (!authId && fromEmailChangeLink && isSupabaseConfigured()) {
+      const sessionResult = await getCurrentAuthSession();
+      authId = sessionResult.session?.user?.id || null;
+    }
     if (!authId || !isSupabaseConfigured()) {
       return { ok: false };
     }
@@ -1122,7 +1130,8 @@ export function AppProvider({ children }) {
       }
 
       if (status === REGISTRATION_STATUS.ACCEPTED) {
-        const acceptedAt = todayStr();
+        // Horodatage complet de la décision (renouvellement et adhésion).
+        const acceptedAt = new Date().toISOString();
 
         if (isSeasonRenewal) {
           const member = users.find(
@@ -1212,6 +1221,7 @@ export function AppProvider({ children }) {
           return { ok: true, registration: reg, kind };
         }
 
+        // Adhésion : le même horodatage complet, statut invited (compte encore à créer).
         const sync = await upsertMemberApplication(
           { ...reg, acceptedAt },
           REGISTRATION_STATUS.INVITED

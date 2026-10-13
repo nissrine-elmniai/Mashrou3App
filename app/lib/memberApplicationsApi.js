@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { logUserError } from "./userError";
 import {
   REGISTRATION_KIND,
   REGISTRATION_STATUS,
@@ -89,7 +90,43 @@ export function mapMemberApplicationRow(row) {
     inviteToken: null,
     createdAt: row.created_at ? String(row.created_at) : "",
     acceptedAt: row.accepted_at ? String(row.accepted_at) : undefined,
+    activatedAt: row.activated_at ? String(row.activated_at) : undefined,
+    rejectedAt: row.rejected_at ? String(row.rejected_at) : undefined,
+    updatedAt: row.updated_at ? String(row.updated_at) : undefined,
   };
+}
+
+/**
+ * Date de l'événement décrit par la ligne (pas la date de dépôt si une
+ * décision a eu lieu). Chaîne ISO, ou null si aucune date exploitable.
+ * Un renouvellement `activated` est déjà relu comme « accepté ».
+ */
+export function getApplicationEventDate(app) {
+  if (!app) return null;
+  const pick = (...values) => {
+    for (const value of values) {
+      if (value != null && String(value).trim()) return String(value);
+    }
+    return null;
+  };
+  const status = app.status;
+  if (status === REGISTRATION_STATUS.PENDING) return pick(app.createdAt);
+  if (status === REGISTRATION_STATUS.REJECTED) {
+    return pick(app.rejectedAt, app.updatedAt);
+  }
+  if (
+    status === REGISTRATION_STATUS.ACTIVATED &&
+    app.kind !== REGISTRATION_KIND.SEASON_RENEWAL
+  ) {
+    return pick(app.activatedAt, app.acceptedAt);
+  }
+  if (
+    status === REGISTRATION_STATUS.INVITED ||
+    status === REGISTRATION_STATUS.ACCEPTED
+  ) {
+    return pick(app.acceptedAt, app.activatedAt, app.updatedAt);
+  }
+  return null;
 }
 
 function withTimeout(promise, ms, label) {
@@ -135,7 +172,10 @@ export async function listMemberApplications() {
   }
 }
 
-/** Dix demandes les plus récentes de la saison, tous statuts et tous kind. */
+/** Dix à cinquante demandes de la saison, les décisions les plus récentes d'abord.
+ * updated_at est posé par le client à chaque décision et par
+ * link_member_application_on_profile à l'activation du compte.
+ */
 export async function listRecentMemberApplications(saisonId, limit = 10) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل", applications: [] };
@@ -148,7 +188,7 @@ export async function listRecentMemberApplications(saisonId, limit = 10) {
         .from("member_applications")
         .select("*")
         .eq("season_id", saisonId)
-        .order("created_at", { ascending: false })
+        .order("updated_at", { ascending: false })
         .limit(take),
       SUPABASE_TIMEOUT_MS,
       "قراءة آخر الطلبات"
@@ -225,7 +265,7 @@ function buildApplicationRow(reg, statusMapped, { now = new Date().toISOString()
 async function insertApplicationRow(row, label) {
   // Pas de .select() : le rôle anon n'a souvent que INSERT (pas SELECT).
   let attempt = row;
-  let { error } = await withTimeout(
+  let { error, status } = await withTimeout(
     supabase.from("member_applications").insert(attempt),
     SUPABASE_TIMEOUT_MS,
     label
@@ -235,7 +275,7 @@ async function insertApplicationRow(row, label) {
   if (error && /kind|column.*does not exist/i.test(error?.message || "")) {
     const { kind: _k, ...rest } = attempt;
     attempt = rest;
-    ({ error } = await withTimeout(
+    ({ error, status } = await withTimeout(
       supabase.from("member_applications").insert(attempt),
       SUPABASE_TIMEOUT_MS,
       label
@@ -246,14 +286,14 @@ async function insertApplicationRow(row, label) {
   if (error && /form_answers|column.*does not exist/i.test(error?.message || "")) {
     const { form_answers: _fa, ...rest } = attempt;
     attempt = rest;
-    ({ error } = await withTimeout(
+    ({ error, status } = await withTimeout(
       supabase.from("member_applications").insert(attempt),
       SUPABASE_TIMEOUT_MS,
       label
     ));
   }
 
-  return error;
+  return { error, status };
 }
 
 /**
@@ -419,7 +459,10 @@ export async function insertPendingMemberApplication(reg) {
   };
 
   try {
-    const error = await insertApplicationRow(row, "إرسال طلب التسجيل");
+    const { error, status } = await insertApplicationRow(
+      row,
+      "إرسال طلب التسجيل"
+    );
     if (error) {
       const msg = error.message || "";
       const taken = msg.match(
@@ -439,24 +482,28 @@ export async function insertPendingMemberApplication(reg) {
         };
       }
       if (/relation.*does not exist|Could not find the table/i.test(msg)) {
+        const hint =
+          "جدول member_applications غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor";
+        logUserError("insertPendingMemberApplication", { message: hint });
         return {
           ok: false,
-          error:
-            "جدول member_applications غير موجود — نفّذ ملفات supabase/migrations/ في SQL Editor",
+          error: "تعذر إرسال الطلب حالياً. أعد المحاولة لاحقاً.",
         };
       }
       if (/permission denied|42501/i.test(msg)) {
+        const hint =
+          "لا صلاحية لإرسال الطلب — نفّذ supabase/migrations/0049_member_applications_anon_insert.sql في SQL Editor";
+        logUserError("insertPendingMemberApplication", { message: hint });
         return {
           ok: false,
-          error:
-            "لا صلاحية لإرسال الطلب — نفّذ supabase/migrations/0049_member_applications_anon_insert.sql في SQL Editor",
+          error: "تعذر إرسال الطلب حالياً. أعد المحاولة لاحقاً.",
         };
       }
-      return { ok: false, error: mapSupabaseAuthError(error) };
+      return { ok: false, error: mapSupabaseAuthError(error, status) };
     }
     return { ok: true, application: null };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بـ Supabase" };
+    return { ok: false, error: mapSupabaseAuthError(e) };
   }
 }
 

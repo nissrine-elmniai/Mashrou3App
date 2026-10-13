@@ -19,13 +19,15 @@ import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from "react-native-
 import { useFocusEffect } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
-import { Check } from "lucide-react-native";
+import { Check, UserPlus } from "lucide-react-native";
 import { rtlText, row, arrowBack, fonts } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
 import { SectionCard } from "../../components/ui";
 import {
   getAllTestsAdmin,
   getTestInvitationsWithMembers,
+  getMissingInviteesCount,
+  inviteMissingMembers,
   getTestDates,
   addTestDate,
   updateTestDateHeure,
@@ -148,12 +150,15 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   const [moveDate, setMoveDate] = useState("");
   const [moveSaving, setMoveSaving] = useState(false);
   const [statusBusy, setStatusBusy] = useState(null);
+  const [missingCount, setMissingCount] = useState(0);
+  const [inviting, setInviting] = useState(false);
   const closedByUser = useRef(false);
 
   const load = useCallback(
     async (mode = "load") => {
       if (!testId) {
         setError("معرّف الاختبار مفقود");
+        setMissingCount(0);
         setLoading(false);
         setRefreshing(false);
         return;
@@ -167,7 +172,10 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       ]);
       if (!testsRes.ok) {
         setError(testsRes.error || "تعذر تحميل الاختبار");
-        if (mode !== "refresh") setTest(null);
+        if (mode !== "refresh") {
+          setTest(null);
+          setMissingCount(0);
+        }
         setLoading(false);
         setRefreshing(false);
         return;
@@ -176,6 +184,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       if (!found) {
         setError("الاختبار غير موجود");
         setTest(null);
+        setMissingCount(0);
         setLoading(false);
         setRefreshing(false);
         return;
@@ -183,14 +192,20 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       if (!invitesRes.ok) {
         setError(invitesRes.error || "تعذر تحميل الدعوات");
         setTest(found);
+        if (mode !== "refresh") setMissingCount(0);
         setLoading(false);
         setRefreshing(false);
         return;
       }
+      const missingRes = found.saison_id
+        ? await getMissingInviteesCount(testId, found.saison_id)
+        : { ok: true, count: 0 };
       setTest(found);
       setInvitations(invitesRes.invitations || []);
       setProposedDates(datesRes.ok ? datesRes.dates || [] : []);
       setDateError(datesRes.ok ? "" : datesRes.error || "تعذر تحميل التواريخ");
+      if (missingRes.ok) setMissingCount(missingRes.count || 0);
+      else if (mode !== "refresh") setMissingCount(0);
       setError("");
       setLoading(false);
       setRefreshing(false);
@@ -256,6 +271,15 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       ),
     [proposedDates]
   );
+
+  const showInviteMissing = useMemo(() => {
+    if (!isPlanned(test) || missingCount <= 0) return false;
+    const tomorrow = addCalendarDays(casablancaTodayIso(), 1);
+    if (!tomorrow) return false;
+    return proposedDates.some(
+      (row) => String(row.date_proposee || "").slice(0, 10) >= tomorrow
+    );
+  }, [test, missingCount, proposedDates]);
 
   const applyMemberUpdate = async (invitation, payload) => {
     const result = await adminUpdateInvitation(invitation.id, payload);
@@ -347,6 +371,30 @@ export default function AdminTestDetailScreen({ navigation, route }) {
     );
     setNoteFlash((prev) => ({ ...prev, [invitation.id]: true }));
     load();
+  };
+
+  const confirmInviteMissing = () => {
+    if (inviting || missingCount <= 0) return;
+    const count = missingCount;
+    const saisonId = test?.saison_id;
+    Alert.alert("دعوة الأعضاء الجدد", `سيتم إرسال الدعوة إلى الأعضاء الجدد (${count})`, [
+      { text: "إلغاء", style: "cancel" },
+      {
+        text: "تأكيد",
+        onPress: async () => {
+          setInviting(true);
+          const result = await inviteMissingMembers(testId, saisonId);
+          if (!result.ok) {
+            setInviting(false);
+            Alert.alert("تنبيه", result.error || "تعذر إرسال الدعوات");
+            return;
+          }
+          await load();
+          setInviting(false);
+          Alert.alert(`تم إرسال الدعوة إلى الأعضاء الجدد (${result.count})`);
+        },
+      },
+    ]);
   };
 
   const confirmSend = () => {
@@ -634,6 +682,27 @@ export default function AdminTestDetailScreen({ navigation, route }) {
                 {notedCount} / {totalCount} منقط
               </Text>
             </View>
+
+            {showInviteMissing ? (
+              <TouchableOpacity
+                style={styles.inviteNewBtn}
+                onPress={confirmInviteMissing}
+                disabled={inviting}
+                accessibilityRole="button"
+                accessibilityLabel={`دعوة الأعضاء الجدد (${missingCount})`}
+              >
+                {inviting ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <>
+                    <UserPlus size={16} color={colors.primary} />
+                    <Text style={styles.inviteNewText}>
+                      دعوة الأعضاء الجدد ({missingCount})
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : null}
 
             <SectionCard title="توزيع الأعضاء حسب التواريخ المقترحة">
             {dateError ? <Text style={styles.fieldError}>{dateError}</Text> : null}
@@ -1103,6 +1172,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.muted,
     fontFamily: fonts.regular,
+    ...rtlText,
+  },
+  inviteNewBtn: {
+    height: 36,
+    borderRadius: radii.pill,
+    backgroundColor: colorWithAlpha(colors.primary, 0.12),
+    flexDirection: row,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  inviteNewText: {
+    fontSize: 14,
+    color: colors.primary,
+    fontFamily: fonts.semiBold,
     ...rtlText,
   },
   dateStrip: {

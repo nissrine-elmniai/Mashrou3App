@@ -34,6 +34,8 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { ROLE_LABELS, formatAccountStatusLabel } from "../../constants/roles";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "../../lib/supabase";
+import { USER_ERROR_MESSAGES } from "../../lib/userError";
+import { getEmailChangeRedirectUrl } from "../../lib/authLinking";
 import EditableAvatar from "../../components/EditableAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
@@ -66,6 +68,7 @@ export default function AdminProfileScreen({ navigation }) {
     updateCurrentUserAvatar,
     updateCurrentUserProfile,
     refreshCurrentUser,
+    confirmCurrentPassword,
   } = useApp();
   const insets = useSafeAreaInsets();
   const bottomGap = Math.max(insets.bottom, 16);
@@ -73,6 +76,7 @@ export default function AdminProfileScreen({ navigation }) {
   const [emailModal, setEmailModal] = useState(false);
   const [passwordModal, setPasswordModal] = useState(false);
   const [newEmail, setNewEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const refreshRef = useRef(refreshCurrentUser);
@@ -147,22 +151,29 @@ export default function AdminProfileScreen({ navigation }) {
 
   const openEmailModal = () => {
     setNewEmail(currentUser?.email || "");
+    setCurrentPassword("");
     setEmailModal(true);
   };
 
   const closeEmailModal = () => {
     Keyboard.dismiss();
+    setCurrentPassword("");
     setEmailModal(false);
   };
 
   const saveEmail = async () => {
     const mail = String(newEmail || "").trim().toLowerCase();
-    if (!mail || !mail.includes("@")) {
+    const currentMail = String(currentUser?.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) {
       Alert.alert("تنبيه", "أدخل بريداً إلكترونياً صالحاً");
       return;
     }
-    if (mail === (currentUser?.email || "").toLowerCase()) {
-      setEmailModal(false);
+    if (mail === currentMail) {
+      Alert.alert("تنبيه", "هذا هو بريدك الإلكتروني الحالي");
+      return;
+    }
+    if (!String(currentPassword || "").trim()) {
+      Alert.alert("تنبيه", "أدخل كلمة المرور الحالية");
       return;
     }
 
@@ -175,9 +186,28 @@ export default function AdminProfileScreen({ navigation }) {
         );
         return;
       }
-      // Demande Auth uniquement : profiles.email n'est pas à jour tant que
-      // l'utilisateur n'a pas confirmé le nouveau courriel.
-      const { error } = await supabase.auth.updateUser({ email: mail });
+      const passwordCheck = await confirmCurrentPassword(currentPassword);
+      if (!passwordCheck.ok) {
+        const err = passwordCheck.error;
+        const passthrough =
+          err === USER_ERROR_MESSAGES.network ||
+          err === USER_ERROR_MESSAGES.rateLimit;
+        Alert.alert(
+          "تنبيه",
+          err === "SESSION_INTROUVABLE"
+            ? "تعذر التحقق من الجلسة"
+            : passthrough
+              ? err
+              : "كلمة المرور غير صحيحة"
+        );
+        return;
+      }
+      // Demande Auth uniquement : profiles.email n'est mis à jour qu'après
+      // confirmation, par le trigger 0133.
+      const { error } = await supabase.auth.updateUser(
+        { email: mail },
+        { emailRedirectTo: getEmailChangeRedirectUrl() }
+      );
       if (error) {
         Alert.alert(
           "خطأ",
@@ -186,11 +216,12 @@ export default function AdminProfileScreen({ navigation }) {
         );
         return;
       }
+      setCurrentPassword("");
+      setEmailModal(false);
       Alert.alert(
         "تم",
-        "تم إرسال طلب تغيير البريد. يصبح العنوان الجديد فعّالاً بعد تأكيدك من صندوق الوارد."
+        "تم إرسال رابط تأكيد إلى بريدك الجديد. يصبح العنوان الجديد فعّالاً بعد تأكيده."
       );
-      setEmailModal(false);
     } catch (e) {
       Alert.alert("خطأ", mapSupabaseAuthError(e) || "تعذر تحديث البريد");
     } finally {
@@ -401,11 +432,27 @@ export default function AdminProfileScreen({ navigation }) {
                   placeholderTextColor={palette.placeholder}
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!saving}
+                  textAlign={textAlignStart}
+                />
+                <Text style={styles.modalLabel}>كلمة المرور الحالية</Text>
+                <TextInput
+                  style={styles.input}
+                  value={currentPassword}
+                  onChangeText={setCurrentPassword}
+                  placeholder="••••••••"
+                  placeholderTextColor={palette.placeholder}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!saving}
                   textAlign={textAlignStart}
                 />
                 <TouchableOpacity
                   style={[styles.saveBtn, saving && { opacity: 0.6 }]}
                   onPress={saving ? undefined : saveEmail}
+                  disabled={saving}
                 >
                   {saving ? (
                     <ActivityIndicator color="#fff" />

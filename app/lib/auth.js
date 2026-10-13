@@ -1,4 +1,10 @@
 import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
+import {
+  hasEmailMarker,
+  hasTechnicalMarker,
+  isArabicText,
+  isNetworkError,
+} from "./userError";
 import { ACCOUNT_STATUS, ROLES } from "../constants/roles";
 import { formatGenderLabel } from "./membersApi";
 import {
@@ -369,23 +375,20 @@ export async function requestActivationCode({ email, role }) {
     const payload = await readFunctionPayload(data, error);
     if (payload?.ok === true) return { ok: true };
     if (payload?.ok === false) {
-      return { ok: false, error: payload.error || "تعذر إرسال الرمز" };
-    }
-    const status = error?.context?.status || error?.status;
-    const msg = error?.message || "";
-    if (
-      status === 404 ||
-      /not found|FunctionsFetchError|Failed to send|relay error/i.test(msg)
-    ) {
       return {
         ok: false,
-        error: "دالة إرسال الرمز غير منشورة — أعد نشر send-activation-code",
+        error: mapSupabaseAuthError({
+          message: String(payload.error || "تعذر إرسال الرمز"),
+        }),
       };
     }
-    if (error) return { ok: false, error: msg || "تعذر إرسال الرمز" };
+    if (error) {
+      const status = error?.context?.status ?? error?.status;
+      return { ok: false, error: mapSupabaseAuthError(error, status) };
+    }
     return { ok: false, error: "تعذر إرسال الرمز" };
   } catch (e) {
-    return { ok: false, error: e?.message || "تعذر الاتصال بخدمة الرمز" };
+    return { ok: false, error: mapSupabaseAuthError(e) };
   }
 }
 
@@ -404,6 +407,15 @@ async function readFunctionPayload(data, error) {
     }
   }
   return payload;
+}
+
+function isCleanArabicMessage(text) {
+  const value = String(text || "");
+  return (
+    isArabicText(value) &&
+    !hasEmailMarker(value) &&
+    !hasTechnicalMarker(value)
+  );
 }
 
 export async function activateInvitedAuthAccount({
@@ -433,10 +445,6 @@ export async function activateInvitedAuthAccount({
     // Corps JSON même si HTTP non-2xx (Supabase met souvent l'erreur dans error.context)
     const payload = await readFunctionPayload(data, error);
 
-    if (payload && payload.ok === false) {
-      return { ok: false, error: payload.error || "تعذر إنشاء الحساب" };
-    }
-
     if (payload?.ok === true && payload?.authUser?.id) {
       return {
         ok: true,
@@ -446,43 +454,50 @@ export async function activateInvitedAuthAccount({
       };
     }
 
-    if (error) {
-      const msg = error.message || "";
-      const status = error.context?.status || error.status;
-      if (
-        status === 404 ||
-        /not found|FunctionsFetchError|Failed to send|relay error/i.test(msg)
-      ) {
-        // 404 HTTP peut aussi être « pas d'invitation » — message déjà extrait ci-dessus
-        if (/non-2xx|Edge Function/i.test(msg)) {
-          return {
-            ok: false,
-            error:
-              "تعذر إنشاء الحساب. تأكد أن الإدارة قبلت طلبك بهذا البريد ثم أعد المحاولة.",
-          };
-        }
-        return {
-          ok: false,
-          functionMissing: true,
-          error:
-            "دالة activate-invited-account غير منشورة — أعد نشرها من لوحة Supabase",
-        };
-      }
+    const status = error?.context?.status ?? error?.status;
+    if (error && isNetworkError(error, status)) {
+      return { ok: false, error: mapSupabaseAuthError(error, status) };
+    }
+
+    const functionText =
+      payload && payload.ok === false ? String(payload.error || "") : "";
+    if (isCleanArabicMessage(functionText)) {
+      return { ok: false, error: functionText };
+    }
+
+    if (typeof status === "number" && status >= 500) {
       return {
         ok: false,
-        error:
-          msg ||
-          "تعذر إنشاء الحساب. تحقق من نشر الدالة activate-invited-account.",
+        error: mapSupabaseAuthError(error || { status }, status),
       };
     }
 
+    const msg = error?.message || "";
+    if (
+      error &&
+      (status === 404 ||
+        /not found|FunctionsFetchError|relay error/i.test(msg)) &&
+      /non-2xx|Edge Function/i.test(msg)
+    ) {
+      return {
+        ok: false,
+        error:
+          "تعذر إنشاء الحساب. تأكد أن الإدارة قبلت طلبك بهذا البريد ثم أعد المحاولة.",
+      };
+    }
+
+    if (functionText) {
+      return {
+        ok: false,
+        error: mapSupabaseAuthError({ message: functionText }),
+      };
+    }
+    if (error) {
+      return { ok: false, error: mapSupabaseAuthError(error, status) };
+    }
     return { ok: false, error: "تعذر إنشاء الحساب" };
   } catch (e) {
-    return {
-      ok: false,
-      functionMissing: true,
-      error: e?.message || "تعذر الاتصال بخدمة إنشاء الحساب",
-    };
+    return { ok: false, error: mapSupabaseAuthError(e) };
   }
 }
 
@@ -499,7 +514,7 @@ export async function signUpWithProfile({
   if (role !== ROLES.MEMBER && role !== ROLES.SUPERVISOR) {
     return { ok: false, error: "دور غير صالح" };
   }
-  const invited = await activateInvitedAuthAccount({
+  return activateInvitedAuthAccount({
     email,
     password,
     role,
@@ -507,11 +522,6 @@ export async function signUpWithProfile({
     lastName,
     code,
   });
-  if (!invited.functionMissing) return invited;
-  return {
-    ok: false,
-    error: "دالة activate-invited-account غير منشورة — أعد نشرها من لوحة Supabase",
-  };
 }
 
 export async function signOutAuth() {
@@ -531,15 +541,16 @@ export async function requestPasswordReset(email) {
   });
 
   if (error) {
-    return {
-      ok: false,
-      error:
-        error.message ||
-        "تعذر إرسال رمز الاستعادة. تحقق من نشر الدالة send-password-reset.",
-    };
+    const status = error?.context?.status ?? error?.status;
+    return { ok: false, error: mapSupabaseAuthError(error, status) };
   }
   if (data && data.ok === false) {
-    return { ok: false, error: data.error || "فشل إرسال رمز الاستعادة" };
+    return {
+      ok: false,
+      error: mapSupabaseAuthError({
+        message: String(data.error || "فشل إرسال رمز الاستعادة"),
+      }),
+    };
   }
   return { ok: true };
 }

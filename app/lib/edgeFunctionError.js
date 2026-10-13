@@ -1,3 +1,9 @@
+import {
+  isNetworkError,
+  mapSupabaseAuthError,
+  USER_ERROR_MESSAGES,
+} from "./userError";
+
 /**
  * Extrait un message lisible depuis une erreur supabase.functions.invoke.
  */
@@ -7,8 +13,15 @@ export async function parseEdgeFunctionError(
   options = {}
 ) {
   if (!error) return fallback;
-
   const functionName = options.functionName || "";
+  const status = error?.context?.status ?? error?.status;
+  if (isNetworkError(error, status)) {
+    return withoutEmailForDeleteUser(
+      mapSupabaseAuthError(error, status),
+      functionName
+    );
+  }
+
   let serverError = "";
 
   try {
@@ -29,34 +42,38 @@ export async function parseEdgeFunctionError(
     return "جلسة غير صالحة أو ليس لديك صلاحية. سجّل الخروج ثم الدخول بحساب الأدمن.";
   }
 
-  if (serverError) return serverError;
+  if (serverError) {
+    return withoutEmailForDeleteUser(
+      mapSupabaseAuthError({ message: serverError }),
+      functionName
+    );
+  }
 
   if (/not found|404/i.test(msg)) {
-    if (functionName === "delete-user") {
-      return "دالة حذف الحساب غير منشورة. انشرها: supabase functions deploy delete-user";
-    }
-    return "الدالة غير منشورة بعد على Supabase.";
+    return withoutEmailForDeleteUser(
+      mapSupabaseAuthError(error, status),
+      functionName
+    );
   }
 
   if (/non-2xx|FunctionsRelayError|FunctionsHttpError/i.test(msg)) {
-    if (functionName === "delete-user") {
-      return [
-        "فشل حذف الحساب عبر Supabase.",
-        "تحقق من:",
-        "• نشر الدالة: supabase functions deploy delete-user",
-        "• تسجيل الدخول بحساب الأدمن (admin@mosque.ma)",
-      ].join("\n");
-    }
-    return [
-      "فشل استدعاء Edge Function على Supabase.",
-      "تحقق من:",
-      "• نشر الدالة (send-app-email أو delete-user)",
-      "• تسجيل الدخول بحساب الأدمن",
-      "• إعداد RESEND_API_KEY أو SMTP في Secrets",
-    ].join("\n");
+    return withoutEmailForDeleteUser(
+      mapSupabaseAuthError(error, status),
+      functionName
+    );
   }
 
-  return msg || fallback;
+  return withoutEmailForDeleteUser(
+    mapSupabaseAuthError(msg ? error : { message: fallback }, status),
+    functionName
+  );
+}
+
+function withoutEmailForDeleteUser(message, functionName) {
+  if (functionName === "delete-user" && message === USER_ERROR_MESSAGES.email) {
+    return USER_ERROR_MESSAGES.unknown;
+  }
+  return message;
 }
 
 function isGenericEdgeMessage(value) {
