@@ -30,12 +30,11 @@ import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors } from "../../constants/theme";
 import {
-  GENDER_FILTERS,
   GENDER_FILTER_ALL,
-  countByGender,
   matchesGenderFilter,
   normalizeGender,
 } from "../../lib/genderFilter";
+import GenderSegmentedControl from "../../components/admin/GenderSegmentedControl";
 import {
   sendMemberAcceptEmail,
   sendMemberRejectEmail,
@@ -159,7 +158,6 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     .filter((r) => matchesGenderFilter(genderOf(r), genderFilter))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
-  const genderCounts = countByGender(tabList, genderOf);
 
   // Compteur de l'onglet « قيد الانتظار » : selon le genre choisi.
   const pendingCount = registrations.filter(
@@ -416,27 +414,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           ))}
         </View>
 
-        <View style={styles.filterRow}>
-          {GENDER_FILTERS.map(([key, label]) => (
-            <TouchableOpacity
-              key={key}
-              style={[
-                styles.filterChip,
-                genderFilter === key && styles.filterChipActive,
-              ]}
-              onPress={() => setGenderFilter(key)}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  genderFilter === key && styles.filterChipTextActive,
-                ]}
-              >
-                {`${label} (${genderCounts[key]})`}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <GenderSegmentedControl value={genderFilter} onChange={setGenderFilter} />
 
         {loading && !refreshing ? (
           <ActivityIndicator color={palette.primary} style={styles.loader} />

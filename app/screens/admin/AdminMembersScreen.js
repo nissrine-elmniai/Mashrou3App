@@ -32,12 +32,11 @@ import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { displayProfileEmail } from "../../lib/authEmail";
 import {
-  GENDER_FILTERS,
   GENDER_FILTER_ALL,
-  countByGender,
   matchesGenderFilter,
   normalizeGender,
 } from "../../lib/genderFilter";
+import GenderSegmentedControl from "../../components/admin/GenderSegmentedControl";
 
 const palette = {
   primary: "#2E7D32",
@@ -290,16 +289,6 @@ export default function AdminMembersScreen({ navigation }) {
     return counts;
   }, [members, genderFilter]);
 
-  // Compteurs des pastilles de genre : dans l'onglet actif.
-  const genderCounts = useMemo(
-    () =>
-      countByGender(
-        members.filter((member) => member.category === category),
-        (member) => member.gender
-      ),
-    [members, category]
-  );
-
   // Premier onglet non vide, une fois les comptes connus. Un appui explicite reste prioritaire.
   useEffect(() => {
     if (categoryTouchedRef.current || categoryDefaultedRef.current || loading) return;
@@ -464,21 +453,7 @@ export default function AdminMembersScreen({ navigation }) {
           />
         </ScrollView>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterScroll}
-          contentContainerStyle={styles.filterRow}
-        >
-          {GENDER_FILTERS.map(([key, label]) => (
-            <FilterChip
-              key={key}
-              label={`${label} (${genderCounts[key]})`}
-              active={genderFilter === key}
-              onPress={() => setGenderFilter(key)}
-            />
-          ))}
-        </ScrollView>
+        <GenderSegmentedControl value={genderFilter} onChange={setGenderFilter} />
 
         {loading && !refreshing ? (
           <View style={styles.emptyCard}>
