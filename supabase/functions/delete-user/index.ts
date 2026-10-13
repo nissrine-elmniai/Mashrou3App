@@ -21,6 +21,10 @@
 // test_invitations d'un membre supprimé partent avec le profil (0015).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import {
+  htmlFromText,
+  sendTransactionalEmail,
+} from "../_shared/sendMail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -79,15 +83,6 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
 
-    const { data: targetProfile, error: profileReadError } = await admin
-      .from("profiles")
-      .select("email, canonical_email")
-      .eq("id", userId)
-      .maybeSingle();
-    if (profileReadError) {
-      console.error("lookup profile email:", profileReadError.message);
-    }
-
     // seances.superviseur_id est NOT NULL (schéma live) alors que la FK est
     // ON DELETE SET NULL. deleteUser échoue alors avec une violation
     // not-null. On refuse avant, avec le nom des séances concernées.
@@ -117,6 +112,28 @@ Deno.serve(async (req) => {
       );
     }
 
+    const { data: targetProfile, error: profileReadError } = await admin
+      .from("profiles")
+      .select("role, roles, email, canonical_email, first_name, last_name")
+      .eq("id", userId)
+      .maybeSingle();
+    if (profileReadError) {
+      console.error("lookup profile:", profileReadError.message);
+      return json(
+        {
+          ok: false,
+          error: profileReadError.message || "خطأ غير متوقع في حذف الحساب",
+        },
+        500
+      );
+    }
+    if (targetProfile && targetHasAdminRole(targetProfile)) {
+      return json(
+        { ok: false, error: "لا يمكن حذف حساب المشرف العام" },
+        403
+      );
+    }
+
     // Purgé des FK NO ACTION avant la cascade auth -> profiles.
     // storage.objects.owner référence auth.users sans ON DELETE : une photo
     // de profil bloque deleteUser. Les colonnes legacy from_user_id /
@@ -134,6 +151,7 @@ Deno.serve(async (req) => {
       return json({ ok: false, error: `فشل حذف الاختبارات: ${testError}` }, 502);
     }
     await admin.from("test_resultats").delete().eq("noted_by", userId);
+    await purgeMemberApplications(admin, userId, targetProfile);
 
     let { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError && /objects_owner|storage\.objects|owner_id/i.test(deleteError.message || "")) {
@@ -172,6 +190,12 @@ Deno.serve(async (req) => {
       );
     }
 
+    let emailSent = false;
+    if (body.notifyMember === true) {
+      emailSent = await sendMemberDeletedNotice(targetProfile);
+      return json({ ok: true, emailSent });
+    }
+
     return json({ ok: true });
   } catch (e) {
     return json(
@@ -180,6 +204,109 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+const MEMBER_DELETED_SUBJECT = "تم حذف حسابك";
+const MEMBER_DELETED_TEXT = [
+  "السلام عليكم ورحمة الله،",
+  "تم حذف حسابك وجميع بياناته من تطبيق «مهندس حامل لكتاب الله».",
+  "نشكرك على مشاركتك في المشروع.",
+  "بالتوفيق",
+].join("\n");
+
+async function sendMemberDeletedNotice(
+  profile: {
+    email?: string | null;
+    canonical_email?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  } | null
+): Promise<boolean> {
+  try {
+    const toEmail = String(profile?.email || profile?.canonical_email || "")
+      .trim()
+      .toLowerCase();
+    if (!toEmail) {
+      console.error("member deleted mail: no email");
+      return false;
+    }
+    const toName = [profile?.first_name, profile?.last_name]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    const safeName = toName.replace(/[<>"\r\n]/g, "").trim();
+    const sent = await sendTransactionalEmail({
+      to: safeName ? `"${safeName}" <${toEmail}>` : toEmail,
+      subject: MEMBER_DELETED_SUBJECT,
+      text: MEMBER_DELETED_TEXT,
+      html: htmlFromText(MEMBER_DELETED_TEXT),
+    });
+    if (!sent.ok) {
+      console.error("member deleted mail:", sent.error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("member deleted mail:", e?.message || e);
+    return false;
+  }
+}
+
+function targetHasAdminRole(profile: {
+  role?: string | null;
+  roles?: string[] | null;
+}) {
+  if (profile.role === "admin") return true;
+  return Array.isArray(profile.roles) && profile.roles.includes("admin");
+}
+
+async function purgeMemberApplications(
+  admin: ReturnType<typeof createClient>,
+  userId: string,
+  profile: { email?: string | null; canonical_email?: string | null } | null
+) {
+  try {
+    const wanted = new Set(
+      [profile?.email, profile?.canonical_email]
+        .map((value) => String(value ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const rows: { id?: string | null; user_id?: string | null; email?: string | null }[] =
+      [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await admin
+        .from("member_applications")
+        .select("id, user_id, email")
+        .order("id")
+        .range(from, from + pageSize - 1);
+      if (error) {
+        console.error("lookup member_applications:", error.message);
+        return;
+      }
+      rows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+
+    const ids = [
+      ...new Set(
+        rows
+          .filter((row) => {
+            if (row.user_id === userId) return true;
+            const mail = String(row.email ?? "").trim().toLowerCase();
+            return !!mail && wanted.has(mail);
+          })
+          .map((row) => row.id)
+          .filter((id): id is string => !!id)
+      ),
+    ];
+    if (!ids.length) return;
+
+    const { error } = await admin.from("member_applications").delete().in("id", ids);
+    if (error) console.error("delete member_applications:", error.message);
+  } catch (e) {
+    console.error("delete member_applications:", e?.message || e);
+  }
+}
 
 async function revokeSupervisorInvitations(
   admin: ReturnType<typeof createClient>,

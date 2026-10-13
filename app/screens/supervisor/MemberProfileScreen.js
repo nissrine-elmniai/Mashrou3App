@@ -23,7 +23,7 @@ import {
   Modal,
   Pressable,
   TextInput,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -304,6 +304,7 @@ export default function MemberProfileScreen({ navigation, route }) {
   const [memberDeleteEmail, setMemberDeleteEmail] = useState(null);
   const [canDeleteMember, setCanDeleteMember] = useState(false);
   const [deleteSheet, setDeleteSheet] = useState(false);
+  const [deleteKeyboardHeight, setDeleteKeyboardHeight] = useState(0);
   const [typedEmail, setTypedEmail] = useState("");
   const [deletingMember, setDeletingMember] = useState(false);
   const deletingMemberRef = useRef(false);
@@ -615,6 +616,24 @@ export default function MemberProfileScreen({ navigation, route }) {
     !!memberDeleteEmail &&
     typedEmail.trim().toLowerCase() === memberDeleteEmail.trim().toLowerCase();
 
+  useEffect(() => {
+    if (!deleteSheet) {
+      setDeleteKeyboardHeight(0);
+      return undefined;
+    }
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setDeleteKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setDeleteKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+      setDeleteKeyboardHeight(0);
+    };
+  }, [deleteSheet]);
+
   const closeDeleteSheet = () => {
     if (deletingMember) return;
     setDeleteSheet(false);
@@ -624,11 +643,12 @@ export default function MemberProfileScreen({ navigation, route }) {
   const confirmDeleteMember = () => {
     Alert.alert(
       "حذف الحساب",
-      "سيتم حذف حساب هذا العضو وجميع بياناته نهائيًا. لا يمكن التراجع عن هذا الإجراء.",
+      `سيتم حذف حساب ${fullName} (${memberDeleteEmail}) وجميع بياناته نهائيًا: الملف الشخصي، التقدم، الحضور، الرسائل، الصورة. لا يمكن التراجع عن هذا الإجراء.`,
       [
         { text: "إلغاء", style: "cancel" },
         {
           text: "متابعة",
+          style: "destructive",
           onPress: () => {
             setTypedEmail("");
             setDeleteSheet(true);
@@ -654,7 +674,12 @@ export default function MemberProfileScreen({ navigation, route }) {
       return;
     }
     setDeleteSheet(false);
-    navigation.goBack();
+    const successMessage = res.emailSent
+      ? "تم حذف حساب العضو وإرسال رسالة التأكيد إلى بريده."
+      : `تم حذف حساب العضو، لكن تعذّر إرسال رسالة التأكيد. أرسلها يدويًا إلى ${memberDeleteEmail}.`;
+    Alert.alert(successMessage, "", [
+      { text: "حسنًا", onPress: () => navigation.goBack() },
+    ]);
   };
 
   const headerIconColor = adminTheme ? "#333333" : "white";
@@ -878,60 +903,68 @@ export default function MemberProfileScreen({ navigation, route }) {
         animationType="slide"
         onRequestClose={closeDeleteSheet}
       >
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        <View
+          style={[
+            styles.modalOverlay,
+            {
+              paddingBottom:
+                deleteKeyboardHeight > 0
+                  ? deleteKeyboardHeight + 8
+                  : Math.max(insets.bottom, 16),
+            },
+          ]}
         >
           <Pressable
             style={StyleSheet.absoluteFill}
             onPress={closeDeleteSheet}
           />
-          <View
-            style={[
-              styles.modalCard,
-              { paddingBottom: Math.max(insets.bottom, 16) + 12 },
-            ]}
-          >
-            <Text style={styles.modalTitle}>حذف الحساب</Text>
-            <Text style={styles.modalHint}>اكتب البريد الإلكتروني للعضو للتأكيد</Text>
-            <TextInput
-              style={styles.deleteEmailInput}
-              value={typedEmail}
-              onChangeText={setTypedEmail}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              editable={!deletingMember}
-              textAlign={textAlignStart}
-              accessibilityLabel="البريد الإلكتروني للعضو"
-            />
-            <TouchableOpacity
-              style={[
-                styles.deleteConfirmBtn,
-                (!emailMatches || deletingMember) && styles.deleteConfirmBtnDisabled,
-              ]}
-              onPress={submitDeleteMember}
-              disabled={!emailMatches || deletingMember}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel="حذف الحساب"
+          <View style={styles.modalCard}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
             >
-              {deletingMember ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.deleteConfirmText}>حذف الحساب</Text>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.modalCloseBtn}
-              onPress={closeDeleteSheet}
-              disabled={deletingMember}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.modalCloseBtnText}>إلغاء</Text>
-            </TouchableOpacity>
+              <Text style={styles.modalTitle}>حذف الحساب</Text>
+              <Text style={styles.modalHint}>اكتب البريد الإلكتروني للعضو للتأكيد</Text>
+              <TextInput
+                style={styles.deleteEmailInput}
+                value={typedEmail}
+                onChangeText={setTypedEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                editable={!deletingMember}
+                textAlign={textAlignStart}
+                accessibilityLabel="البريد الإلكتروني للعضو"
+              />
+              <TouchableOpacity
+                style={[
+                  styles.deleteConfirmBtn,
+                  (!emailMatches || deletingMember) && styles.deleteConfirmBtnDisabled,
+                ]}
+                onPress={submitDeleteMember}
+                disabled={!emailMatches || deletingMember}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="حذف الحساب"
+              >
+                {deletingMember ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.deleteConfirmText}>حذف الحساب</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={closeDeleteSheet}
+                disabled={deletingMember}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.modalCloseBtnText}>إلغاء</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
     </SafeAreaView>
   );

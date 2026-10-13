@@ -540,7 +540,7 @@ export async function deleteMemberAccount({ userId }) {
       accessToken = refreshed.data?.session?.access_token || accessToken;
     }
     const invokePromise = supabase.functions.invoke("delete-user", {
-      body: { userId },
+      body: { userId, notifyMember: true },
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     });
     const { data, error, response } = await withTimeout(
@@ -568,7 +568,7 @@ export async function deleteMemberAccount({ userId }) {
       };
     }
 
-    return { ok: true };
+    return { ok: true, emailSent: data?.emailSent === true };
   } catch (e) {
     return { ok: false, status: null, error: e?.message || "تعذر الاتصال بـ Supabase" };
   }
