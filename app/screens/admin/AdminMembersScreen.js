@@ -31,6 +31,13 @@ import { initials } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { displayProfileEmail } from "../../lib/authEmail";
+import {
+  GENDER_FILTERS,
+  GENDER_FILTER_ALL,
+  countByGender,
+  matchesGenderFilter,
+  normalizeGender,
+} from "../../lib/genderFilter";
 
 const palette = {
   primary: "#2E7D32",
@@ -93,6 +100,8 @@ export default function AdminMembersScreen({ navigation }) {
   const [progressions, setProgressions] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(CATEGORY_REGISTERED);
+  // Conservé pendant la session de l'écran (pas de stockage).
+  const [genderFilter, setGenderFilter] = useState(GENDER_FILTER_ALL);
   const categoryTouchedRef = useRef(false);
   const categoryDefaultedRef = useRef(false);
   const [avatarNonce, setAvatarNonce] = useState(() => Date.now());
@@ -241,6 +250,7 @@ export default function AdminMembersScreen({ navigation }) {
           school: profile.school || null,
           levelLabel: profile.level || null,
           hifzAmount: profile.hifz_amount || null,
+          gender: normalizeGender(profile.genre),
           pct,
           category: categoryKey,
           session: !inscriptionsOk ? "—" : seance?.nom || null,
@@ -266,6 +276,7 @@ export default function AdminMembersScreen({ navigation }) {
     progressOk,
   ]);
 
+  // Compteurs des onglets : selon le genre choisi (pas la recherche, comme avant).
   const categoryCounts = useMemo(() => {
     const counts = {
       [CATEGORY_REGISTERED]: 0,
@@ -273,10 +284,21 @@ export default function AdminMembersScreen({ navigation }) {
       [CATEGORY_OTHER]: 0,
     };
     members.forEach((member) => {
+      if (!matchesGenderFilter(member.gender, genderFilter)) return;
       counts[member.category] += 1;
     });
     return counts;
-  }, [members]);
+  }, [members, genderFilter]);
+
+  // Compteurs des pastilles de genre : dans l'onglet actif.
+  const genderCounts = useMemo(
+    () =>
+      countByGender(
+        members.filter((member) => member.category === category),
+        (member) => member.gender
+      ),
+    [members, category]
+  );
 
   // Premier onglet non vide, une fois les comptes connus. Un appui explicite reste prioritaire.
   useEffect(() => {
@@ -298,6 +320,7 @@ export default function AdminMembersScreen({ navigation }) {
   const filteredMembers = useMemo(() => {
     return members.filter((member) => {
       if (member.category !== category) return false;
+      if (!matchesGenderFilter(member.gender, genderFilter)) return false;
       if (!q) return true;
       return (
         member.name.toLowerCase().includes(q) ||
@@ -305,7 +328,7 @@ export default function AdminMembersScreen({ navigation }) {
         (member.supervisorName || "").toLowerCase().includes(q)
       );
     });
-  }, [members, category, q]);
+  }, [members, category, genderFilter, q]);
 
   const openMemberProfile = (member) => {
     navigation.navigate("MemberProfile", {
@@ -333,6 +356,7 @@ export default function AdminMembersScreen({ navigation }) {
   const emptyMessage = (() => {
     if (members.length === 0) return "لا يوجد أعضاء في التطبيق بعد";
     if (q) return "لا توجد نتائج مطابقة للبحث";
+    if (genderFilter !== GENDER_FILTER_ALL) return "لا يوجد أعضاء من هذا الجنس في هذا التصنيف";
     if (category === CATEGORY_WAITING) return "لا يوجد أعضاء بانتظار حصة";
     if (category === CATEGORY_OTHER) return "لا يوجد أعضاء غير مسجّلين";
     return "لا يوجد أعضاء مسجّلون في هذا الموسم";
@@ -438,6 +462,22 @@ export default function AdminMembersScreen({ navigation }) {
             active={category === CATEGORY_OTHER}
             onPress={() => chooseCategory(CATEGORY_OTHER)}
           />
+        </ScrollView>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
+          contentContainerStyle={styles.filterRow}
+        >
+          {GENDER_FILTERS.map(([key, label]) => (
+            <FilterChip
+              key={key}
+              label={`${label} (${genderCounts[key]})`}
+              active={genderFilter === key}
+              onPress={() => setGenderFilter(key)}
+            />
+          ))}
         </ScrollView>
 
         {loading && !refreshing ? (

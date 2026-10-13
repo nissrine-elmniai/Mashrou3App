@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -29,6 +29,13 @@ import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { colors } from "../../constants/theme";
+import {
+  GENDER_FILTERS,
+  GENDER_FILTER_ALL,
+  countByGender,
+  matchesGenderFilter,
+  normalizeGender,
+} from "../../lib/genderFilter";
 import {
   sendMemberAcceptEmail,
   sendMemberRejectEmail,
@@ -62,6 +69,8 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   const bottomGap = Math.max(insets.bottom, 16);
   const [filter, setFilter] = useState("pending");
   const [kindFilter, setKindFilter] = useState("all");
+  // Conservé pendant la session de l'écran (pas de stockage).
+  const [genderFilter, setGenderFilter] = useState(GENDER_FILTER_ALL);
   const [sendingId, setSendingId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,58 +109,65 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
     return getRegistrationKind(reg) === kindFilter;
   };
 
-  const list = useMemo(() => {
-    return registrations
-      .filter((r) => {
-        const season = seasons.find((s) => s.id === r.seasonId);
-        if (r.seasonId && season && season.type !== seasonType) return false;
-        if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
-        if (
-          seasonType === SEASON_TYPES.REGULAR &&
-          activeSeason &&
-          r.seasonId &&
-          r.seasonId !== activeSeason.id
-        ) {
-          return false;
-        }
-        if (!matchesKind(r)) return false;
-        if (filter === "all") return true;
-        if (filter === "pending") {
-          return r.status === REGISTRATION_STATUS.PENDING;
-        }
-        if (filter === "accepted") {
-          return (
-            r.status === REGISTRATION_STATUS.ACCEPTED ||
-            r.status === REGISTRATION_STATUS.INVITED ||
-            r.status === REGISTRATION_STATUS.ACTIVATED
-          );
-        }
-        if (filter === "rejected") {
-          return r.status === REGISTRATION_STATUS.REJECTED;
-        }
-        return r.status === filter;
-      })
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }, [registrations, filter, seasons, seasonType, kindFilter, activeSeason?.id]);
+  /**
+   * Genre de la demande : member_applications.genre (déjà chargé, select "*"),
+   * sinon celui du profil lié s'il est déjà dans le contexte (aucune requête).
+   */
+  const genderOf = (reg) =>
+    normalizeGender(reg.gender) ||
+    normalizeGender(reg.userId ? getUserById(reg.userId)?.gender : null);
 
-  const pendingCount = useMemo(
-    () =>
-      registrations.filter((r) => {
-        const season = seasons.find((s) => s.id === r.seasonId);
-        if (r.seasonId && season && season.type !== seasonType) return false;
-        if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
-        if (
-          seasonType === SEASON_TYPES.REGULAR &&
-          activeSeason &&
-          r.seasonId &&
-          r.seasonId !== activeSeason.id
-        ) {
-          return false;
-        }
-        return r.status === REGISTRATION_STATUS.PENDING;
-      }).length,
-    [registrations, seasons, seasonType, activeSeason?.id]
+  const inSeasonScope = (r) => {
+    const season = seasons.find((s) => s.id === r.seasonId);
+    if (r.seasonId && season && season.type !== seasonType) return false;
+    if (!r.seasonId && seasonType !== SEASON_TYPES.REGULAR) return false;
+    if (
+      seasonType === SEASON_TYPES.REGULAR &&
+      activeSeason &&
+      r.seasonId &&
+      r.seasonId !== activeSeason.id
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  const matchesStatusFilter = (r) => {
+    if (filter === "all") return true;
+    if (filter === "pending") {
+      return r.status === REGISTRATION_STATUS.PENDING;
+    }
+    if (filter === "accepted") {
+      return (
+        r.status === REGISTRATION_STATUS.ACCEPTED ||
+        r.status === REGISTRATION_STATUS.INVITED ||
+        r.status === REGISTRATION_STATUS.ACTIVATED
+      );
+    }
+    if (filter === "rejected") {
+      return r.status === REGISTRATION_STATUS.REJECTED;
+    }
+    return r.status === filter;
+  };
+
+  // Onglet + type de demande, avant le genre (base des compteurs de genre).
+  const tabList = registrations.filter(
+    (r) => inSeasonScope(r) && matchesKind(r) && matchesStatusFilter(r)
   );
+
+  const list = tabList
+    .filter((r) => matchesGenderFilter(genderOf(r), genderFilter))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+  const genderCounts = countByGender(tabList, genderOf);
+
+  // Compteur de l'onglet « قيد الانتظار » : selon le genre choisi.
+  const pendingCount = registrations.filter(
+    (r) =>
+      inSeasonScope(r) &&
+      r.status === REGISTRATION_STATUS.PENDING &&
+      matchesGenderFilter(genderOf(r), genderFilter)
+  ).length;
 
   const bellCount = stats?.pendingRegs ?? pendingCount;
 
@@ -395,6 +411,28 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
                 ]}
               >
                 {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.filterRow}>
+          {GENDER_FILTERS.map(([key, label]) => (
+            <TouchableOpacity
+              key={key}
+              style={[
+                styles.filterChip,
+                genderFilter === key && styles.filterChipActive,
+              ]}
+              onPress={() => setGenderFilter(key)}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  genderFilter === key && styles.filterChipTextActive,
+                ]}
+              >
+                {`${label} (${genderCounts[key]})`}
               </Text>
             </TouchableOpacity>
           ))}
