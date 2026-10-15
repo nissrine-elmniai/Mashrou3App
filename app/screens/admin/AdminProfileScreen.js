@@ -65,6 +65,7 @@ export default function AdminProfileScreen({ navigation }) {
     currentUser,
     stats,
     logout,
+    isLoggingOut,
     updateCurrentUserAvatar,
     updateCurrentUserProfile,
     refreshCurrentUser,
@@ -137,6 +138,8 @@ export default function AdminProfileScreen({ navigation }) {
   };
 
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -379,11 +382,16 @@ export default function AdminProfileScreen({ navigation }) {
         </View>
 
         <TouchableOpacity
-          style={styles.logoutBtn}
+          style={[styles.logoutBtn, isLoggingOut && styles.logoutBtnBusy]}
           onPress={handleLogout}
+          disabled={isLoggingOut}
           activeOpacity={0.75}
         >
-          <LogOut size={20} color={palette.red} />
+          {isLoggingOut ? (
+            <ActivityIndicator size="small" color={palette.red} />
+          ) : (
+            <LogOut size={20} color={palette.red} />
+          )}
           <Text style={styles.logoutText}>تسجيل الخروج</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -653,6 +661,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginTop: 4,
   },
+  logoutBtnBusy: { opacity: 0.6 },
   logoutText: {
     color: palette.red,
     fontWeight: "700",

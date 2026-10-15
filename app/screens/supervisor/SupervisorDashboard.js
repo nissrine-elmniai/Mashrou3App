@@ -62,7 +62,7 @@ const MIN_BOTTOM_GAP = 16;
 export default function SupervisorDashboard({ navigation }) {
   const insets = useSafeAreaInsets();
   const bottomPad = Math.max(insets.bottom, MIN_BOTTOM_GAP);
-  const { currentUser, logout, seasons } = useApp();
+  const { currentUser, logout, isLoggingOut, seasons } = useApp();
 
   const [tab, setTab] = useState("home");
   const [selectedGroupId, setSelectedGroupId] = useState(null);
@@ -125,6 +125,8 @@ export default function SupervisorDashboard({ navigation }) {
   }, [myGroups, selectedGroupId]);
 
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -210,8 +212,16 @@ export default function SupervisorDashboard({ navigation }) {
               <Text style={styles.headerName}>{fullName || "المشرف"}</Text>
             </View>
             <View style={styles.headerEnd}>
-              <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
-                <Ionicons name="log-out-outline" size={22} color="white" />
+              <TouchableOpacity
+                style={styles.headerBtn}
+                onPress={handleLogout}
+                disabled={isLoggingOut}
+              >
+                {isLoggingOut ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Ionicons name="log-out-outline" size={22} color="white" />
+                )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.headerIconWrap}

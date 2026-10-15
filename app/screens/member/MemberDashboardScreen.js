@@ -287,6 +287,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
     seasons,
     registrations,
     logout,
+    isLoggingOut,
     submitSeasonRegistration,
     getNotificationsForUser,
     getMenuBadgeCounts,
@@ -983,6 +984,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
     : "";
 
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -1087,8 +1090,16 @@ export default function MemberDashboardScreen({ navigation, route }) {
             ) : null}
             {tab === "home" || tab === "profile" ? (
               <View style={styles.headerEnd}>
-                <TouchableOpacity style={styles.headerBtn} onPress={handleLogout}>
-                  <Ionicons name="log-out-outline" size={22} color="white" />
+                <TouchableOpacity
+                  style={styles.headerBtn}
+                  onPress={handleLogout}
+                  disabled={isLoggingOut}
+                >
+                  {isLoggingOut ? (
+                    <ActivityIndicator size="small" color="white" />
+                  ) : (
+                    <Ionicons name="log-out-outline" size={22} color="white" />
+                  )}
                 </TouchableOpacity>
                 {tab === "home" ? (
                   <>

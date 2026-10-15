@@ -41,6 +41,7 @@ export default function MemberProfileScreen({ navigation }) {
   const {
     currentUser,
     logout,
+    isLoggingOut,
     seasons,
     updateCurrentUserAvatar,
   } = useApp();
@@ -83,6 +84,8 @@ export default function MemberProfileScreen({ navigation }) {
     records: [],
   });
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -271,10 +274,15 @@ export default function MemberProfileScreen({ navigation }) {
         <TouchableOpacity
           style={styles.headerBtn}
           onPress={handleLogout}
+          disabled={isLoggingOut}
           activeOpacity={0.7}
           accessibilityLabel="تسجيل الخروج"
         >
-          <Ionicons name="log-out-outline" size={22} color="white" />
+          {isLoggingOut ? (
+            <ActivityIndicator size="small" color="white" />
+          ) : (
+            <Ionicons name="log-out-outline" size={22} color="white" />
+          )}
         </TouchableOpacity>
       </View>
 

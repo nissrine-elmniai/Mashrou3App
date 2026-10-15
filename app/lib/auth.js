@@ -1,5 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
+import {
+  supabase,
+  mapSupabaseAuthError,
+  isSupabaseConfigured,
+  SUPABASE_URL,
+} from "./supabase";
 import {
   hasEmailMarker,
   hasTechnicalMarker,
@@ -530,6 +535,34 @@ export async function signOutAuth() {
   const { error } = await supabase.auth.signOut();
   if (error) return { ok: false, error: mapSupabaseAuthError(error) };
   return { ok: true };
+}
+
+/**
+ * Clé de session de supabase-js. supabase.js ne fixe pas de storageKey :
+ * on lit celle du client Auth, sinon la dérivation par défaut de
+ * SupabaseClient (`sb-<premier label du host>-auth-token`).
+ */
+function authSessionStorageKey() {
+  const fromClient = supabase.auth?.storageKey;
+  if (typeof fromClient === "string" && fromClient) return fromClient;
+  return `sb-${new URL(SUPABASE_URL).hostname.split(".")[0]}-auth-token`;
+}
+
+/**
+ * Repli de déconnexion quand signOut échoue (hors ligne avec jeton expiré :
+ * supabase-js renvoie l'erreur sans effacer la session). Supprime les mêmes
+ * clés que GoTrueClient._removeSession. N'émet pas SIGNED_OUT.
+ * @returns {Promise<boolean>} true si la suppression a réussi
+ */
+export async function clearLocalAuthSession() {
+  try {
+    const key = authSessionStorageKey();
+    await AsyncStorage.multiRemove([key, `${key}-code-verifier`, `${key}-user`]);
+    return true;
+  } catch (e) {
+    console.warn("[auth] clearLocalAuthSession:", e?.message || e);
+    return false;
+  }
 }
 
 /**

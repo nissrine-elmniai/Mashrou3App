@@ -175,11 +175,16 @@ export async function deleteMemberProgramRemote(programId) {
 /**
  * Hydrate les programmes depuis Supabase seul.
  * Distant vide → liste vide. Ne pousse jamais le cache local (seed compris).
- * @returns {{ ok, programs, source? }}
+ * Sans membre ou sans saison, aucune lecture serveur : ok:false + skipped,
+ * l'appelant garde son cache et pourra réessayer.
+ * @returns {{ ok, programs, source?, skipped? }}
  */
 export async function syncMemberProgramsWithSupabase(memberId, saisonId) {
-  if (!isSupabaseConfigured() || !memberId || !saisonId) {
+  if (!isSupabaseConfigured()) {
     return { ok: true, programs: [], source: "empty" };
+  }
+  if (!memberId || !saisonId) {
+    return { ok: false, skipped: true, programs: null };
   }
   const remote = await fetchMyMemberPrograms(saisonId);
   if (!remote.ok) {

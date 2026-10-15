@@ -7,9 +7,19 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { ActivityIndicator, View, StyleSheet } from "react-native";
+import { ActivityIndicator, AppState, View, StyleSheet } from "react-native";
 import { emptyState, bootstrapUsers, bootstrapSeasons } from "../data/seed";
-import { loadAppState, saveAppState, clearAppState } from "../data/storage";
+import {
+  loadAppState,
+  saveAppState,
+  clearAppState,
+  isAppStateOwnedBy,
+} from "../data/storage";
+import { supabase } from "../lib/supabase";
+import {
+  flushMemberProgressDelta,
+  resetMemberProgressState,
+} from "../lib/progressApi";
 import {
   isPasswordTooShort,
   passwordTooShortMessage,
@@ -38,6 +48,7 @@ import {
   verifyCurrentPassword,
   signUpWithProfile,
   signOutAuth,
+  clearLocalAuthSession,
   requestPasswordReset,
   isPasswordRecoveryInProgress,
   discardPersistedPasswordRecovery,
@@ -96,6 +107,16 @@ import {
 } from "../lib/memberProgramsApi";
 
 const AppContext = createContext(null);
+
+/** Attente maximale de l'envoi des ± ثمن en attente avant la déconnexion. */
+const LOGOUT_FLUSH_TIMEOUT_MS = 3000;
+
+/**
+ * Intervalle minimal entre deux essais AUTOMATIQUES de synchro des programmes
+ * (changement de saisons, retour au premier plan). Sans sonde réseau (lot 1),
+ * un échec réseau ne se distingue pas d'un refus RLS / trigger : on borne tout.
+ */
+const PROGRAMS_AUTO_RETRY_MS = 30000;
 
 const uid = (prefix) =>
   `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
@@ -160,27 +181,31 @@ function splitFullName(fullName) {
   };
 }
 
-/** Union des rôles Supabase (profiles.role) et mock locaux pour le routing multi-rôle. */
-function mergeRolesForRouting(profile, local) {
-  const merged = new Set();
-  const profileRole = normalizeAppRole(profile?.role);
-  if (profileRole) merged.add(profileRole);
-  if (local) {
-    normalizeRoles(local).forEach((r) => {
-      const n = normalizeAppRole(r);
-      if (n) merged.add(n);
-    });
-  }
-  if (merged.size === 0) merged.add(ROLES.MEMBER);
-  return [...merged];
+/**
+ * Rôles de routing = rôles du profil lu sur le serveur, sans fusion avec le cache
+ * local. Même règle que private.profile_roles_array (migration 0026) :
+ * roles[] s'il est non vide, sinon role, sinon member.
+ */
+function rolesFromServerProfile(profile) {
+  const source =
+    Array.isArray(profile?.roles) && profile.roles.length > 0
+      ? profile.roles
+      : [profile?.role];
+  const roles = new Set();
+  source.forEach((r) => {
+    const n = normalizeAppRole(r);
+    if (n) roles.add(n);
+  });
+  if (roles.size === 0) roles.add(ROLES.MEMBER);
+  return [...roles];
 }
 
 /** Applique le rôle de routing (session) sur un utilisateur issu du profil Supabase. */
-function applySupabaseSessionRole(appUser, profile, local, preferredRole) {
-  const profileRole = normalizeAppRole(profile?.role) || ROLES.MEMBER;
-  const rolesForRouting = mergeRolesForRouting(profile, local);
+function applySupabaseSessionRole(appUser, profile, preferredRole) {
+  const rolesForRouting = rolesFromServerProfile(profile);
+  // role: null : sinon normalizeRoles réintroduirait profiles.role absent de roles[].
   const sessionRole = resolveSessionRole(
-    { ...appUser, roles: rolesForRouting },
+    { ...appUser, role: null, roles: rolesForRouting },
     preferredRole
   );
   return {
@@ -222,9 +247,82 @@ export function AppProvider({ children }) {
    *  jamais le login mock existant. */
   const [supabaseSession, setSupabaseSession] = useState(null);
   const skipNextSave = useRef(true);
+  /** authId du compte à qui appartiennent les données en mémoire (écrit dans app_state_v3). */
+  const ownerAuthIdRef = useRef(null);
   const programsSyncedRef = useRef(false);
   const applicationsSyncedRef = useRef(false);
   const memberApplicationsSyncedRef = useRef(null);
+  /** Incrémenté pour relancer la synchro des programmes après un échec. */
+  const [programsSyncTick, setProgramsSyncTick] = useState(0);
+  /** Date (ms) de la dernière requête de synchro des programmes, 0 = aucune. */
+  const programsLastAttemptRef = useRef(0);
+  /** true : le prochain essai vient de l'ouverture de l'onglet (hors limite des 30 s). */
+  const programsManualRetryRef = useRef(false);
+  /** Déconnexion en cours (flush ± ثمن, push, purge) : une seule à la fois. */
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const logoutTaskRef = useRef(null);
+
+  /**
+   * Vide l'état lié au compte, app_state_v3 et la file ± ثمن de progressApi.
+   * Idempotente : logout() l'appelle, puis l'événement SIGNED_OUT la rappelle.
+   * seasons est conservé (données publiques, non liées au compte).
+   */
+  const purgeSessionState = useCallback(async () => {
+    skipNextSave.current = true;
+    ownerAuthIdRef.current = null;
+    programsSyncedRef.current = false;
+    programsLastAttemptRef.current = 0;
+    programsManualRetryRef.current = false;
+    applicationsSyncedRef.current = false;
+    memberApplicationsSyncedRef.current = null;
+    setCurrentUser(null);
+    setSupabaseSession(null);
+    setUsers([]);
+    setRegistrations([]);
+    setGroups([]);
+    setProgress([]);
+    setAttendance([]);
+    setExams([]);
+    setNotifications([]);
+    setMemberPrograms([]);
+    resetMemberProgressState();
+    await clearAppState();
+  }, []);
+
+  // Déconnexion décidée par le serveur (session révoquée, refresh token refusé).
+  // Un échec réseau du rafraîchissement n'émet pas SIGNED_OUT (auth-js garde la session).
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return undefined;
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event !== "SIGNED_OUT") return;
+      // Rien d'attendu dans le callback (verrou Auth) : purge différée.
+      setTimeout(() => {
+        purgeSessionState().catch((e) => {
+          console.warn("[auth] purge SIGNED_OUT:", e?.message || e);
+        });
+      }, 0);
+    });
+    return () => data?.subscription?.unsubscribe();
+  }, [purgeSessionState]);
+
+  /**
+   * Ouverture de l'onglet programmes : un essai, même dans les 30 s suivant
+   * le précédent, si la dernière synchro n'a pas abouti.
+   */
+  const retryMemberProgramsSync = useCallback(() => {
+    if (programsSyncedRef.current) return;
+    programsManualRetryRef.current = true;
+    setProgramsSyncTick((n) => n + 1);
+  }, []);
+
+  // Retour au premier plan : essai automatique (soumis à la limite des 30 s).
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active" || programsSyncedRef.current) return;
+      setProgramsSyncTick((n) => n + 1);
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -232,6 +330,9 @@ export function AppProvider({ children }) {
       const remoteMode = isSupabaseConfigured();
       let loadedUsers = remoteMode ? [] : bootstrapUsers;
       let loadedSeasons = remoteMode ? [] : bootstrapSeasons;
+      // Données liées au compte : appliquées après lecture de la session,
+      // une fois le propriétaire du cache vérifié.
+      let ownedState = null;
       if (saved) {
         loadedUsers =
           Array.isArray(saved.users) && saved.users.length > 0
@@ -247,19 +348,18 @@ export function AppProvider({ children }) {
             : remoteMode
               ? []
               : bootstrapSeasons;
-        setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
-        setRegistrations(saved.registrations || []);
         setGroups(remoteMode ? [] : saved.groups || []);
         setProgress(remoteMode ? [] : saved.progress || []);
         setAttendance(remoteMode ? [] : saved.attendance || []);
         setExams(remoteMode ? [] : saved.exams || []);
-        setNotifications(saved.notifications || []);
-        setMemberPrograms(
-          migrateMemberPrograms(
+        ownedState = {
+          registrations: saved.registrations || [],
+          notifications: saved.notifications || [],
+          memberPrograms: migrateMemberPrograms(
             saved.memberPrograms || emptyState.memberPrograms || []
-          )
-        );
+          ),
+        };
       } else {
         setUsers(loadedUsers);
         setSeasons(uniqSeasonsById(loadedSeasons));
@@ -288,12 +388,34 @@ export function AppProvider({ children }) {
       }
 
       let restored = null;
+      let cacheDiscarded = false;
       if (isSupabaseConfigured()) {
         // Avant toute restauration : une clé de récupération = signOut et login.
         const interruptedRecovery = await discardPersistedPasswordRecovery();
         const sessionResult = interruptedRecovery
           ? { session: null }
           : await getCurrentAuthSession();
+        const sessionAuthId = sessionResult.session?.user?.id || null;
+        if (saved) {
+          // Ancien format (sans ownerAuthId) ou cache d'un autre compte que la
+          // session : users, demandes, programmes, notifications et rôles du
+          // cache sont ignorés. Sans session, login() tranchera.
+          const owned = sessionAuthId
+            ? isAppStateOwnedBy(saved, sessionAuthId)
+            : !!saved.ownerAuthId;
+          if (!owned) {
+            loadedUsers = [];
+            ownedState = {
+              registrations: [],
+              notifications: [],
+              memberPrograms: [],
+            };
+            cacheDiscarded = true;
+          }
+          ownerAuthIdRef.current = owned ? saved.ownerAuthId : sessionAuthId;
+        } else {
+          ownerAuthIdRef.current = sessionAuthId;
+        }
         // Récupération OTP : ne pas hydrater l'utilisateur depuis cette session.
         if (sessionResult.session?.user && !isPasswordRecoveryInProgress()) {
           const profileResult = await fetchProfile(sessionResult.session.user.id);
@@ -315,7 +437,6 @@ export function AppProvider({ children }) {
               restored = applySupabaseSessionRole(
                 restoredBase,
                 profileResult.profile,
-                local,
                 null
               );
               setSupabaseSession(sessionResult.session);
@@ -325,14 +446,31 @@ export function AppProvider({ children }) {
             }
           }
         }
+        // Admin : les demandes ne sont jamais reprises du disque (ancien cache
+        // compris) ; elles sont rechargées depuis le serveur.
+        if (
+          restored &&
+          userHasRole(restored, ROLES.ADMIN) &&
+          ownedState?.registrations?.length
+        ) {
+          ownedState = { ...ownedState, registrations: [] };
+          cacheDiscarded = true;
+        }
       } else if (saved?.currentUserId) {
         restored = loadedUsers.find((u) => u.id === saved.currentUserId) || null;
       }
 
+      if (ownedState) {
+        setUsers(loadedUsers);
+        setRegistrations(ownedState.registrations);
+        setNotifications(ownedState.notifications);
+        setMemberPrograms(ownedState.memberPrograms);
+      }
       if (restored) setCurrentUser(restored);
       // Réponse serveur : le prochain save écrase AsyncStorage (liste vide comprise).
+      // Cache ignoré (autre compte, demandes admin) : réécrit sans ces données.
       // Sinon on ne réécrit pas le cache déjà chargé.
-      skipNextSave.current = !seasonsFromServer;
+      skipNextSave.current = !seasonsFromServer && !cacheDiscarded;
       setHydrated(true);
     })();
   }, []);
@@ -343,12 +481,17 @@ export function AppProvider({ children }) {
       skipNextSave.current = false;
       return;
     }
+    // Admin : demandes gardées en mémoire seulement (téléphones, form_answers).
+    // L'écran des demandes masque la liste si le chargement échoue : rien à servir hors ligne.
+    const isAdminSession =
+      !!currentUser && userHasRole(currentUser, ROLES.ADMIN);
     saveAppState({
+      ownerAuthId: ownerAuthIdRef.current,
       users: isSupabaseConfigured()
         ? users.map((u) => ({ ...u, password: null }))
         : users,
       seasons,
-      registrations,
+      registrations: isAdminSession ? [] : registrations,
       groups,
       progress,
       attendance,
@@ -383,6 +526,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (!supabaseSession?.user?.id) {
       programsSyncedRef.current = false;
+      programsLastAttemptRef.current = 0;
       applicationsSyncedRef.current = false;
       memberApplicationsSyncedRef.current = null;
     }
@@ -394,14 +538,28 @@ export function AppProvider({ children }) {
     const authId = supabaseSession.user.id;
     const localUserId = currentUser?.id;
     if (!localUserId) return;
+    const saisonId = getActiveRegularSeason(seasons)?.id || null;
+    // Saison inconnue : aucune requête, cache conservé ; l'arrivée des saisons relancera.
+    if (!saisonId) return;
+
+    // Ouverture de l'onglet : toujours un essai. Déclencheurs automatiques
+    // (saisons, premier plan) : au plus un toutes les PROGRAMS_AUTO_RETRY_MS.
+    const manual = programsManualRetryRef.current;
+    programsManualRetryRef.current = false;
+    const sinceLast = Date.now() - programsLastAttemptRef.current;
+    if (!manual && sinceLast < PROGRAMS_AUTO_RETRY_MS) return;
+    programsLastAttemptRef.current = Date.now();
 
     let cancelled = false;
-    programsSyncedRef.current = true;
+    let settled = false;
     (async () => {
       // Supabase seul : un distant vide efface le cache (le seed n'est pas écrit).
-      const saisonId = getActiveRegularSeason(seasons)?.id || null;
       const res = await syncMemberProgramsWithSupabase(authId, saisonId);
+      settled = true;
+      // Échec : cache conservé ; nouvel essai à l'onglet programmes, ou
+      // automatiquement après PROGRAMS_AUTO_RETRY_MS.
       if (cancelled || !res.ok) return;
+      programsSyncedRef.current = true;
       setMemberPrograms((prev) => {
         const others = prev.filter((p) => p.userId !== localUserId);
         const synced = migrateMemberPrograms(
@@ -413,8 +571,17 @@ export function AppProvider({ children }) {
 
     return () => {
       cancelled = true;
+      // Requête abandonnée avant sa réponse (dépendances changées) : elle ne
+      // compte pas, l'essai suivant n'attend pas les 30 s.
+      if (!settled) programsLastAttemptRef.current = 0;
     };
-  }, [hydrated, supabaseSession?.user?.id, currentUser?.id, seasons]);
+  }, [
+    hydrated,
+    supabaseSession?.user?.id,
+    currentUser?.id,
+    seasons,
+    programsSyncTick,
+  ]);
 
   // Liste distante = source de vérité. Les demandes locales absentes sont retirées
   // (l'effet de sauvegarde les enlève aussi d'AsyncStorage).
@@ -490,10 +657,21 @@ export function AppProvider({ children }) {
     if (isSupabaseConfigured()) {
       const authResult = await signInWithEmailPassword(mail, password);
       if (!authResult.ok) return authResult;
-      setSupabaseSession(authResult.session);
 
       const profile = authResult.profile;
-      let local = users.find(
+      // Autre compte que le propriétaire des données en mémoire et sur disque :
+      // purge avant de charger le nouveau (users cumulait les deux comptes).
+      const switchingAccount = ownerAuthIdRef.current !== profile.id;
+      if (switchingAccount) {
+        await purgeSessionState();
+        // L'état du nouveau compte doit être écrit au prochain rendu.
+        skipNextSave.current = false;
+      }
+      ownerAuthIdRef.current = profile.id;
+      setSupabaseSession(authResult.session);
+
+      const knownUsers = switchingAccount ? [] : users;
+      let local = knownUsers.find(
         (u) =>
           u.email?.toLowerCase() === mail ||
           u.authId === profile.id
@@ -503,11 +681,8 @@ export function AppProvider({ children }) {
       // Conserver l'id local pour les groupes / progress
       if (local) {
         appUser.id = local.id;
-        const rolesForRouting = mergeRolesForRouting(profile, local);
-        const sessionRole = resolveSessionRole(
-          { ...appUser, roles: rolesForRouting },
-          preferredRole
-        );
+        const { role: sessionRole, roles: rolesForRouting } =
+          applySupabaseSessionRole(appUser, profile, preferredRole);
         appUser.roles = rolesForRouting;
         appUser.role = sessionRole;
         setUsers((prev) =>
@@ -528,11 +703,8 @@ export function AppProvider({ children }) {
         );
       } else {
         // Premier login Auth sans fiche locale (ex. admin créé dans Supabase)
-        const rolesForRouting = mergeRolesForRouting(profile, null);
-        const sessionRole = resolveSessionRole(
-          { ...appUser, roles: rolesForRouting },
-          preferredRole
-        );
+        const { role: sessionRole, roles: rolesForRouting } =
+          applySupabaseSessionRole(appUser, profile, preferredRole);
         const created = {
           ...appUser,
           id: uid("u"),
@@ -549,7 +721,6 @@ export function AppProvider({ children }) {
       const sessionUser = applySupabaseSessionRole(
         appUser,
         profile,
-        local,
         preferredRole
       );
       setCurrentUser(sessionUser);
@@ -604,8 +775,38 @@ export function AppProvider({ children }) {
     return result;
   };
 
-  const logout = async () => {
+  /**
+   * Déconnexion unique : un second appel pendant l'attente rejoint la tâche
+   * en cours au lieu d'en relancer une. isLoggingOut alimente les boutons.
+   */
+  const logout = () => {
+    if (logoutTaskRef.current) return logoutTaskRef.current;
+    setIsLoggingOut(true);
+    const task = runLogout().finally(() => {
+      logoutTaskRef.current = null;
+      setIsLoggingOut(false);
+    });
+    logoutTaskRef.current = task;
+    return task;
+  };
+
+  const runLogout = async () => {
     const authId = supabaseSession?.user?.id || currentUser?.authId || null;
+    // ± ثمن en attente : envoi tenté tant que la session est valide.
+    // Échec ou délai dépassé : la déconnexion continue, la purge abandonne le delta.
+    let flushTimer = null;
+    try {
+      await Promise.race([
+        flushMemberProgressDelta({ silent: true }),
+        new Promise((resolve) => {
+          flushTimer = setTimeout(resolve, LOGOUT_FLUSH_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (e) {
+      console.warn("[progress] flush on logout:", e?.message || e);
+    } finally {
+      clearTimeout(flushTimer);
+    }
     if (authId) {
       try {
         const { unregisterPushNotifications } = await import(
@@ -618,20 +819,15 @@ export function AppProvider({ children }) {
     }
     // Vider la session locale d'abord pour éviter que LoginScreen
     // redirige vers le dashboard tant que signOutAuth n'a pas fini.
-    skipNextSave.current = true;
-    setCurrentUser(null);
-    setSupabaseSession(null);
     // Purge des listes liées à la session (pas de resetToSeedData).
-    setUsers([]);
-    setRegistrations([]);
-    setGroups([]);
-    setProgress([]);
-    setAttendance([]);
-    setExams([]);
-    setNotifications([]);
-    setMemberPrograms([]);
-    await clearAppState();
-    await signOutAuth();
+    await purgeSessionState();
+    const signOutResult = await signOutAuth();
+    if (!signOutResult.ok) {
+      // Hors ligne avec jeton expiré, supabase-js garde la session sur disque :
+      // sans ce repli, le prochain démarrage en ligne reconnecterait le compte.
+      console.warn("[auth] signOut:", signOutResult.error);
+      await clearLocalAuthSession();
+    }
   };
 
   /**
@@ -663,7 +859,6 @@ export function AppProvider({ children }) {
       const sessionUser = applySupabaseSessionRole(
         appUser,
         profileResult.profile,
-        local,
         currentUser?.role
       );
       setCurrentUser(sessionUser);
@@ -2562,6 +2757,7 @@ export function AppProvider({ children }) {
     isSupabaseConfigured: isSupabaseConfigured(),
     login,
     logout,
+    isLoggingOut,
     confirmCurrentPassword,
     refreshCurrentUser,
     resetToSeedData,
@@ -2588,6 +2784,7 @@ export function AppProvider({ children }) {
     updateCurrentUserAvatar,
     updateCurrentUserProfile,
     getMemberPrograms,
+    retryMemberProgramsSync,
     saveMemberProgram,
     deleteMemberProgram,
     setMemberProgramTumuns,

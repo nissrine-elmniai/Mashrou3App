@@ -86,7 +86,8 @@ function programStatus(program) {
 }
 
 export default function MemberProgramsPanel({ navigation }) {
-  const { getMemberPrograms, saveMemberProgram, seasons } = useApp();
+  const { getMemberPrograms, saveMemberProgram, seasons, retryMemberProgramsSync } =
+    useApp();
 
   const programs = getMemberPrograms();
   const [modalVisible, setModalVisible] = useState(false);
@@ -98,6 +99,11 @@ export default function MemberProgramsPanel({ navigation }) {
   /** Id du programme en création : fixé à l'ouverture du modal, réutilisé à chaque envoi. */
   const createIdRef = useRef(null);
   const { busy: saving, run: runSave } = useSubmitLock();
+
+  // Ouverture de l'onglet : relance la synchro des programmes si elle a échoué.
+  useEffect(() => {
+    retryMemberProgramsSync();
+  }, [retryMemberProgramsSync]);
 
   useEffect(() => {
     let cancelled = false;
