@@ -27,7 +27,13 @@ import {
 } from "../../constants/tests";
 import { SectionTitle } from "../ui";
 import { colorWithAlpha } from "../tests/StatusBadge";
-import { getMyTestInvitations, respondToInvitation } from "../../lib/testsApi";
+import { respondToInvitation } from "../../lib/testsApi";
+import {
+  cachedMyTestInvitations,
+  unknownDataMessage,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
 
 /** Partie haute de MemberBottomTabBar, hors marge basse. */
 const TAB_BAR_BODY = 52;
@@ -134,12 +140,20 @@ export default function MemberTestsPanel({ invitationId = null, onInviteCount })
 
   const today = casablancaTodayIso();
 
+  // Retour du réseau : rechargement (la liste est aussi rechargée au focus).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
+
   const load = useCallback(async (mode = "load") => {
     if (mode === "refresh") setRefreshing(true);
     else setLoading(true);
-    const res = await getMyTestInvitations();
+    const res = await cachedMyTestInvitations();
+    markOffline(res);
     if (!res.ok) {
-      setError(res.error || "تعذر تحميل الاختبارات");
+      // Tests inconnus : message (hors ligne « غير متاح دون اتصال »), jamais une liste vide.
+      setError(
+        res.offline ? unknownDataMessage(res) : res.error || "تعذر تحميل الاختبارات"
+      );
       if (mode !== "refresh") setInvitations([]);
     } else {
       setError("");
@@ -149,13 +163,14 @@ export default function MemberTestsPanel({ invitationId = null, onInviteCount })
     }
     setLoading(false);
     setRefreshing(false);
-  }, [onInviteCount]);
+  }, [onInviteCount, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load])
   );
+  reloadRef.current = load;
 
   const grouped = useMemo(() => {
     const pending = [];
@@ -192,6 +207,8 @@ export default function MemberTestsPanel({ invitationId = null, onInviteCount })
   }, [invitationId, loading, invitations]);
 
   const openSheet = (invitation, mode) => {
+    // Répondre à une invitation : hors ligne, toast seulement.
+    if (!requireOnline()) return;
     const future = (invitation.test?.test_dates || [])
       .filter((row) => row.date_proposee && row.date_proposee > today)
       .sort((a, b) => String(a.date_proposee).localeCompare(String(b.date_proposee)));
@@ -209,6 +226,7 @@ export default function MemberTestsPanel({ invitationId = null, onInviteCount })
   };
 
   const submitResponse = async (invitation, statut, dateChoisie) => {
+    if (!requireOnline()) return;
     setSaving(true);
     const result = await respondToInvitation({
       invitationId: invitation.id,
@@ -226,6 +244,7 @@ export default function MemberTestsPanel({ invitationId = null, onInviteCount })
   };
 
   const confirmDecline = (invitation) => {
+    if (!requireOnline()) return;
     Alert.alert("اعتذار", "هل تريد الاعتذار عن هذا الاختبار؟", [
       { text: "تراجع", style: "cancel" },
       {

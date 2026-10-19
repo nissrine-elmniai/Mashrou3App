@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -29,27 +29,34 @@ import {
   isRTL,
 } from "../../constants/rtl";
 import { getActiveRegularSeason, getActiveSeason } from "../../lib/seasonScope";
-import { getMyActiveEnrollment } from "../../lib/membersApi";
 import {
   addProgressEntry,
   computeProgressMetrics,
   flushMemberProgressDelta,
-  getMemberDeclaredHizbCount,
-  getMemberSeasonObjectif,
-  getMyProgress,
-  getMyCurrentProgressPosition,
-  getMySeasonProgress,
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
-import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
 import { useSubmitLock } from "../../lib/useSubmitLock";
 import {
-  getMyObjectif,
   parseObjectifInput,
   setMyObjectif,
   OBJECTIF_LOCKED_MESSAGE,
   OBJECTIF_POSITION_REQUIRED_MESSAGE,
 } from "../../lib/objectifsApi";
+import {
+  ENROLLMENT_LOCK_INITIAL,
+  cachedDeclaredGoal,
+  cachedDeclaredHizb,
+  cachedMyEnrollment,
+  cachedMyObjectif,
+  cachedMyProgressPosition,
+  cachedMyRecentProgress,
+  cachedMySeasonProgress,
+  cachedSeasonCutoff,
+  enrollmentLockFromResult,
+  unknownDataMessage,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
 import {
   TOTAL_HIZB,
   TUMUNS_PER_HIZB,
@@ -118,9 +125,15 @@ export default function MemberProgressScreen({ navigation }) {
   const [entries, setEntries] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [historyError, setHistoryError] = useState(null);
-  const [progressLocked, setProgressLocked] = useState(false);
+  /** Inscription inconnue = saisie verrouillée avec message « inconnu ». */
+  const [enrollmentLock, setEnrollmentLock] = useState(ENROLLMENT_LOCK_INITIAL);
+  const progressLocked = enrollmentLock.locked;
   /** Départ / gain calculés par le serveur (get_member_season_progress). */
   const [seasonProgress, setSeasonProgress] = useState(null);
+  /** Avancement inconnu : pas de « احفظ موضعك أولاً ». */
+  const [seasonProgressError, setSeasonProgressError] = useState(null);
+  /** Objectif inconnu : pas de champ vide présenté comme « aucun objectif ». */
+  const [objectifError, setObjectifError] = useState(null);
   /** Dernière position enregistrée (résumé de la carte 1). Null = aucune. */
   const [savedMetrics, setSavedMetrics] = useState(null);
 
@@ -128,10 +141,23 @@ export default function MemberProgressScreen({ navigation }) {
   const saisonId = activeSeason?.id ?? null;
   const authId = currentUser?.authId || null;
 
-  const reloadSeasonProgress = useCallback(async () => {
-    const res = await getMySeasonProgress();
-    setSeasonProgress(res.ok ? res.progress : null);
+  const applySeasonProgress = useCallback((res) => {
+    if (res.ok) {
+      setSeasonProgress(res.progress);
+      setSeasonProgressError(null);
+    } else {
+      setSeasonProgress(null);
+      setSeasonProgressError(unknownDataMessage(res));
+    }
   }, []);
+
+  const reloadSeasonProgress = useCallback(async () => {
+    applySeasonProgress(await cachedMySeasonProgress(saisonId));
+  }, [applySeasonProgress, saisonId]);
+
+  // Retour du réseau : tout est rechargé au focus (load), pas de différé.
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,23 +168,22 @@ export default function MemberProgressScreen({ navigation }) {
     const startIso = seasonStartDateIso(season);
     const cutoffRes =
       authId && activeSaisonId
-        ? await resolveMemberSeasonAlertCutoff(authId, activeSaisonId)
+        ? await cachedSeasonCutoff(authId, activeSaisonId)
         : { ok: true, sinceIso: null };
     const sinceIso = cutoffRes.sinceIso || startIso || null;
     const [res, posRes, objRes, progressRes, enrollRes] = await Promise.all([
-      getMyProgress({
-        since: sinceIso || undefined,
-        saisonId: activeSaisonId,
-      }),
-      getMyCurrentProgressPosition(),
+      cachedMyRecentProgress(activeSaisonId, sinceIso),
+      cachedMyProgressPosition(),
       activeSaisonId
-        ? getMyObjectif(activeSaisonId)
+        ? cachedMyObjectif(activeSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
-      getMySeasonProgress(),
-      getMyActiveEnrollment(),
+      cachedMySeasonProgress(activeSaisonId),
+      cachedMyEnrollment(activeSaisonId),
     ]);
-    setSeasonProgress(progressRes.ok ? progressRes.progress : null);
-    if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
+    markOffline(cutoffRes, res, posRes, objRes, progressRes, enrollRes);
+    applySeasonProgress(progressRes);
+    setEnrollmentLock(enrollmentLockFromResult(enrollRes));
+    setObjectifError(objRes.ok ? null : unknownDataMessage(objRes));
     setLoading(false);
     // Ligne objectifs existante prioritaire ; sinon suggestion d'inscription, sans écriture
     if (!objRes.ok) {
@@ -168,7 +193,8 @@ export default function MemberProgressScreen({ navigation }) {
       setGoalHizb(String(objRes.objectif.nbHizbCible));
       setGoalSuggestedFromInscription(false);
     } else if (activeSaisonId && authId) {
-      const declared = await getMemberSeasonObjectif(authId, activeSaisonId);
+      const declared = await cachedDeclaredGoal(authId, activeSaisonId);
+      markOffline(declared);
       const parsed = declared.ok
         ? parseObjectifInput(declared.objectif)
         : { ok: false };
@@ -185,13 +211,13 @@ export default function MemberProgressScreen({ navigation }) {
     }
     if (!res.ok) {
       setEntries([]);
-      setHistoryError(res.error);
+      setHistoryError(unknownDataMessage(res));
     } else {
       setEntries(res.entries || []);
       setHistoryError(null);
     }
     if (!posRes.ok) {
-      setLoadError(posRes.error);
+      setLoadError(unknownDataMessage(posRes));
       setHizbSuggestedFromInscription(false);
       setSavedMetrics(null);
       return;
@@ -216,10 +242,8 @@ export default function MemberProgressScreen({ navigation }) {
       setTumun("0");
       setNotes("");
       if (activeSaisonId && authId) {
-        const declared = await getMemberDeclaredHizbCount(
-          authId,
-          activeSaisonId
-        );
+        const declared = await cachedDeclaredHizb(authId, activeSaisonId);
+        markOffline(declared);
         const parsed =
           declared.ok && declared.hizbCount != null
             ? parseHizbInput(declared.hizbCount)
@@ -236,19 +260,24 @@ export default function MemberProgressScreen({ navigation }) {
         setHizbSuggestedFromInscription(false);
       }
     }
-  }, [seasons, authId]);
+  }, [seasons, authId, markOffline, applySeasonProgress]);
 
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load])
   );
+  reloadRef.current = load;
 
-  const handleSave = () => runSavePosition(savePosition);
+  const handleSave = () => {
+    // Hors ligne : toast seulement, aucune modification.
+    if (!requireOnline()) return;
+    runSavePosition(savePosition);
+  };
 
   const savePosition = async () => {
     if (progressLocked) {
-      Alert.alert("تنبيه", PROGRESS_LOCKED_MESSAGE);
+      Alert.alert("تنبيه", enrollmentLock.message || PROGRESS_LOCKED_MESSAGE);
       return;
     }
     const hizbRes = parseHizbInput(hizb);
@@ -288,13 +317,23 @@ export default function MemberProgressScreen({ navigation }) {
    * d'inscription ne compte pas) : le serveur refuse l'objectif (0137).
    */
   const needsPosition = seasonProgress?.depart == null;
+  /** Avancement inconnu : ni « احفظ موضعك أولاً » ni formulaire d'objectif. */
+  const seasonProgressUnknown = !seasonProgress && !!seasonProgressError;
   const objectifDisabled = savingObjectif || progressLocked || needsPosition;
+  // Non inscrit → message d'objectif ; inscription inconnue → message « inconnu ».
+  const objectifLockMessage = enrollmentLock.unknown
+    ? enrollmentLock.message
+    : OBJECTIF_LOCKED_MESSAGE;
 
-  const handleSaveObjectif = () => runSaveObjectif(saveObjectif);
+  const handleSaveObjectif = () => {
+    // Hors ligne : toast seulement, aucune modification.
+    if (!requireOnline()) return;
+    runSaveObjectif(saveObjectif);
+  };
 
   const saveObjectif = async () => {
     if (progressLocked) {
-      Alert.alert("تنبيه", OBJECTIF_LOCKED_MESSAGE);
+      Alert.alert("تنبيه", objectifLockMessage);
       return;
     }
     if (needsPosition) {
@@ -429,7 +468,9 @@ export default function MemberProgressScreen({ navigation }) {
               />
 
               {progressLocked ? (
-                <Text style={styles.hizbSuggestHint}>{PROGRESS_LOCKED_MESSAGE}</Text>
+                <Text style={styles.hizbSuggestHint}>
+                  {enrollmentLock.message || PROGRESS_LOCKED_MESSAGE}
+                </Text>
               ) : null}
 
               <TouchableOpacity
@@ -450,7 +491,15 @@ export default function MemberProgressScreen({ navigation }) {
             </View>
           )}
 
-          {!loading && saisonId && needsPosition ? (
+          {!loading && saisonId && seasonProgressUnknown ? (
+            // Avancement inconnu (échec sans cache) : ni formulaire ni « احفظ موضعك أولاً ».
+            <View style={[styles.card, shadows.card, styles.cardMuted]}>
+              <CardTitle title="هدفي لهذا الموسم" />
+              <Text style={styles.lead}>{seasonProgressError}</Text>
+            </View>
+          ) : null}
+
+          {!loading && saisonId && !seasonProgressUnknown && needsPosition ? (
             // Départ inconnu : carte grisée, une seule ligne (0137 refuserait l'objectif).
             <View style={[styles.card, shadows.card, styles.cardMuted]}>
               <CardTitle title="هدفي لهذا الموسم" />
@@ -458,13 +507,16 @@ export default function MemberProgressScreen({ navigation }) {
             </View>
           ) : null}
 
-          {!loading && saisonId && !needsPosition ? (
+          {!loading && saisonId && !seasonProgressUnknown && !needsPosition ? (
             <View style={[styles.card, shadows.card]}>
               <CardTitle title="هدفي لهذا الموسم" />
               {progressLocked ? (
                 <Text style={styles.objectifSuggestHint}>
-                  {OBJECTIF_LOCKED_MESSAGE}
+                  {objectifLockMessage}
                 </Text>
+              ) : null}
+              {objectifError ? (
+                <Text style={styles.objectifSuggestHint}>{objectifError}</Text>
               ) : null}
               <View style={styles.goalLabelRow}>
                 <Text style={styles.fieldLabelInline}>

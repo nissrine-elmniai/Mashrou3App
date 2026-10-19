@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import { resolvePublicAvatarUrl } from "./avatarApi";
 import { sortSeancesByJour } from "./seancesApi";
 import { fetchSeasonDirectory } from "./saisonsApi";
@@ -857,8 +858,8 @@ export async function getMemberActiveEnrollment(memberId) {
 
 /** Même règle que getMemberActiveEnrollment, pour le membre connecté. */
 export async function getMyActiveEnrollment() {
-  const { data } = await supabase.auth.getUser();
-  const memberId = data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  const memberId = await getCurrentAuthId();
   if (!memberId) {
     return { ok: false, error: "يجب تسجيل الدخول", enrolled: false };
   }

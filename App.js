@@ -13,6 +13,7 @@ import {
 import { AppProvider } from "./app/context/AppContext";
 import { UnreadNotificationsProvider } from "./app/context/UnreadNotificationsContext";
 import BlockingAlertGate from "./app/components/BlockingAlertGate";
+import AppToast from "./app/components/AppToast";
 import ErrorBoundary from "./app/components/ErrorBoundary";
 import RootNavigator from "./app/navigation/RootNavigator";
 import { colors } from "./app/constants/theme";
@@ -55,6 +56,8 @@ export default function App() {
             </ErrorBoundary>
           </UnreadNotificationsProvider>
         </AppProvider>
+        {/* Hors d'AppProvider : visible aussi pendant l'hydratation (démarrage hors ligne). */}
+        <AppToast />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

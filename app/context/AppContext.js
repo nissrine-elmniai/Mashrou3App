@@ -20,6 +20,18 @@ import {
   flushMemberProgressDelta,
   resetMemberProgressState,
 } from "../lib/progressApi";
+import { isOffline, onBackOnline, probeServer } from "../lib/networkState";
+import {
+  purgeAllOfflineCache,
+  readCache,
+  readLastAuthId,
+  writeCache,
+  writeLastAuthId,
+} from "../lib/offlineCache";
+import {
+  readStoredSessionUserId,
+  setCurrentAuthIdHint,
+} from "../lib/currentAuth";
 import {
   isPasswordTooShort,
   passwordTooShortMessage,
@@ -118,6 +130,43 @@ const LOGOUT_FLUSH_TIMEOUT_MS = 3000;
  */
 const PROGRAMS_AUTO_RETRY_MS = 30000;
 
+/** Vérification serveur de la session au retour au premier plan : au plus toutes les 5 min. */
+const SESSION_VALIDATE_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Nouvel essai de restauration en ligne quand getSession() renvoie encore
+ * l'échec de rafraîchissement mémorisé par auth-js (REFRESH_FAILURE_COOLDOWN_MS = 60 s).
+ */
+const ONLINE_RESTORE_RETRY_MS = 65000;
+
+/** Profil hors ligne : cache:v1:<authId>:common.profile. */
+const PROFILE_CACHE_RESOURCE = "common.profile";
+
+/** Profil lu avec succès sur le serveur : copie pour la restauration hors ligne. */
+async function rememberServerProfile(profile) {
+  if (!profile?.id) return;
+  await writeCache(profile.id, PROFILE_CACHE_RESOURCE, profile);
+  await writeLastAuthId(profile.id);
+}
+
+let lastSessionValidationAt = 0;
+
+/**
+ * Vérification serveur de la session (un seul getUser()). Un refus serveur
+ * (session_not_found) fait supprimer la session par auth-js : SIGNED_OUT,
+ * puis purge. Un échec réseau est ignoré (auth-js garde la session).
+ * Sans session ouverte, l'appel ne vérifie rien : ne l'appeler qu'avec une session.
+ */
+function validateSessionWithServer({ force = false } = {}) {
+  if (!isSupabaseConfigured() || isOffline()) return;
+  const now = Date.now();
+  if (!force && now - lastSessionValidationAt < SESSION_VALIDATE_MIN_INTERVAL_MS) return;
+  lastSessionValidationAt = now;
+  supabase.auth.getUser().catch((e) => {
+    console.warn("[auth] validation session:", e?.message || e);
+  });
+}
+
 const uid = (prefix) =>
   `${prefix}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
@@ -215,6 +264,29 @@ function applySupabaseSessionRole(appUser, profile, preferredRole) {
   };
 }
 
+/**
+ * Démarrage hors ligne : utilisateur reconstruit depuis le profil en cache,
+ * seulement si TOUTES les conditions sont vraies :
+ * - une session est stockée (jeton expiré accepté), d'id sessionAuthId ;
+ * - cet id est égal à cache:v1:lastAuthId ;
+ * - un profil en cache existe pour cet id, avec account_status actif.
+ * Rôles du profil en cache : valables hors ligne seulement, le serveur
+ * les remplace à la restauration en ligne.
+ * @returns {Promise<object|null>}
+ */
+async function restoreFromOfflineCache(sessionAuthId, knownUsers) {
+  if (!sessionAuthId) return null;
+  if ((await readLastAuthId()) !== sessionAuthId) return null;
+  const cached = await readCache(sessionAuthId, PROFILE_CACHE_RESOURCE);
+  const profile = cached?.data;
+  if (!profile || profile.id !== sessionAuthId) return null;
+  if (profile.account_status !== ACCOUNT_STATUS.ACTIVE) return null;
+  const local = (knownUsers || []).find((u) => u.authId === profile.id) || null;
+  const base = profileToAppUser(profile, local || {});
+  if (local) base.id = local.id;
+  return applySupabaseSessionRole(base, profile, null);
+}
+
 function maybeRegisterSessionPush(userId, { requestPermission = false } = {}) {
   if (!userId) return;
   import("../lib/pushNotifications")
@@ -261,6 +333,29 @@ export function AppProvider({ children }) {
   /** Déconnexion en cours (flush ± ثمن, push, purge) : une seule à la fois. */
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const logoutTaskRef = useRef(null);
+  /**
+   * Utilisateur restauré depuis le cache au démarrage hors ligne (lecture seule).
+   * Remis à false par la restauration en ligne, la connexion ou la purge.
+   */
+  const [offlineRestored, setOfflineRestored] = useState(false);
+  const offlineRestoredRef = useRef(false);
+  /** Démarrage hors ligne sans restauration : id de la session alors constatée. */
+  const bootOfflineSessionIdRef = useRef(null);
+  const loginInProgressRef = useRef(false);
+  const onlineRestoreInFlightRef = useRef(false);
+  const onlineRestoreRetryTimerRef = useRef(null);
+  // Valeurs courantes pour les écouteurs réseau (évite les fermetures périmées).
+  const currentUserRef = useRef(null);
+  currentUserRef.current = currentUser;
+  const usersRef = useRef([]);
+  usersRef.current = users;
+  const supabaseSessionIdRef = useRef(null);
+  supabaseSessionIdRef.current = supabaseSession?.user?.id || null;
+
+  const markOfflineRestored = useCallback((value) => {
+    offlineRestoredRef.current = value;
+    setOfflineRestored(value);
+  }, []);
 
   /**
    * Vide l'état lié au compte, app_state_v3 et la file ± ثمن de progressApi.
@@ -270,6 +365,11 @@ export function AppProvider({ children }) {
   const purgeSessionState = useCallback(async () => {
     skipNextSave.current = true;
     ownerAuthIdRef.current = null;
+    setCurrentAuthIdHint(null);
+    markOfflineRestored(false);
+    bootOfflineSessionIdRef.current = null;
+    clearTimeout(onlineRestoreRetryTimerRef.current);
+    onlineRestoreRetryTimerRef.current = null;
     programsSyncedRef.current = false;
     programsLastAttemptRef.current = 0;
     programsManualRetryRef.current = false;
@@ -286,8 +386,10 @@ export function AppProvider({ children }) {
     setNotifications([]);
     setMemberPrograms([]);
     resetMemberProgressState();
-    await clearAppState();
-  }, []);
+    // Tout le cache hors ligne (pointeur lastAuthId compris), pas seulement le
+    // propriétaire : ownerAuthIdRef peut être null quand l'hydratation a écarté le cache.
+    await Promise.all([clearAppState(), purgeAllOfflineCache()]);
+  }, [markOfflineRestored]);
 
   // Déconnexion décidée par le serveur (session révoquée, refresh token refusé).
   // Un échec réseau du rafraîchissement n'émet pas SIGNED_OUT (auth-js garde la session).
@@ -326,8 +428,14 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     (async () => {
-      const saved = await loadAppState();
       const remoteMode = isSupabaseConfigured();
+      // Sonde d'abord (4 s max), en parallèle de la lecture d'app_state_v3.
+      // Hors ligne : aucune lecture réseau (fetchSaisons, fetchProfile).
+      const [saved, reachable] = await Promise.all([
+        loadAppState(),
+        remoteMode ? probeServer() : Promise.resolve(true),
+      ]);
+      const bootOffline = remoteMode && !reachable;
       let loadedUsers = remoteMode ? [] : bootstrapUsers;
       let loadedSeasons = remoteMode ? [] : bootstrapSeasons;
       // Données liées au compte : appliquées après lecture de la session,
@@ -377,7 +485,7 @@ export function AppProvider({ children }) {
       }
 
       let seasonsFromServer = false;
-      if (isSupabaseConfigured()) {
+      if (isSupabaseConfigured() && !bootOffline) {
         const seasonSync = await syncSeasonsWithSupabase(
           (loadedSeasons || []).map(withIsoSeasonDates)
         );
@@ -389,13 +497,26 @@ export function AppProvider({ children }) {
 
       let restored = null;
       let cacheDiscarded = false;
+      let bootPath = "login";
       if (isSupabaseConfigured()) {
         // Avant toute restauration : une clé de récupération = signOut et login.
-        const interruptedRecovery = await discardPersistedPasswordRecovery();
-        const sessionResult = interruptedRecovery
-          ? { session: null }
-          : await getCurrentAuthSession();
-        const sessionAuthId = sessionResult.session?.user?.id || null;
+        // Hors ligne, le signOut est reporté au prochain démarrage en ligne.
+        const interruptedRecovery = await discardPersistedPasswordRecovery({
+          offline: bootOffline,
+        });
+        let sessionResult = { session: null };
+        let sessionAuthId = null;
+        if (!interruptedRecovery) {
+          if (bootOffline) {
+            // Aucune méthode supabase.auth hors ligne : getSession() attend
+            // l'initialisation d'auth-js (~30 s de nouvelles tentatives si le
+            // jeton est expiré). Lecture directe de la session stockée.
+            sessionAuthId = await readStoredSessionUserId();
+          } else {
+            sessionResult = await getCurrentAuthSession();
+            sessionAuthId = sessionResult.session?.user?.id || null;
+          }
+        }
         if (saved) {
           // Ancien format (sans ownerAuthId) ou cache d'un autre compte que la
           // session : users, demandes, programmes, notifications et rôles du
@@ -417,7 +538,16 @@ export function AppProvider({ children }) {
           ownerAuthIdRef.current = sessionAuthId;
         }
         // Récupération OTP : ne pas hydrater l'utilisateur depuis cette session.
-        if (sessionResult.session?.user && !isPasswordRecoveryInProgress()) {
+        if (bootOffline && sessionAuthId && !isPasswordRecoveryInProgress()) {
+          restored = await restoreFromOfflineCache(sessionAuthId, loadedUsers);
+          if (restored) {
+            bootPath = "offline";
+            markOfflineRestored(true);
+          } else {
+            // Écran de connexion ; restauration automatique au retour du réseau.
+            bootOfflineSessionIdRef.current = sessionAuthId;
+          }
+        } else if (sessionResult.session?.user && !isPasswordRecoveryInProgress()) {
           const profileResult = await fetchProfile(sessionResult.session.user.id);
           if (profileResult.ok) {
             const status = profileResult.profile.account_status;
@@ -443,6 +573,9 @@ export function AppProvider({ children }) {
               maybeRegisterSessionPush(profileResult.profile.id, {
                 requestPermission: false,
               });
+              rememberServerProfile(profileResult.profile);
+              validateSessionWithServer({ force: true });
+              bootPath = "online";
             }
           }
         }
@@ -466,13 +599,156 @@ export function AppProvider({ children }) {
         setNotifications(ownedState.notifications);
         setMemberPrograms(ownedState.memberPrograms);
       }
-      if (restored) setCurrentUser(restored);
+      if (restored) {
+        setCurrentAuthIdHint(restored.authId || null);
+        setCurrentUser(restored);
+      }
+      if (__DEV__ && remoteMode) {
+        console.log(`[boot] restauration : ${bootPath}`);
+      }
       // Réponse serveur : le prochain save écrase AsyncStorage (liste vide comprise).
       // Cache ignoré (autre compte, demandes admin) : réécrit sans ces données.
       // Sinon on ne réécrit pas le cache déjà chargé.
       skipNextSave.current = !seasonsFromServer && !cacheDiscarded;
       setHydrated(true);
     })();
+  }, []);
+
+  // authId tenu par AppContext pour getCurrentAuthId() (clés de cache, filtres client).
+  useEffect(() => {
+    setCurrentAuthIdHint(currentUser?.authId || null);
+  }, [currentUser?.authId]);
+
+  const scheduleOnlineRestoreRetry = () => {
+    if (onlineRestoreRetryTimerRef.current) return;
+    onlineRestoreRetryTimerRef.current = setTimeout(() => {
+      onlineRestoreRetryTimerRef.current = null;
+      restoreOnlineRef.current();
+    }, ONLINE_RESTORE_RETRY_MS);
+  };
+
+  /**
+   * Retour en ligne : restauration normale, le serveur est prioritaire.
+   * - Utilisateur restauré hors ligne : session et profil relus sur le serveur.
+   * - Écran de connexion après un démarrage hors ligne : restauration seulement
+   *   si aucune connexion ni déconnexion n'est en cours, et si la session locale
+   *   est toujours celle constatée au démarrage.
+   * Refus serveur (compte désactivé, session invalide, profil absent) :
+   * purge, puis écran de connexion. Échec réseau : on reste en lecture seule.
+   */
+  const restoreOnline = async () => {
+    const restoringOffline = offlineRestoredRef.current;
+    const bootSessionId = bootOfflineSessionIdRef.current;
+    if (!restoringOffline && !bootSessionId) return;
+    if (onlineRestoreInFlightRef.current || logoutTaskRef.current) return;
+    const loginScreenBlocked = () =>
+      !restoringOffline &&
+      (loginInProgressRef.current || !!logoutTaskRef.current || !!currentUserRef.current);
+    if (loginScreenBlocked()) return;
+
+    onlineRestoreInFlightRef.current = true;
+    try {
+      const expectedId = restoringOffline
+        ? currentUserRef.current?.authId || null
+        : bootSessionId;
+      const storedId = await readStoredSessionUserId();
+      if (!expectedId || storedId !== expectedId) {
+        // Session disparue ou remplacée : plus rien à restaurer.
+        if (restoringOffline) await purgeSessionState();
+        else bootOfflineSessionIdRef.current = null;
+        return;
+      }
+
+      const sessionResult = await getCurrentAuthSession();
+      const session = sessionResult.session;
+      if (!session?.user) {
+        // Refus serveur : auth-js a supprimé la session → SIGNED_OUT → purge.
+        // Sinon : échec de rafraîchissement mémorisé 60 s par auth-js, nouvel essai.
+        if ((await readStoredSessionUserId()) === expectedId) {
+          scheduleOnlineRestoreRetry();
+        }
+        return;
+      }
+      if (session.user.id !== expectedId || loginScreenBlocked()) {
+        if (restoringOffline && session.user.id !== expectedId) {
+          await purgeSessionState();
+        }
+        return;
+      }
+
+      const profileResult = await fetchProfile(expectedId);
+      if (!profileResult.ok) {
+        if (profileResult.notFound) {
+          // Profil absent côté serveur : refus, chemin normal.
+          await purgeSessionState();
+          await signOutAuth();
+        } else if (!isOffline()) {
+          scheduleOnlineRestoreRetry();
+        }
+        return;
+      }
+      const profile = profileResult.profile;
+      if (profile.account_status === ACCOUNT_STATUS.INACTIVE) {
+        // Compte désactivé : SIGNED_OUT déclenche aussi la purge (idempotente).
+        await purgeSessionState();
+        await signOutAuth();
+        return;
+      }
+      if (loginScreenBlocked()) return;
+
+      const known = usersRef.current || [];
+      const local =
+        known.find((u) => u.authId === profile.id) ||
+        (restoringOffline ? currentUserRef.current : null);
+      const appUser = profileToAppUser(profile, local || {});
+      if (local?.id) appUser.id = local.id;
+      // Rôles du serveur ; on garde la pile affichée si le rôle existe encore.
+      const sessionUser = applySupabaseSessionRole(
+        appUser,
+        profile,
+        restoringOffline ? currentUserRef.current?.role : null
+      );
+      ownerAuthIdRef.current = profile.id;
+      setCurrentAuthIdHint(profile.id);
+      bootOfflineSessionIdRef.current = null;
+      markOfflineRestored(false);
+      setSupabaseSession(session);
+      setCurrentUser(sessionUser);
+      rememberServerProfile(profile);
+      maybeRegisterSessionPush(profile.id, { requestPermission: false });
+      validateSessionWithServer({ force: true });
+      if (__DEV__) console.log("[boot] restauration : online (retour réseau)");
+
+      const seasonSync = await syncSeasonsWithSupabase([]);
+      if (seasonSync.ok && seasonSync.source === "remote") {
+        setSeasons(uniqSeasonsById(seasonSync.seasons));
+      }
+    } catch (e) {
+      console.warn("[boot] restauration en ligne:", e?.message || e);
+    } finally {
+      onlineRestoreInFlightRef.current = false;
+    }
+  };
+  const restoreOnlineRef = useRef(restoreOnline);
+  restoreOnlineRef.current = restoreOnline;
+
+  // Retour en ligne (sonde) : restauration normale.
+  useEffect(
+    () =>
+      onBackOnline(() => {
+        restoreOnlineRef.current();
+      }),
+    []
+  );
+
+  // Premier plan : vérification serveur de la session, au plus toutes les 5 min.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") return;
+      if (!supabaseSessionIdRef.current) return;
+      validateSessionWithServer();
+    });
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {
@@ -650,7 +926,17 @@ export function AppProvider({ children }) {
     };
   }, [hydrated, supabaseSession?.user?.id, currentUser]);
 
+  /** Connexion en cours : bloque la restauration automatique au retour du réseau. */
   const login = async (email, password, options = {}) => {
+    loginInProgressRef.current = true;
+    try {
+      return await runLogin(email, password, options);
+    } finally {
+      loginInProgressRef.current = false;
+    }
+  };
+
+  const runLogin = async (email, password, options = {}) => {
     const mail = String(email || "").trim().toLowerCase();
     const preferredRole = options.preferredRole || null;
 
@@ -668,6 +954,11 @@ export function AppProvider({ children }) {
         skipNextSave.current = false;
       }
       ownerAuthIdRef.current = profile.id;
+      setCurrentAuthIdHint(profile.id);
+      bootOfflineSessionIdRef.current = null;
+      markOfflineRestored(false);
+      // Après l'éventuelle purge : copie du profil pour la restauration hors ligne.
+      rememberServerProfile(profile);
       setSupabaseSession(authResult.session);
 
       const knownUsers = switchingAccount ? [] : users;
@@ -807,7 +1098,10 @@ export function AppProvider({ children }) {
     } finally {
       clearTimeout(flushTimer);
     }
-    if (authId) {
+    // Hors ligne : ni suppression du jeton push ni signOut serveur, impossibles ;
+    // signOut attendrait l'initialisation d'auth-js (~30 s si le jeton est expiré).
+    const offlineNow = isOffline();
+    if (authId && !offlineNow) {
       try {
         const { unregisterPushNotifications } = await import(
           "../lib/pushNotifications"
@@ -821,6 +1115,10 @@ export function AppProvider({ children }) {
     // redirige vers le dashboard tant que signOutAuth n'a pas fini.
     // Purge des listes liées à la session (pas de resetToSeedData).
     await purgeSessionState();
+    if (offlineNow) {
+      await clearLocalAuthSession();
+      return;
+    }
     const signOutResult = await signOutAuth();
     if (!signOutResult.ok) {
       // Hors ligne avec jeton expiré, supabase-js garde la session sur disque :
@@ -836,6 +1134,8 @@ export function AppProvider({ children }) {
    * quand l'état React n'a pas encore d'utilisateur.
    */
   const refreshCurrentUser = async ({ fromEmailChangeLink = false } = {}) => {
+    // Restauré hors ligne : seule la restauration en ligne (retour réseau) relit le profil.
+    if (offlineRestoredRef.current) return { ok: false };
     let authId = currentUser?.authId || supabaseSession?.user?.id;
     if (!authId && fromEmailChangeLink && isSupabaseConfigured()) {
       const sessionResult = await getCurrentAuthSession();
@@ -861,6 +1161,7 @@ export function AppProvider({ children }) {
         profileResult.profile,
         currentUser?.role
       );
+      rememberServerProfile(profileResult.profile);
       setCurrentUser(sessionUser);
       setUsers((prev) => {
         const idx = prev.findIndex(
@@ -2758,6 +3059,7 @@ export function AppProvider({ children }) {
     login,
     logout,
     isLoggingOut,
+    offlineRestored,
     confirmCurrentPassword,
     refreshCurrentUser,
     resetToSeedData,

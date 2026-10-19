@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import { ROLES } from "../constants/roles";
 import { canonicalEmail } from "./authEmail";
 import { assignOrSwapSeanceSuperviseur, listSupervisorSeances } from "./seancesApi";
@@ -41,8 +42,8 @@ function mapTableError(error, tableLabel) {
 
 /** Id du membre connecté via la session Supabase, ou null. */
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 /** Id d'invitation généré côté client, même pattern que member_applications. */

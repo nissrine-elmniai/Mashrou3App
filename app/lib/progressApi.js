@@ -1,5 +1,6 @@
 import { Alert } from "react-native";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import {
   TUMUNS_PER_HIZB,
   TOTAL_HIZB,
@@ -73,8 +74,8 @@ async function fetchProgressionOrdered(buildQuery, label) {
 
 /** Id du membre connecté via la session Supabase, ou null. */
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 /**

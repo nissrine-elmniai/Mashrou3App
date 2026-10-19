@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
@@ -9,12 +9,15 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import {
-  getActiveSeancesByGenre,
-  formatSeanceScheduleLabel,
-} from "../../lib/seancesApi";
+import { formatSeanceScheduleLabel } from "../../lib/seancesApi";
 import { parseObjectifInput } from "../../lib/objectifsApi";
-import { fetchMySeasonRegistrationView } from "../../lib/memberApplicationsApi";
+import {
+  cachedRegistrationView,
+  cachedSeancesByGenre,
+  unknownDataMessage,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, textAlignStart } from "../../constants/rtl";
 import { SectionCard, QuickButton, EmptyState } from "../../components/ui";
@@ -65,12 +68,18 @@ function RegistrationBlock({
   buttonLabel,
   buttonColor,
   onSubmit,
+  reloadKey = 0,
+  onResult,
 }) {
   const [answers, setAnswers] = useState(EMPTY_ANSWERS);
   const [availableSeances, setAvailableSeances] = useState([]);
   const [seancesReason, setSeancesReason] = useState(null);
+  /** Séances inconnues (échec sans cache) : message, pas « لا توجد حصص ». */
+  const [seancesError, setSeancesError] = useState(null);
   const [seancesLoading, setSeancesLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
 
   const primarySeasonId = seasons[0]?.id || null;
 
@@ -87,10 +96,12 @@ function RegistrationBlock({
     let cancelled = false;
     const load = async () => {
       setSeancesLoading(true);
-      const res = await getActiveSeancesByGenre(gender, primarySeasonId);
+      const res = await cachedSeancesByGenre(gender, primarySeasonId);
       if (!cancelled) {
+        onResultRef.current?.(res);
         setAvailableSeances(res.ok ? res.seances || [] : []);
         setSeancesReason(res.ok ? res.reason || null : "error");
+        setSeancesError(res.ok ? null : unknownDataMessage(res));
         setSeancesLoading(false);
       }
     };
@@ -98,7 +109,7 @@ function RegistrationBlock({
     return () => {
       cancelled = true;
     };
-  }, [gender, primarySeasonId]);
+  }, [gender, primarySeasonId, reloadKey]);
 
   const selectedSeance = useMemo(
     () => availableSeances.find((s) => s.id === answers.seanceId) || null,
@@ -115,6 +126,8 @@ function RegistrationBlock({
   })();
 
   const handleSubmit = async (seasonId) => {
+    // Hors ligne : toast seulement, aucune modification.
+    if (!requireOnline()) return;
     const parsedGoal = parseObjectifInput(answers.seasonGoal);
     if (!parsedGoal.ok) {
       Alert.alert("تنبيه", parsedGoal.error);
@@ -160,7 +173,7 @@ function RegistrationBlock({
         {seancesLoading ? (
           <ActivityIndicator color={buttonColor} style={{ marginVertical: 12 }} />
         ) : availableSeances.length === 0 ? (
-          <Text style={styles.hint}>{emptySeancesMessage}</Text>
+          <Text style={styles.hint}>{seancesError || emptySeancesMessage}</Text>
         ) : (
           <SeanceChips
             seances={availableSeances}
@@ -273,31 +286,51 @@ export default function MemberRegistrationPanel({
   const [bySeason, setBySeason] = useState({});
   const [loadingView, setLoadingView] = useState(false);
   const [viewError, setViewError] = useState(null);
+  /** État de la demande inconnu faute de réseau : pas de formulaire « non inscrit ». */
+  const [viewUnknownOffline, setViewUnknownOffline] = useState(false);
+  /** Incrémenté au retour du réseau : relit les séances par genre. */
+  const [seancesReloadKey, setSeancesReloadKey] = useState(0);
   const seasonKey = [...openRegular, ...openSummer].map((season) => season.id).join("|");
+
+  // Retour du réseau : l'état de la demande est relu au focus ; les séances non.
+  const reloadViewRef = useRef(null);
+  const markOffline = useOfflineReload(
+    () => {
+      reloadViewRef.current?.();
+      setSeancesReloadKey((n) => n + 1);
+    },
+    () => setSeancesReloadKey((n) => n + 1)
+  );
 
   const loadView = useCallback(async () => {
     const ids = seasonKey ? seasonKey.split("|") : [];
     if (!userId || ids.length === 0) {
       setBySeason({});
       setViewError(null);
+      setViewUnknownOffline(false);
       return;
     }
     setLoadingView(true);
-    const res = await fetchMySeasonRegistrationView(userId, ids);
+    const res = await cachedRegistrationView(userId, ids);
+    markOffline(res);
     setLoadingView(false);
     if (!res.ok) {
-      setViewError(res.error || "تعذر تحميل حالة التسجيل");
+      // Hors ligne : « غير متاح دون اتصال » ; en ligne : message d'erreur actuel.
+      setViewError(res.offline ? unknownDataMessage(res) : res.error || "تعذر تحميل حالة التسجيل");
+      setViewUnknownOffline(!!res.offline);
       return;
     }
     setViewError(null);
+    setViewUnknownOffline(false);
     setBySeason(res.bySeason || {});
-  }, [seasonKey, userId]);
+  }, [seasonKey, userId, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
       loadView();
     }, [loadView])
   );
+  reloadViewRef.current = loadView;
 
   const handleSubmit = async (payload) => {
     const result = await onSubmit(payload);
@@ -308,6 +341,10 @@ export default function MemberRegistrationPanel({
   const renderSeasons = (seasons, buttonColor) => {
     if (loadingView) {
       return <ActivityIndicator color={buttonColor} style={{ marginVertical: 12 }} />;
+    }
+    // Demande inconnue hors ligne : pas de formulaire présenté comme « non inscrit ».
+    if (viewUnknownOffline) {
+      return <Text style={styles.hint}>{viewError}</Text>;
     }
     return seasons.map((season) => {
       const state = bySeason[String(season.id)];
@@ -332,6 +369,8 @@ export default function MemberRegistrationPanel({
             buttonLabel="إرسال استمارة التسجيل"
             buttonColor={buttonColor}
             onSubmit={handleSubmit}
+            reloadKey={seancesReloadKey}
+            onResult={markOffline}
           />
         </View>
       );

@@ -10,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors } from "../constants/theme";
 import { uploadOwnAvatar, removeOwnAvatar } from "../lib/avatarApi";
 import { pickAvatarImage } from "../lib/avatarPicker";
+import { requireOnline } from "../lib/toast";
 import ProfileAvatar from "./ProfileAvatar";
 
 export default function EditableAvatar({
@@ -27,6 +28,8 @@ export default function EditableAvatar({
 
   const handleUpload = async (uri) => {
     if (!authId || !uri) return;
+    // Réseau perdu pendant le choix de l'image : toast, rien d'autre.
+    if (!requireOnline()) return;
     setUploading(true);
     const res = await uploadOwnAvatar(authId, uri);
     setUploading(false);
@@ -60,6 +63,7 @@ export default function EditableAvatar({
         text: "حذف",
         style: "destructive",
         onPress: async () => {
+          if (!requireOnline()) return;
           setUploading(true);
           const res = await removeOwnAvatar(authId);
           setUploading(false);
@@ -75,6 +79,8 @@ export default function EditableAvatar({
 
   const openMenu = () => {
     if (!authId || uploading) return;
+    // Changer ou supprimer l'avatar (tous rôles) : hors ligne, toast dès l'appui.
+    if (!requireOnline()) return;
 
     const actions = [
       { text: "التقاط صورة", onPress: () => pickImage("camera") },

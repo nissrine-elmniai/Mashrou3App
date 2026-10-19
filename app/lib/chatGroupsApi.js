@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import { resolvePublicAvatarUrl } from "./avatarApi";
 import { displayProfileEmail } from "./authEmail";
 import { formatRelativeTime } from "./messagesApi";
@@ -66,8 +67,8 @@ function mapStorageError(error) {
 }
 
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 function groupAvatarObjectPath(groupId) {

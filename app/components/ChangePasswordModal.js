@@ -21,6 +21,7 @@ import {
   isPasswordTooShort,
   passwordTooShortMessage,
 } from "../constants/security";
+import { requireOnline } from "../lib/toast";
 
 export default function ChangePasswordModal({ visible, onClose, bottomInset = 16 }) {
   const [newPassword, setNewPassword] = useState("");
@@ -53,6 +54,8 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
   };
 
   const savePassword = async () => {
+    // Hors ligne (tous rôles) : toast seulement, aucune modification.
+    if (!requireOnline()) return;
     if (isPasswordTooShort(newPassword)) {
       Alert.alert("تنبيه", passwordTooShortMessage());
       return;

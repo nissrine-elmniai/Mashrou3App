@@ -27,6 +27,7 @@ import {
   isPlaceholderBirthDate,
 } from "../../lib/auth";
 import { formatGenderLabel, updatePersonalInfo } from "../../lib/membersApi";
+import { requireOnline } from "../../lib/toast";
 
 /** Même contrôle que la modale admin : chiffres, espaces et « + ». */
 const PHONE_RE = /^[0-9+\s]+$/;
@@ -130,6 +131,8 @@ export default function EditPersonalInfoModal({
   };
 
   const handleSave = async () => {
+    // Hors ligne (tous rôles) : toast seulement, aucune modification.
+    if (!requireOnline()) return;
     const firstClean = form.firstName.trim();
     const lastClean = form.lastName.trim();
     const phoneClean = form.phone.trim();

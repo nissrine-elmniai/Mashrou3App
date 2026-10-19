@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import { parseSeasonStartDate } from "./saisonsApi";
 import { clampTumuns } from "./tumun";
 
@@ -74,8 +75,8 @@ function programToRow(program, membreId, saisonId) {
 }
 
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 /** Programmes du membre pour la saison active. Sans saison → liste vide. */

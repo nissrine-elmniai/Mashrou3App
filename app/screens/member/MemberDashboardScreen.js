@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -17,17 +17,32 @@ import { Ionicons } from "@expo/vector-icons";
 import { Home, BookOpen, User, ClipboardList, GraduationCap } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import {
-  getMyProgress,
-  getMyCurrentProgressPosition,
-  getMySeasonProgress,
   computeProgressMetrics,
   computeProgressPace,
-  PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { SEASON_TYPES } from "../../constants/roles";
 import { NOTIF_CATEGORY } from "../../constants/notifications";
 import { getActiveRegularSeason, getOpenRegistrationSeasons } from "../../lib/seasonScope";
-import { getMyObjectif } from "../../lib/objectifsApi";
+import {
+  ENROLLMENT_LOCK_INITIAL,
+  cachedAlertsPreview,
+  cachedCurrentInscription,
+  cachedMyEnrollment,
+  cachedMyObjectif,
+  cachedMyProgressHistory,
+  cachedMyProgressPosition,
+  cachedMySeasonProgress,
+  cachedMyTestInvitations,
+  cachedMyTestResults,
+  cachedPendingAlerts,
+  cachedPresenceSummary,
+  cachedProfileFields,
+  cachedSeasonCutoff,
+  enrollmentLockFromResult,
+  memberInfoFromUser,
+  unknownDataMessage,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { colors, radii, shadows } from "../../constants/theme";
 import { rtlText, rtlTextBold, rtlTextCenter, row, fonts } from "../../constants/rtl";
 import {
@@ -37,26 +52,15 @@ import {
   MemberBottomTabBar,
 } from "../../components/ui";
 import { ProgressRing } from "../../components/ProgressRing";
+import { subscribeToNewAlerts } from "../../lib/alertsApi";
+import { formatGenderLabel } from "../../lib/membersApi";
 import {
-  getVisibleAlerts,
-  getUnacknowledgedAlerts,
-  subscribeToNewAlerts,
-  resolveMemberSeasonAlertCutoff,
-} from "../../lib/alertsApi";
-import {
-  getMemberProfileFields,
-  formatGenderLabel,
-  getMyActiveEnrollment,
-} from "../../lib/membersApi";
-import {
-  getMyCurrentInscription,
   formatUnreadBadge,
   sumMemberInboxUnread,
 } from "../../lib/messagesApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
-import { getMemberPresenceSummary } from "../../lib/presenceApi";
-import { getMyTestInvitations, getMyTestResults, mapMemberTestToExam } from "../../lib/testsApi";
+import { mapMemberTestToExam } from "../../lib/testsApi";
 import MemberTestsPanel from "../../components/member/MemberTestsPanel";
 import { formatHizbCount, TUMUNS_PER_HIZB } from "../../lib/tumun";
 import PersonalInfoSection from "../../components/PersonalInfoSection";
@@ -308,7 +312,16 @@ export default function MemberDashboardScreen({ navigation, route }) {
   const [progressEntries, setProgressEntries] = useState([]);
   const [currentMetrics, setCurrentMetrics] = useState(null);
   const [positionReady, setPositionReady] = useState(false);
-  const [progressLocked, setProgressLocked] = useState(false);
+  /** Position inconnue (échec sans cache) : message à la place de « aucun تقدم ». */
+  const [positionError, setPositionError] = useState(null);
+  /** Verrou de saisie : inscription inconnue = verrouillé avec message « inconnu ». */
+  const [enrollmentLock, setEnrollmentLock] = useState(ENROLLMENT_LOCK_INITIAL);
+  /** Aperçu des alertes inconnu (jamais chargé) : pas de « لا توجد تنبيهات ». */
+  const [alertsError, setAlertsError] = useState(null);
+  /** Avancement de saison inconnu : pas de « لم يُحدد هدف ». */
+  const [seasonProgressError, setSeasonProgressError] = useState(null);
+  /** Historique inconnu : pas de « لا توجد أنشطة حديثة ». */
+  const [historyError, setHistoryError] = useState(null);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   /** Timestamp ms — ne montrer que les activités >= date d'inscription */
   const [activitySinceMs, setActivitySinceMs] = useState(null);
@@ -334,6 +347,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
     saisonId: null,
     superviseurId: null,
     registrationDate: null,
+    // Inscription inconnue : texte affiché à la place de « لم يتم تعيينك في حصة بعد ».
+    unknownMessage: null,
   });
   const [progressState, setProgressState] = useState({
     loading: false,
@@ -364,25 +379,39 @@ export default function MemberDashboardScreen({ navigation, route }) {
 
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
 
+  // Retour du réseau : recharge ce qui a été servi par le cache (ou resté inconnu).
+  // Rattaché plus bas (reloadAfterReconnect), une fois les chargeurs définis.
+  const reconnectRef = useRef(null);
+  const deferredFocusRef = useRef(null);
+  const markOffline = useOfflineReload(
+    () => reconnectRef.current?.(),
+    () => deferredFocusRef.current?.()
+  );
+
   const loadProgressEntries = useCallback(async () => {
     setActivitiesLoading(true);
     const [res, posRes, enrollRes] = await Promise.all([
-      getMyProgress({
-        saisonId: activeSeasonId || undefined,
-      }),
-      getMyCurrentProgressPosition(),
-      getMyActiveEnrollment(),
+      cachedMyProgressHistory(activeSeasonId),
+      cachedMyProgressPosition(),
+      cachedMyEnrollment(activeSeasonId),
     ]);
+    markOffline(res, posRes, enrollRes);
     if (res.ok) {
       setProgressEntries(res.entries || []);
+      setHistoryError(null);
+    } else {
+      setHistoryError(unknownDataMessage(res));
     }
     if (posRes.ok) {
       setCurrentMetrics(posRes.hasData ? posRes.metrics : null);
+      setPositionError(null);
+    } else {
+      setPositionError(unknownDataMessage(posRes));
     }
-    if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
+    setEnrollmentLock(enrollmentLockFromResult(enrollRes));
     setPositionReady(true);
     setActivitiesLoading(false);
-  }, [activeSeasonId]);
+  }, [activeSeasonId, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -391,13 +420,12 @@ export default function MemberDashboardScreen({ navigation, route }) {
   );
 
   const loadMyExams = useCallback(async () => {
-    const res = await getMyTestResults();
-    if (!res.ok) {
-      setMyExams([]);
-      return;
-    }
+    const res = await cachedMyTestResults();
+    markOffline(res);
+    // Échec : on garde la liste connue (pas de faux vide dans les activités).
+    if (!res.ok) return;
     setMyExams((res.results || []).map(mapMemberTestToExam));
-  }, []);
+  }, [markOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -406,12 +434,13 @@ export default function MemberDashboardScreen({ navigation, route }) {
   );
 
   const loadTestsBadge = useCallback(async () => {
-    const res = await getMyTestInvitations();
+    const res = await cachedMyTestInvitations();
+    markOffline(res);
     if (!res.ok) return;
     setTestsInviteCount(
       (res.invitations || []).filter((row) => row.statut === "invite").length
     );
-  }, []);
+  }, [markOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -429,18 +458,19 @@ export default function MemberDashboardScreen({ navigation, route }) {
   }, [navigation, route?.params?.tab, route?.params?.invitationId]);
 
   const loadAlerts = useCallback(async () => {
-    const scope = {
-      scopeToCurrentSeason: true,
-      saisonId: activeSeasonId,
-      role: "member",
-    };
     const [visible, pending] = await Promise.all([
-      getVisibleAlerts({ ...scope, limit: 3 }),
-      getUnacknowledgedAlerts(scope),
+      cachedAlertsPreview(activeSeasonId),
+      cachedPendingAlerts(activeSeasonId),
     ]);
-    if (visible.ok) setAdminAlerts(visible.alerts);
+    markOffline(visible, pending);
+    if (visible.ok) {
+      setAdminAlerts(visible.alerts);
+      setAlertsError(null);
+    } else {
+      setAlertsError(unknownDataMessage(visible));
+    }
     if (pending.ok) setPendingAlertCount(pending.alerts.length);
-  }, [activeSeasonId]);
+  }, [activeSeasonId, markOffline]);
 
   useEffect(() => {
     loadAlerts();
@@ -453,29 +483,34 @@ export default function MemberDashboardScreen({ navigation, route }) {
     }, [loadAlerts])
   );
 
-  useEffect(() => {
+  // Rappelable au retour du réseau ; le compteur écarte une réponse périmée.
+  const cutoffSeqRef = useRef(0);
+  const loadActivityCutoff = useCallback(async () => {
+    const seq = ++cutoffSeqRef.current;
     if (!authId || !activeSeasonId) {
       setActivitySinceMs(null);
       setActivityCutoffReady(!!authId && !activeSeasonId);
-      return undefined;
+      return;
     }
-    let cancelled = false;
     setActivityCutoffReady(false);
-    (async () => {
-      const res = await resolveMemberSeasonAlertCutoff(authId, activeSeasonId);
-      if (cancelled) return;
-      if (res.ok && res.sinceIso) {
-        const ms = new Date(res.sinceIso).getTime();
-        setActivitySinceMs(Number.isFinite(ms) ? ms : null);
-      } else {
-        setActivitySinceMs(null);
-      }
-      setActivityCutoffReady(true);
-    })();
+    const res = await cachedSeasonCutoff(authId, activeSeasonId);
+    if (seq !== cutoffSeqRef.current) return;
+    markOffline(res);
+    if (res.ok && res.sinceIso) {
+      const ms = new Date(res.sinceIso).getTime();
+      setActivitySinceMs(Number.isFinite(ms) ? ms : null);
+    } else {
+      setActivitySinceMs(null);
+    }
+    setActivityCutoffReady(true);
+  }, [authId, activeSeasonId, markOffline]);
+
+  useEffect(() => {
+    loadActivityCutoff();
     return () => {
-      cancelled = true;
+      cutoffSeqRef.current += 1;
     };
-  }, [authId, activeSeasonId]);
+  }, [loadActivityCutoff]);
 
   const openRegular = getOpenRegistrationSeasons(seasons, SEASON_TYPES.REGULAR);
   const openSummer = getOpenRegistrationSeasons(seasons, SEASON_TYPES.SUMMER);
@@ -501,19 +536,25 @@ export default function MemberDashboardScreen({ navigation, route }) {
     if (!memberId || !saisonId) {
       setSeasonObjectif(null);
       setSeasonProgress(null);
+      setSeasonProgressError(null);
       return;
     }
     const [res, progressRes] = await Promise.all([
-      getMyObjectif(saisonId),
-      getMySeasonProgress(),
+      cachedMyObjectif(saisonId),
+      cachedMySeasonProgress(saisonId),
     ]);
-    if (res.ok && res.objectif) {
-      setSeasonObjectif(res.objectif);
-    } else {
-      setSeasonObjectif(null);
+    markOffline(res, progressRes);
+    if (res.ok) {
+      setSeasonObjectif(res.objectif || null);
     }
-    setSeasonProgress(progressRes.ok ? progressRes.progress : null);
-  }, [currentUser?.authId, currentUser?.id, seasons]);
+    // Objectif inconnu : on garde la valeur connue (la ligne est masquée si null).
+    if (progressRes.ok) {
+      setSeasonProgress(progressRes.progress);
+      setSeasonProgressError(null);
+    } else {
+      setSeasonProgressError(unknownDataMessage(progressRes));
+    }
+  }, [currentUser?.authId, currentUser?.id, seasons, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -558,9 +599,10 @@ export default function MemberDashboardScreen({ navigation, route }) {
     setSessionState((s) => ({ ...s, loading: true }));
 
     const [fieldsRes, currentInscRes] = await Promise.all([
-      getMemberProfileFields(authId),
-      getMyCurrentInscription(authId),
+      cachedProfileFields(authId),
+      cachedCurrentInscription(authId),
     ]);
+    markOffline(fieldsRes, currentInscRes);
 
     if (fieldsRes.ok) {
       setMemberInfo(fieldsRes);
@@ -570,8 +612,16 @@ export default function MemberDashboardScreen({ navigation, route }) {
         level: fieldsRes.niveau || currentUser?.level || null,
         hifzAmount: fieldsRes.quantiteHifz || currentUser?.hifzAmount || null,
       });
+    } else {
+      // Champs inconnus : profil du compte (AppContext) plutôt que des « — ».
+      setMemberInfo((prev) => prev || memberInfoFromUser(currentUser));
     }
 
+    // Inscription inconnue (échec sans cache) ≠ aucune séance.
+    const inscriptionUnknown = !currentInscRes.ok;
+    const unknownMessage = inscriptionUnknown
+      ? unknownDataMessage(currentInscRes)
+      : null;
     const seance = currentInscRes.ok ? currentInscRes.seance : null;
     const inscription = currentInscRes.ok ? currentInscRes.inscription : null;
     const seanceId = seance?.id || null;
@@ -587,6 +637,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
       saisonId,
       superviseurId: seance?.superviseur_id || null,
       registrationDate: inscription?.dateInscription || null,
+      unknownMessage,
     });
 
     setProgressState((s) => ({
@@ -596,10 +647,11 @@ export default function MemberDashboardScreen({ navigation, route }) {
     }));
 
     // Pas de séance du musim courant : ne pas charger la présence.
+    // Séance inconnue : présence inconnue aussi (pas de « لا يوجد سجل حضور »).
     if (!seanceId) {
       setPresenceState({
         loading: false,
-        error: null,
+        error: unknownMessage,
         hasData: false,
         rate: null,
         presentCount: 0,
@@ -609,12 +661,13 @@ export default function MemberDashboardScreen({ navigation, route }) {
       return;
     }
 
-    const presRes = await getMemberPresenceSummary(authId, seanceId);
+    const presRes = await cachedPresenceSummary(authId, seanceId);
+    markOffline(presRes);
 
     if (!presRes.ok) {
       setPresenceState({
         loading: false,
-        error: presRes.error,
+        error: unknownDataMessage(presRes),
         hasData: false,
         rate: null,
         presentCount: 0,
@@ -638,6 +691,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
     currentUser?.school,
     currentUser?.level,
     currentUser?.hifzAmount,
+    markOffline,
   ]);
 
   const handleProfileInfoSaved = useCallback(async () => {
@@ -649,6 +703,24 @@ export default function MemberDashboardScreen({ navigation, route }) {
     if (tab !== "profile") return;
     loadProfileData();
   }, [tab, loadProfileData]);
+
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  // Retour du réseau, écran au premier plan : tout ce qui a pu venir du cache.
+  reconnectRef.current = () => {
+    loadProgressEntries();
+    loadMyExams();
+    loadTestsBadge();
+    loadAlerts();
+    loadSeasonObjectif();
+    loadActivityCutoff();
+    if (tabRef.current === "profile") loadProfileData();
+  };
+  // Retour du réseau en arrière-plan : seulement ce que le focus ne recharge pas.
+  deferredFocusRef.current = () => {
+    loadActivityCutoff();
+    if (tabRef.current === "profile") loadProfileData();
+  };
 
   useEffect(() => {
     setContactFields((prev) => ({
@@ -685,8 +757,10 @@ export default function MemberDashboardScreen({ navigation, route }) {
     () => ({
       loading:
         !memorizationMetrics &&
+        !positionError &&
         (activitiesLoading || !positionReady || progressState.loading),
-      error: progressState.error,
+      // Position inconnue : message, pas « لم يتم تسجيل أي تقدم بعد ».
+      error: progressState.error || (!memorizationMetrics ? positionError : null),
       hasData: !!memorizationMetrics,
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
@@ -698,6 +772,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
       memorizationMetrics,
       activitiesLoading,
       positionReady,
+      positionError,
       progressState.loading,
       progressState.error,
       seasonObjectif,
@@ -707,6 +782,15 @@ export default function MemberDashboardScreen({ navigation, route }) {
 
   /** Anneau = gain / cible, calculés par le serveur (RPC 0135). */
   const homeProgress = useMemo(() => {
+    // Avancement inconnu (échec sans cache) : pas de « لم يُحدد هدف ».
+    if (!seasonProgress && seasonProgressError) {
+      return {
+        memorizationPct: 0,
+        memorizationPctLabel: "—",
+        programsHizbLabel: seasonProgressError,
+        ringA11y: seasonProgressError,
+      };
+    }
     const cible = seasonProgress?.cible ?? null;
     const hasObjectif = cible != null && cible > 0;
 
@@ -741,7 +825,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
       programsHizbLabel: `${gainedLabel} من ${cibleLabel}`,
       ringA11y: `تقدم هدف الموسم: ${gainedLabel} من ${cibleLabel}`,
     };
-  }, [seasonProgress]);
+  }, [seasonProgress, seasonProgressError]);
 
   const { memorizationPct, memorizationPctLabel, programsHizbLabel, ringA11y } =
     homeProgress;
@@ -1215,7 +1299,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
                 onPress={() => navigation.navigate("MemberAlerts")}
               />
               {adminAlerts.length === 0 ? (
-                <EmptyState text="لا توجد تنبيهات جديدة" />
+                <EmptyState text={alertsError || "لا توجد تنبيهات جديدة"} />
               ) : (
                 adminAlerts.map((n, idx) => {
                   const when = formatActivityWhen(parseActivityTimestamp(n.createdAt));
@@ -1246,7 +1330,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
                   <ActivityIndicator color={colors.primary} />
                 </View>
               ) : recentActivities.length === 0 ? (
-                <EmptyState text="لا توجد أنشطة حديثة" />
+                <EmptyState text={historyError || "لا توجد أنشطة حديثة"} />
               ) : (
                 recentActivities.map((activity, idx) => (
                   <ActivityCard
@@ -1307,12 +1391,15 @@ export default function MemberDashboardScreen({ navigation, route }) {
                 heureDebut={sessionState.heureDebut}
                 heureFin={sessionState.heureFin}
                 registrationDate={sessionState.registrationDate}
+                {...(sessionState.unknownMessage
+                  ? { emptyText: sessionState.unknownMessage }
+                  : {})}
               />
 
               <ProgressCard
                 progressState={profileProgressState}
                 onUpdate={openProgression}
-                lockedMessage={progressLocked ? PROGRESS_LOCKED_MESSAGE : null}
+                lockedMessage={enrollmentLock.locked ? enrollmentLock.message : null}
               />
 
               <AttendanceCard
