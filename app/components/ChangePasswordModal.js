@@ -21,6 +21,8 @@ import {
   isPasswordTooShort,
   passwordTooShortMessage,
 } from "../constants/security";
+import { requireOnline } from "../lib/toast";
+import AppToast from "./AppToast";
 
 export default function ChangePasswordModal({ visible, onClose, bottomInset = 16 }) {
   const [newPassword, setNewPassword] = useState("");
@@ -53,6 +55,8 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
   };
 
   const savePassword = async () => {
+    // Hors ligne (tous rôles) : toast seulement, aucune modification.
+    if (!requireOnline()) return;
     if (isPasswordTooShort(newPassword)) {
       Alert.alert("تنبيه", passwordTooShortMessage());
       return;
@@ -91,75 +95,83 @@ export default function ChangePasswordModal({ visible, onClose, bottomInset = 16
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View
-        style={[
-          styles.overlay,
-          {
-            paddingBottom:
-              keyboardHeight > 0
-                ? keyboardHeight + 8
-                : Math.max(insets.bottom, bottomInset),
-          },
-        ]}
-      >
-        <View style={styles.card}>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            bounces={false}
-            contentContainerStyle={styles.cardContent}
-          >
-            <View style={styles.header}>
-              <Text style={styles.title}> تغيير كلمة المرور</Text>
-              <TouchableOpacity onPress={handleClose} hitSlop={10}>
-                <Ionicons name="close" size={22} color={colors.muted} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.label}>كلمة المرور الجديدة</Text>
-            <TextInput
-              style={styles.input}
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="••••••••"
-              placeholderTextColor={colors.placeholder}
-              secureTextEntry
-              textAlign={textAlignStart}
-              returnKeyType="next"
-            />
-
-            <Text style={styles.label}>تأكيد كلمة المرور</Text>
-            <TextInput
-              style={styles.input}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="••••••••"
-              placeholderTextColor={colors.placeholder}
-              secureTextEntry
-              textAlign={textAlignStart}
-              returnKeyType="done"
-              onSubmitEditing={saving ? undefined : savePassword}
-            />
-
-            <TouchableOpacity
-              style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-              onPress={saving ? undefined : savePassword}
-              activeOpacity={0.85}
+      <View style={styles.modalRoot}>
+        <View
+          style={[
+            styles.overlay,
+            {
+              paddingBottom:
+                keyboardHeight > 0
+                  ? keyboardHeight + 8
+                  : Math.max(insets.bottom, bottomInset),
+            },
+          ]}
+        >
+          <View style={styles.card}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              contentContainerStyle={styles.cardContent}
             >
-              {saving ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.saveBtnText}>حفظ</Text>
-              )}
-            </TouchableOpacity>
-          </ScrollView>
+              <View style={styles.header}>
+                <Text style={styles.title}> تغيير كلمة المرور</Text>
+                <TouchableOpacity onPress={handleClose} hitSlop={10}>
+                  <Ionicons name="close" size={22} color={colors.muted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.label}>كلمة المرور الجديدة</Text>
+              <TextInput
+                style={styles.input}
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="••••••••"
+                placeholderTextColor={colors.placeholder}
+                secureTextEntry
+                textAlign={textAlignStart}
+                returnKeyType="next"
+              />
+
+              <Text style={styles.label}>تأكيد كلمة المرور</Text>
+              <TextInput
+                style={styles.input}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="••••••••"
+                placeholderTextColor={colors.placeholder}
+                secureTextEntry
+                textAlign={textAlignStart}
+                returnKeyType="done"
+                onSubmitEditing={saving ? undefined : savePassword}
+              />
+
+              <TouchableOpacity
+                style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+                onPress={saving ? undefined : savePassword}
+                activeOpacity={0.85}
+              >
+                {saving ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.saveBtnText}>حفظ</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+        />
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  modalRoot: { flex: 1 },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",

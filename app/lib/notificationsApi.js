@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 
 const SUPABASE_TIMEOUT_MS = 15000;
 const PAGE_SIZE = 30;
@@ -51,8 +52,8 @@ function mapTableError(error, tableLabel) {
 }
 
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 export function mapNotificationRow(row) {

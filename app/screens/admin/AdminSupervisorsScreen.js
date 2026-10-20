@@ -20,11 +20,7 @@ import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row, textAlignStart } from "../../constants/rtl";
 import { sendSupervisorInviteEmail } from "../../utils/sendInviteEmail";
-import {
-  getSupervisorProfiles,
-  getAllSeances,
-  excludeDuplicateSupervisorAccounts,
-} from "../../lib/seancesApi";
+import { excludeDuplicateSupervisorAccounts } from "../../lib/seancesApi";
 import {
   getActiveRegularSeason,
   supervisorIdsForSeason,
@@ -38,6 +34,15 @@ import {
 } from "../../lib/supervisorInvitationsApi";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
+import AppToast from "../../components/AppToast";
+import { cachedSeancesLite, cachedSupervisorProfiles } from "../../lib/adminOfflineReads";
+import {
+  OFFLINE_UNAVAILABLE_MESSAGE,
+  fetchOnlineOnly,
+  servedOffline,
+} from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { colors } from "../../constants/theme";
 import { displayProfileEmail } from "../../lib/authEmail";
 
@@ -94,6 +99,11 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [seances, setSeances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  /** Invitations jamais en cache : inconnues hors ligne (onglet et compteur). */
+  const [invitationsUnknown, setInvitationsUnknown] = useState(false);
+  // Retour du réseau : relecture discrète si l'écran est affiché (sinon au focus).
+  const loadAllRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadAllRef.current?.({ silent: true }));
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -108,21 +118,30 @@ export default function AdminSupervisorsScreen({ navigation }) {
   const [sending, setSending] = useState(false);
   const addLock = useRef(false);
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  // options.silent : sans indicateur plein écran (retour du réseau). Le bouton
+  // « إعادة المحاولة » passe l'événement d'appui : chargement normal.
+  const loadAll = useCallback(async (options) => {
+    const silent = options?.silent === true;
+    if (!silent) setLoading(true);
     setLoadError(null);
     const saisonId = activeSeason?.id || null;
     const [supRes, invRes, seaRes] = await Promise.all([
-      getSupervisorProfiles(),
-      listSupervisorInvitations({ saisonId }),
-      getAllSeances({ saisonId, lite: true }),
+      cachedSupervisorProfiles(),
+      // Invitations : jamais en cache (hors ligne : aucune requête).
+      fetchOnlineOnly(() => listSupervisorInvitations({ saisonId })),
+      cachedSeancesLite(saisonId),
     ]);
-    if (!supRes.ok || !invRes.ok || !seaRes.ok) {
+    markOffline(supRes, invRes, seaRes);
+    const offline = [supRes, invRes, seaRes].some(servedOffline);
+    // Hors ligne : superviseurs du cache même sans invitations.
+    if (!supRes.ok || !seaRes.ok || (!invRes.ok && !offline)) {
       setLoadError(
-        (!supRes.ok && supRes.error) ||
-          (!invRes.ok && invRes.error) ||
-          (!seaRes.ok && seaRes.error) ||
-          "تعذر تحميل المشرفين"
+        offline
+          ? OFFLINE_UNAVAILABLE_MESSAGE
+          : (!supRes.ok && supRes.error) ||
+              (!invRes.ok && invRes.error) ||
+              (!seaRes.ok && seaRes.error) ||
+              "تعذر تحميل المشرفين"
       );
       setLoading(false);
       return;
@@ -135,9 +154,11 @@ export default function AdminSupervisorsScreen({ navigation }) {
     setSupervisors(visible);
     setRoster(visible);
     setSeances(seaRes.seances);
-    setInvitations(invRes.invitations);
+    setInvitationsUnknown(!invRes.ok);
+    if (invRes.ok) setInvitations(invRes.invitations);
     setLoading(false);
-  }, [activeSeason?.id]);
+  }, [activeSeason?.id, markOffline]);
+  loadAllRef.current = loadAll;
 
   useFocusEffect(
     useCallback(() => {
@@ -204,6 +225,8 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const handleAdd = async () => {
+    // Réseau perdu formulaire ouvert : toast, saisie conservée.
+    if (!requireOnline()) return;
     if (addLock.current) return;
     if (!email.trim() || !firstName.trim() || !lastName.trim()) {
       Alert.alert("تنبيه", "أدخل الاسم واللقب والبريد الإلكتروني");
@@ -260,6 +283,8 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const confirmDelete = (supervisor) => {
+    // Retirer un superviseur : hors ligne, toast sans confirmation.
+    if (!requireOnline()) return;
     const linked = seances.filter(
       (s) => s.superviseur_id === supervisor.id && s.statut !== "archivee"
     );
@@ -292,6 +317,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const finishRemoval = async (supervisor, seanceId, nextSupervisorId) => {
+    if (!requireOnline()) return;
     setRemoving(true);
     const result = await reassignAndRemoveSupervisor({
       userId: supervisor.id,
@@ -350,6 +376,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
   };
 
   const confirmRevoke = (invitation) => {
+    if (!requireOnline()) return;
     const name = `${invitation.first_name || ""} ${invitation.last_name || ""}`.trim();
     Alert.alert(
       "إلغاء الدعوة",
@@ -360,6 +387,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
           text: "إلغاء الدعوة",
           style: "destructive",
           onPress: async () => {
+            if (!requireOnline()) return;
             const result = await revokeSupervisorInvitation(invitation.id);
             if (!result.ok) {
               Alert.alert("خطأ", result.error);
@@ -429,6 +457,8 @@ export default function AdminSupervisorsScreen({ navigation }) {
           <TouchableOpacity
             style={styles.addBtn}
             onPress={() => {
+              // Formulaire impossible à enregistrer hors ligne : toast seulement.
+              if (!requireOnline()) return;
               resetForm();
               setShowAdd(true);
             }}
@@ -463,7 +493,7 @@ export default function AdminSupervisorsScreen({ navigation }) {
                 filter === "pending" && styles.filterChipTextActive,
               ]}
             >
-              بانتظار التفعيل ({pendingInvitations.length})
+              بانتظار التفعيل ({invitationsUnknown ? "—" : pendingInvitations.length})
             </Text>
           </TouchableOpacity>
         </View>
@@ -480,7 +510,9 @@ export default function AdminSupervisorsScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         ) : filter === "pending" ? (
-          filteredInvitations.length === 0 ? (
+          invitationsUnknown ? (
+            <Text style={styles.emptyText}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
+          ) : filteredInvitations.length === 0 ? (
             <Text style={styles.emptyText}>لا توجد دعوات معلّقة</Text>
           ) : (
             filteredInvitations.map((invitation) => {
@@ -645,6 +677,11 @@ export default function AdminSupervisorsScreen({ navigation }) {
             </ScrollView>
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+        />
       </Modal>
 
       <Modal
@@ -763,6 +800,8 @@ export default function AdminSupervisorsScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast replayPending={false} />
       </Modal>
       {messagesFab}
       {sidebar}

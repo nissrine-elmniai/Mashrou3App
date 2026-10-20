@@ -1,6 +1,12 @@
 import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
+import {
+  configureProbe,
+  getProbeUrl,
+  reportHttpResponse,
+  reportTransportFailure,
+} from "./networkState";
 
 export { mapSupabaseAuthError } from "./userError";
 
@@ -31,6 +37,38 @@ export function isSupabaseConfigured() {
   );
 }
 
+configureProbe(supabaseUrl);
+
+/** Erreur de transport (pas de réponse HTTP). Une annulation volontaire n'en est pas une. */
+function isTransportError(error) {
+  if (!error || error.name === "AbortError") return false;
+  if (error.name === "TypeError") return true;
+  return /network request failed|failed to fetch|fetch failed|network error/i.test(
+    String(error.message || "")
+  );
+}
+
+/**
+ * fetch transmis au client (auth, postgrest, storage, functions, et les appels
+ * HTTP de realtime ; pas ses WebSockets). Renvoie exactement la réponse du fetch
+ * d'origine, ou relance exactement la même erreur : il ne fait que signaler
+ * l'état réseau à networkState. La sonde (/auth/v1/health) n'est pas observée.
+ */
+function observedFetch(input, init) {
+  const url = typeof input === "string" ? input : input?.url;
+  if (url && url === getProbeUrl()) return fetch(input, init);
+  return fetch(input, init).then(
+    (response) => {
+      reportHttpResponse();
+      return response;
+    },
+    (error) => {
+      if (isTransportError(error)) reportTransportFailure();
+      throw error;
+    }
+  );
+}
+
 export const supabase = createClient(
   supabaseUrl,
   supabaseAnonKey,
@@ -41,6 +79,7 @@ export const supabase = createClient(
       persistSession: true,
       detectSessionInUrl: false,
     },
+    global: { fetch: observedFetch },
   }
 );
 

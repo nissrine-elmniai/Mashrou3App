@@ -10,6 +10,8 @@ import { useFocusEffect } from "@react-navigation/native";
 import { SEASON_TYPES } from "../../constants/roles";
 import { row, rtlText } from "../../constants/rtl";
 import { getMemberSeasonHistory } from "../../lib/seasonStatsApi";
+import { fetchOnlineOnly, unknownDataMessage } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { STATS_LABELS } from "../../lib/statsLabels";
 import { TUMUNS_PER_HIZB, formatHizbCount } from "../../lib/tumun";
 
@@ -128,6 +130,9 @@ export default function MemberSeasonHistory({ membreId }) {
   const [error, setError] = useState(null);
   const [rows, setRows] = useState([]);
   const [reloadKey, setReloadKey] = useState(0);
+  // Historique nominatif : jamais en cache. Hors ligne : message tout de suite,
+  // nouvelle lecture au retour du réseau.
+  const markOffline = useOfflineReload(() => setReloadKey((n) => n + 1));
 
   useFocusEffect(
     useCallback(() => {
@@ -135,12 +140,13 @@ export default function MemberSeasonHistory({ membreId }) {
       (async () => {
         setLoading(true);
         setError(null);
-        const res = await getMemberSeasonHistory(membreId);
+        const res = await fetchOnlineOnly(() => getMemberSeasonHistory(membreId));
         if (cancelled) return;
+        markOffline(res);
         setLoading(false);
         if (!res.ok) {
           setRows([]);
-          setError(res.error || STATS_LABELS.historyLoadError);
+          setError(unknownDataMessage(res, STATS_LABELS.historyLoadError));
           return;
         }
         setRows(res.rows || []);
@@ -148,7 +154,7 @@ export default function MemberSeasonHistory({ membreId }) {
       return () => {
         cancelled = true;
       };
-    }, [membreId, reloadKey])
+    }, [membreId, reloadKey, markOffline])
   );
 
   const regular = rows.filter((row) => row.type !== SEASON_TYPES.SUMMER);

@@ -1,22 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../../context/AppContext";
 import { deriveLevel, getLatestSeanceOccurrence } from "../supervisorHelpers";
 import {
   computeAttendanceHistorySummary,
   isSupabaseEntityId,
 } from "../supervisorAttendanceHelpers";
-import { getSupervisorActiveSeances, getSeanceMembers } from "../../../lib/membersApi";
 import {
-  buildSeanceAttendanceHistory,
-  getSeancePresenceForDate,
-  getPresenceReminderForOccurrence,
-} from "../../../lib/presenceApi";
-import { getMemberProgressionSummary, countMembersWithNewProgress } from "../../../lib/progressApi";
+  cachedAttendanceHistory,
+  cachedNewProgressCount,
+  cachedPresenceReminder,
+  cachedSeanceMembers,
+  cachedSeancePresenceForDate,
+  cachedSeanceProgressSummary,
+  cachedSupervisorSeances,
+} from "../../../lib/supervisorOfflineReads";
+import { unknownDataMessage } from "../../../lib/offlineCache";
 import { getSeenAt, setSeenAt } from "../../../data/seenAt";
 
-/** Message UI mode dégradé (mock après échec Supabase réel). */
-export const SUPERVISOR_FETCH_DEGRADED_MESSAGE =
-  "تعذر تحميل بيانات المجموعة، يتم عرض بيانات محلية";
+/** État vide (aucune séance). membersUnknown : membres non lus (échec sans cache). */
+const EMPTY_SUPABASE_DATA = {
+  seanceId: null,
+  membersUnknown: null,
+  myGroups: [],
+  members: [],
+  weeklyPresenceByMember: {},
+  occurrenceMeta: null,
+  globalAttendancePct: null,
+  showPresenceReminder: false,
+  progressLoaded: true,
+  newMembersCount: 0,
+  newProgressCount: 0,
+  presenceDotSeen: false,
+};
 
 function buildScheduleLabel(seance) {
   const heureDebut = seance.heure_debut ? seance.heure_debut.slice(0, 5) : "";
@@ -76,41 +91,6 @@ function mapSeanceMembersToRows(seanceMembers, group) {
     registrationStatus: m.statutInscription,
     registrationDate: m.dateInscription,
   }));
-}
-
-/**
- * Dernière ligne progression par membre (limit 1), en parallèle.
- * Un échec isolé laisse ce membre sans position ; les autres restent affichés.
- */
-async function fetchLatestProgressByMemberId(membreIds) {
-  const ids = (membreIds || []).filter(Boolean);
-  const pairs = await Promise.all(
-    ids.map(async (id) => {
-      try {
-        const res = await getMemberProgressionSummary(id);
-        if (!res.ok) {
-          console.warn(
-            "useSupervisorMembers: échec lecture progression —",
-            id,
-            res.error
-          );
-          return [id, null];
-        }
-        if (!res.hasData || !res.metrics) {
-          return [id, null];
-        }
-        return [id, { metrics: res.metrics, entry: res.entry || null }];
-      } catch (e) {
-        console.warn(
-          "useSupervisorMembers: échec lecture progression —",
-          id,
-          e?.message || e
-        );
-        return [id, null];
-      }
-    })
-  );
-  return Object.fromEntries(pairs);
 }
 
 function applyProgressToMembers(members, byId) {
@@ -179,14 +159,15 @@ async function resolveNewMembersCount(userId, seanceId, memberRows) {
   return countNewMembersSince(memberRows, existing);
 }
 
-async function resolveNewProgressCount(userId, seanceId) {
+async function resolveNewProgressCount(userId, seanceId, onResult) {
   if (!userId || !seanceId) return 0;
   const existing = await getSeenAt("progress", userId, seanceId);
   if (!existing) {
     await setSeenAt("progress", userId, seanceId, new Date().toISOString());
     return 0;
   }
-  const res = await countMembersWithNewProgress(seanceId, existing);
+  const res = await cachedNewProgressCount(seanceId, existing);
+  onResult?.(res);
   return res.ok ? res.count || 0 : 0;
 }
 
@@ -204,10 +185,15 @@ async function resolvePresenceDotSeen(userId, seanceId, sessionDate) {
  *
  * États exposés :
  * - loading : premier fetch Supabase en cours (pas de flash mock)
- * - fetchError : échec réel Supabase → repli mock signalé côté UI
- * - dataSource : 'supabase' | 'mock'
+ * - fetchError : dernier échec (les données déjà chargées sont conservées)
+ * - unknownMessage : séance ou membres inconnus (échec sans cache) ; à afficher
+ *   à la place de « لا يوجد أعضاء » / « لم يتم تحديد حصة »
+ * - dataSource : 'supabase' | 'mock' (mock seulement sans Supabase)
+ *
+ * Lectures via supervisorOfflineReads (cache sup.*) ; `onResult(res)` reçoit
+ * chaque résultat (rechargement au retour du réseau, useOfflineReload).
  */
-export function useSupervisorMembers(selectedGroupId = null) {
+export function useSupervisorMembers(selectedGroupId = null, { onResult } = {}) {
   const {
     currentUser,
     getSupervisorGroups,
@@ -215,6 +201,11 @@ export function useSupervisorMembers(selectedGroupId = null) {
     getMemberProgress,
     supabaseSession,
   } = useApp();
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
+  const report = useCallback((...results) => {
+    results.forEach((res) => onResultRef.current?.(res));
+  }, []);
 
   const myGroupsMock = getSupervisorGroups(currentUser?.id);
 
@@ -233,7 +224,8 @@ export function useSupervisorMembers(selectedGroupId = null) {
     return list;
   }, [myGroupsMock, getUserById, getMemberProgress]);
 
-  const supervisorAuthId = supabaseSession?.user?.id || null;
+  // Restauration hors ligne : pas de session Supabase, l'authId du profil en cache suffit.
+  const supervisorAuthId = supabaseSession?.user?.id || currentUser?.authId || null;
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refetch = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -243,34 +235,15 @@ export function useSupervisorMembers(selectedGroupId = null) {
     loaded: false,
     error: null,
   });
-  const [supabaseData, setSupabaseData] = useState({
-    myGroups: [],
-    members: [],
-    weeklyPresenceByMember: {},
-    occurrenceMeta: null,
-    globalAttendancePct: null,
-    showPresenceReminder: false,
-    progressLoaded: true,
-    newMembersCount: 0,
-    newProgressCount: 0,
-    presenceDotSeen: false,
-  });
+  const [supabaseData, setSupabaseData] = useState(EMPTY_SUPABASE_DATA);
+  // Dernières données affichées : un échec ne vide plus les listes.
+  const dataRef = useRef(supabaseData);
+  dataRef.current = supabaseData;
 
   useEffect(() => {
     if (!supervisorAuthId) {
       setFetchState({ loading: false, loaded: false, error: null });
-      setSupabaseData({
-        myGroups: [],
-        members: [],
-        weeklyPresenceByMember: {},
-        occurrenceMeta: null,
-        globalAttendancePct: null,
-        showPresenceReminder: false,
-        progressLoaded: true,
-        newMembersCount: 0,
-        newProgressCount: 0,
-        presenceDotSeen: false,
-      });
+      setSupabaseData(EMPTY_SUPABASE_DATA);
       return;
     }
 
@@ -281,82 +254,65 @@ export function useSupervisorMembers(selectedGroupId = null) {
       error: null,
     }));
 
+    // Échec : données déjà chargées conservées ; sinon message « inconnu ».
+    const fail = (res) => {
+      setFetchState((prev) => ({
+        loading: false,
+        loaded: prev.loaded,
+        error: unknownDataMessage(res),
+      }));
+    };
+
     (async () => {
       try {
-        const seancesRes = await getSupervisorActiveSeances(supervisorAuthId);
+        const seancesRes = await cachedSupervisorSeances(supervisorAuthId);
         if (cancelled) return;
+        report(seancesRes);
 
         if (!seancesRes.ok) {
           console.warn(
             "useSupervisorMembers: échec lecture séance Supabase —",
             seancesRes.error
           );
-          setSupabaseData({
-            myGroups: [],
-            members: [],
-            weeklyPresenceByMember: {},
-            occurrenceMeta: null,
-            globalAttendancePct: null,
-            showPresenceReminder: false,
-            progressLoaded: true,
-            newMembersCount: 0,
-            newProgressCount: 0,
-            presenceDotSeen: false,
-          });
-          setFetchState({
-            loading: false,
-            loaded: false,
-            error: seancesRes.error || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
-          });
+          fail(seancesRes);
           return;
         }
 
         const seances = seancesRes.seances || [];
         if (seances.length === 0) {
-          setSupabaseData({
-            myGroups: [],
-            members: [],
-            weeklyPresenceByMember: {},
-            occurrenceMeta: null,
-            globalAttendancePct: null,
-            showPresenceReminder: false,
-            progressLoaded: true,
-            newMembersCount: 0,
-            newProgressCount: 0,
-            presenceDotSeen: false,
-          });
+          setSupabaseData(EMPTY_SUPABASE_DATA);
           setFetchState({ loading: false, loaded: true, error: null });
           return;
         }
 
         const seance =
           seances.find((s) => s.id === selectedGroupId) || seances[0];
+        // Données précédentes de la MÊME séance : reprises si une lecture échoue.
+        const prev =
+          dataRef.current.seanceId === seance.id ? dataRef.current : null;
 
-        const membersRes = await getSeanceMembers(seance.id);
+        const membersRes = await cachedSeanceMembers(seance.id);
         if (cancelled) return;
+        report(membersRes);
 
         if (!membersRes.ok) {
           console.warn(
             "useSupervisorMembers: échec lecture membres Supabase —",
             membersRes.error
           );
+          if (prev && !prev.membersUnknown) {
+            fail(membersRes);
+            return;
+          }
+          // Membres inconnus pour cette séance : pas de « لا يوجد أعضاء ».
+          const message = unknownDataMessage(membersRes);
           setSupabaseData({
-            myGroups: [],
-            members: [],
-            weeklyPresenceByMember: {},
-            occurrenceMeta: null,
-            globalAttendancePct: null,
-            showPresenceReminder: false,
-            progressLoaded: true,
-            newMembersCount: 0,
-            newProgressCount: 0,
-            presenceDotSeen: false,
+            ...EMPTY_SUPABASE_DATA,
+            seanceId: seance.id,
+            myGroups: seances.map((s) => buildGroupFromSeance(s, [])),
+            membersUnknown: message,
           });
-          setFetchState({
-            loading: false,
-            loaded: false,
-            error: membersRes.error || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
-          });
+          setFetchState({ loading: false, loaded: true, error: message });
           return;
         }
 
@@ -373,7 +329,8 @@ export function useSupervisorMembers(selectedGroupId = null) {
         );
         const newProgressCount = await resolveNewProgressCount(
           supervisorAuthId,
-          seance.id
+          seance.id,
+          report
         );
         if (cancelled) return;
 
@@ -392,12 +349,13 @@ export function useSupervisorMembers(selectedGroupId = null) {
         if (cancelled) return;
         if (occurrence.sessionDate && occurrence.sessionStarted) {
           occurrenceMeta = occurrence;
-          const presRes = await getSeancePresenceForDate(
+          const presRes = await cachedSeancePresenceForDate(
             seance.id,
             occurrence.sessionDate,
             group.memberIds
           );
           if (cancelled) return;
+          report(presRes);
           if (presRes.ok) {
             weeklyPresenceByMember = presRes.byMemberId || {};
           } else {
@@ -405,6 +363,10 @@ export function useSupervisorMembers(selectedGroupId = null) {
               "useSupervisorMembers: échec lecture présence hebdo —",
               presRes.error
             );
+            // Même jour déjà chargé : présence conservée (pas de liste vidée).
+            if (prev?.occurrenceMeta?.sessionDate === occurrence.sessionDate) {
+              weeklyPresenceByMember = prev.weeklyPresenceByMember || {};
+            }
           }
         }
 
@@ -412,11 +374,12 @@ export function useSupervisorMembers(selectedGroupId = null) {
         if (occurrence.withinMarkingWindow && occurrence.sessionDate) {
           const isMarked = isWeeklyPresenceMarked(weeklyPresenceByMember);
           if (!isMarked) {
-            const rappelRes = await getPresenceReminderForOccurrence(
+            const rappelRes = await cachedPresenceReminder(
               seance.id,
               occurrence.sessionDate
             );
             if (cancelled) return;
+            report(rappelRes);
             if (rappelRes.ok && (rappelRes.nbRappels ?? 0) > 0) {
               showPresenceReminder = true;
             }
@@ -434,7 +397,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
           memberIds.every((id) => isSupabaseEntityId(id));
 
         if (canLoadGlobalHistory) {
-          const historyRes = await buildSeanceAttendanceHistory(
+          const historyRes = await cachedAttendanceHistory(
             seance.id,
             seance.jour,
             seance.heure_debut || null,
@@ -442,6 +405,7 @@ export function useSupervisorMembers(selectedGroupId = null) {
             memberIds
           );
           if (cancelled) return;
+          report(historyRes);
           if (historyRes.ok) {
             const summary = computeAttendanceHistorySummary(
               historyRes.rows,
@@ -455,10 +419,13 @@ export function useSupervisorMembers(selectedGroupId = null) {
               "useSupervisorMembers: échec historique global —",
               historyRes.error
             );
+            globalAttendancePct = prev?.globalAttendancePct ?? null;
           }
         }
 
         setSupabaseData({
+          seanceId: seance.id,
+          membersUnknown: null,
           myGroups,
           members,
           weeklyPresenceByMember,
@@ -474,61 +441,52 @@ export function useSupervisorMembers(selectedGroupId = null) {
 
         // Positions après le premier rendu : N × getMemberProgressionSummary en parallèle.
         if (memberIds.length > 0) {
-          const byId = await fetchLatestProgressByMemberId(memberIds);
+          const progRes = await cachedSeanceProgressSummary(seance.id, memberIds);
           if (cancelled) return;
-          setSupabaseData((prev) => ({
-            ...prev,
-            members: applyProgressToMembers(prev.members, byId),
+          report(progRes);
+          // Échec sans cache : positions déjà connues de la séance conservées.
+          const byId = progRes.ok
+            ? progRes.byId || {}
+            : Object.fromEntries(
+                (prev?.members || []).map((m) => [m.user?.id, m.prog || null])
+              );
+          setSupabaseData((current) => ({
+            ...current,
+            members: applyProgressToMembers(current.members, byId),
             progressLoaded: true,
           }));
         }
       } catch (e) {
-        console.warn(
-          "useSupervisorMembers: erreur réseau/timeout, repli sur le mock —",
-          e?.message || e
-        );
-        if (!cancelled) {
-          setSupabaseData({
-            myGroups: [],
-            members: [],
-            weeklyPresenceByMember: {},
-            occurrenceMeta: null,
-            globalAttendancePct: null,
-            showPresenceReminder: false,
-            progressLoaded: true,
-            newMembersCount: 0,
-            newProgressCount: 0,
-            presenceDotSeen: false,
-          });
-          setFetchState({
-            loading: false,
-            loaded: false,
-            error: e?.message || SUPERVISOR_FETCH_DEGRADED_MESSAGE,
-          });
-        }
+        console.warn("useSupervisorMembers: erreur réseau/timeout —", e?.message || e);
+        if (!cancelled) fail({ ok: false, error: e?.message });
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [supervisorAuthId, selectedGroupId, refreshKey]);
+  }, [supervisorAuthId, selectedGroupId, refreshKey, report]);
 
   const loading = !!supervisorAuthId && fetchState.loading && !fetchState.loaded;
   const fetchError =
     supervisorAuthId && !fetchState.loading && fetchState.error
       ? fetchState.error
       : null;
-  const usingSupabase =
-    !!supervisorAuthId && fetchState.loaded && !fetchState.error;
+  // Supabase : données chargées conservées même après un échec ; jamais de
+  // repli sur le mock local (faux vide). Le mock ne sert que sans Supabase.
+  const usingSupabase = !!supervisorAuthId && fetchState.loaded;
+  /** Séance ou membres inconnus : texte à la place des états vides. */
+  const unknownMessage = supervisorAuthId
+    ? supabaseData.membersUnknown || (!fetchState.loaded ? fetchError : null) || null
+    : null;
 
   // Pendant le chargement Supabase : pas de mock ni EmptyState trompeur.
-  const myGroups = loading
+  const myGroups = loading || (supervisorAuthId && !usingSupabase)
     ? []
     : usingSupabase
     ? supabaseData.myGroups
     : myGroupsMock;
-  const members = loading
+  const members = loading || (supervisorAuthId && !usingSupabase)
     ? []
     : usingSupabase
     ? supabaseData.members
@@ -655,12 +613,15 @@ export function useSupervisorMembers(selectedGroupId = null) {
       setSupabaseData((prev) => ({ ...prev, newProgressCount: 0 }));
       return;
     }
-    const res = await countMembersWithNewProgress(seanceId, existing);
+    const res = await cachedNewProgressCount(seanceId, existing);
+    report(res);
+    // Échec sans cache : on garde le dernier compte affiché.
+    if (!res.ok) return;
     setSupabaseData((prev) => ({
       ...prev,
-      newProgressCount: res.ok ? res.count || 0 : 0,
+      newProgressCount: res.count || 0,
     }));
-  }, [supervisorAuthId, selectedGroupId]);
+  }, [supervisorAuthId, selectedGroupId, report]);
 
   return {
     myGroups,
@@ -685,7 +646,9 @@ export function useSupervisorMembers(selectedGroupId = null) {
     loading,
     progressLoading,
     fetchError,
-    dataSource: usingSupabase ? "supabase" : "mock",
+    unknownMessage,
+    // Supabase dès qu'un compte est connu (le mock ne sert que sans Supabase).
+    dataSource: supervisorAuthId ? "supabase" : "mock",
     refetch,
   };
 }

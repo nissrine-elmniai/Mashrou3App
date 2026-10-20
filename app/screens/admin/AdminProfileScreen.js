@@ -42,6 +42,8 @@ import InboxHeaderButton from "../../components/InboxHeaderButton";
 import ProfileCardHeader from "../../components/profile/ProfileCardHeader";
 import EditAdminProfileModal from "../../components/profile/EditAdminProfileModal";
 import ChangePasswordModal from "../../components/ChangePasswordModal";
+import AppToast from "../../components/AppToast";
+import { requireOnline } from "../../lib/toast";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 
 const palette = {
@@ -65,6 +67,7 @@ export default function AdminProfileScreen({ navigation }) {
     currentUser,
     stats,
     logout,
+    isLoggingOut,
     updateCurrentUserAvatar,
     updateCurrentUserProfile,
     refreshCurrentUser,
@@ -137,6 +140,8 @@ export default function AdminProfileScreen({ navigation }) {
   };
 
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -150,6 +155,8 @@ export default function AdminProfileScreen({ navigation }) {
   };
 
   const openEmailModal = () => {
+    // Formulaire impossible à enregistrer hors ligne : toast seulement.
+    if (!requireOnline()) return;
     setNewEmail(currentUser?.email || "");
     setCurrentPassword("");
     setEmailModal(true);
@@ -162,6 +169,8 @@ export default function AdminProfileScreen({ navigation }) {
   };
 
   const saveEmail = async () => {
+    // Réseau perdu formulaire ouvert : toast, saisie conservée.
+    if (!requireOnline()) return;
     const mail = String(newEmail || "").trim().toLowerCase();
     const currentMail = String(currentUser?.email || "").trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) {
@@ -315,7 +324,10 @@ export default function AdminProfileScreen({ navigation }) {
         <View style={styles.sectionCard}>
           <ProfileCardHeader
             title="المعلومات الشخصية"
-            onAction={() => setEditModal(true)}
+            onAction={() => {
+              if (!requireOnline()) return;
+              setEditModal(true);
+            }}
             accessibilityLabel="تعديل المعلومات الشخصية"
           />
 
@@ -366,7 +378,10 @@ export default function AdminProfileScreen({ navigation }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionRow, styles.actionRowLast]}
-            onPress={() => setPasswordModal(true)}
+            onPress={() => {
+              if (!requireOnline()) return;
+              setPasswordModal(true);
+            }}
           >
             <View style={styles.infoIcon}>
               <Lock size={18} color={palette.primary} />
@@ -379,11 +394,16 @@ export default function AdminProfileScreen({ navigation }) {
         </View>
 
         <TouchableOpacity
-          style={styles.logoutBtn}
+          style={[styles.logoutBtn, isLoggingOut && styles.logoutBtnBusy]}
           onPress={handleLogout}
+          disabled={isLoggingOut}
           activeOpacity={0.75}
         >
-          <LogOut size={20} color={palette.red} />
+          {isLoggingOut ? (
+            <ActivityIndicator size="small" color={palette.red} />
+          ) : (
+            <LogOut size={20} color={palette.red} />
+          )}
           <Text style={styles.logoutText}>تسجيل الخروج</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -464,6 +484,11 @@ export default function AdminProfileScreen({ navigation }) {
             </View>
           </View>
         </KeyboardAvoidingView>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+        />
       </Modal>
 
       <ChangePasswordModal
@@ -653,6 +678,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     marginTop: 4,
   },
+  logoutBtnBusy: { opacity: 0.6 },
   logoutText: {
     color: palette.red,
     fontWeight: "700",

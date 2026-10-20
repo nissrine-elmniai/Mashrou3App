@@ -10,6 +10,7 @@ import {
   Platform,
   Image,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -28,8 +29,10 @@ import {
 } from "../lib/auth";
 
 export default function ForgotPasswordScreen({ navigation }) {
-  const { resetPassword, isSupabaseConfigured } = useApp();
+  const { resetPassword, isSupabaseConfigured, isLoggingOut } = useApp();
   const [step, setStep] = useState("email"); // email | code
+  // Étape code : verifyOtp ouvre une session, bloquée tant qu'une déconnexion se termine.
+  const waitingLogout = isLoggingOut && isSupabaseConfigured && step === "code";
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
@@ -91,6 +94,8 @@ export default function ForgotPasswordScreen({ navigation }) {
   };
 
   const handleConfirmReset = async () => {
+    // verifyOtp ouvre une session : attendre la fin d'une déconnexion en cours.
+    if (isLoggingOut) return;
     // Contrôles locaux : aucun appel Supabase si le formulaire est invalide.
     if (!codeAccepted && !otp.trim()) {
       Alert.alert("خطأ", "أدخل رمز التحقق المرسل إلى بريدك");
@@ -295,23 +300,30 @@ export default function ForgotPasswordScreen({ navigation }) {
             )}
 
             <TouchableOpacity
-              style={[styles.resetButton, submitting && { opacity: 0.7 }]}
+              style={[
+                styles.resetButton,
+                (submitting || waitingLogout) && { opacity: 0.7 },
+              ]}
               onPress={
                 isSupabaseConfigured && step === "code"
                   ? handleConfirmReset
                   : handleSendCode
               }
-              disabled={submitting}
+              disabled={submitting || waitingLogout}
             >
-              <Text style={styles.resetButtonText}>
-                {submitting
-                  ? "جارٍ..."
-                  : isSupabaseConfigured && step === "code"
-                    ? "حفظ كلمة المرور"
-                    : isSupabaseConfigured
-                      ? "إرسال رمز التحقق"
-                      : "حفظ كلمة المرور"}
-              </Text>
+              {waitingLogout ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.resetButtonText}>
+                  {submitting
+                    ? "جارٍ..."
+                    : isSupabaseConfigured && step === "code"
+                      ? "حفظ كلمة المرور"
+                      : isSupabaseConfigured
+                        ? "إرسال رمز التحقق"
+                        : "حفظ كلمة المرور"}
+                </Text>
+              )}
             </TouchableOpacity>
 
             {isSupabaseConfigured && step === "code" && samePassword && (

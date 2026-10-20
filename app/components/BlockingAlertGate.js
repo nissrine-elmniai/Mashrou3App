@@ -18,6 +18,11 @@ import {
   subscribeToNewAlerts,
 } from "../lib/alertsApi";
 import { subscribeAlertGateRefresh } from "../lib/alertGateEvents";
+import {
+  isOffline,
+  onBackOnline,
+  subscribe as subscribeNetwork,
+} from "../lib/networkState";
 import { getActiveRegularSeason } from "../lib/seasonScope";
 import AlertSenderFace from "./AlertSenderFace";
 
@@ -42,6 +47,10 @@ export default function BlockingAlertGate() {
   const [loadingAck, setLoadingAck] = useState(false);
   const [ackError, setAckError] = useState("");
   const fetchingRef = useRef(false);
+  // Hors ligne : la modale est masquée (l'acquittement serait impossible).
+  const [offline, setOffline] = useState(isOffline);
+
+  useEffect(() => subscribeNetwork(setOffline), []);
 
   const refresh = useCallback(async () => {
     if (!supabaseSession?.user?.id || isAdmin) return;
@@ -85,6 +94,9 @@ export default function BlockingAlertGate() {
     });
   }, [refresh]);
 
+  // Retour en ligne : recharger la file, la modale réapparaît si une alerte est due.
+  useEffect(() => onBackOnline(() => refresh()), [refresh]);
+
   // Requête immédiate à chaque retour au premier plan
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
@@ -114,7 +126,7 @@ export default function BlockingAlertGate() {
     setQueue((prev) => prev.filter((a) => a.id !== current.id));
   };
 
-  if (isAdmin || !supabaseSession?.user?.id || queue.length === 0) {
+  if (isAdmin || !supabaseSession?.user?.id || queue.length === 0 || offline) {
     return null;
   }
 

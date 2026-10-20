@@ -8,6 +8,7 @@ import {
   Animated,
   Modal,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -36,7 +37,7 @@ import {
 } from "../constants/notifications";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { filterAdminInboxRows, formatUnreadBadge } from "../lib/messagesApi";
-import { countPlannedTestsAdmin } from "../lib/testsApi";
+import { cachedPlannedTestsCount } from "../lib/adminOfflineReads";
 import AdminMessagesFab from "./AdminMessagesFab";
 import ProfileAvatar from "./ProfileAvatar";
 
@@ -89,6 +90,7 @@ export function AdminSidebar({
   navigation,
   currentUser,
   onLogout,
+  isLoggingOut = false,
   activeItem = "home",
   unreadTotal = 0,
   menuBadges = {},
@@ -252,11 +254,16 @@ export function AdminSidebar({
 
           <View style={sbStyles.logoutWrap}>
             <TouchableOpacity
-              style={sbStyles.logoutBtn}
+              style={[sbStyles.logoutBtn, isLoggingOut && sbStyles.logoutBtnBusy]}
               onPress={onLogout}
+              disabled={isLoggingOut}
               activeOpacity={0.7}
             >
-              <LogOut size={20} color={palette.red} pointerEvents="none" />
+              {isLoggingOut ? (
+                <ActivityIndicator size="small" color={palette.red} />
+              ) : (
+                <LogOut size={20} color={palette.red} pointerEvents="none" />
+              )}
               <Text style={sbStyles.logoutText}>تسجيل الخروج</Text>
             </TouchableOpacity>
           </View>
@@ -272,6 +279,7 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
   const {
     currentUser,
     logout,
+    isLoggingOut,
     getMenuBadgeCounts,
     markCategoryNotificationsRead,
     notifications,
@@ -294,10 +302,11 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
   );
   const [plannedTestsCount, setPlannedTestsCount] = useState(0);
 
-  // Tests planifiés seulement. 0 ou erreur → pas de badge.
+  // Tests planifiés seulement. 0 → pas de badge. Échec : dernière valeur conservée
+  // (hors ligne : adm.tests.plannedCount), jamais remise à 0.
   const refreshPlannedTests = useCallback(async () => {
-    const res = await countPlannedTestsAdmin();
-    setPlannedTestsCount(res?.ok ? Number(res.count) || 0 : 0);
+    const res = await cachedPlannedTestsCount();
+    if (res?.ok) setPlannedTestsCount(Number(res.count) || 0);
   }, []);
 
   useFocusEffect(
@@ -345,6 +354,8 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
   }, [activeItem, currentUser?.id]);
 
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -380,6 +391,7 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
         navigation={navigation}
         currentUser={currentUser}
         onLogout={handleLogout}
+        isLoggingOut={isLoggingOut}
         activeItem={activeItem}
         unreadTotal={unreadTotal}
         menuBadges={menuBadges}
@@ -514,6 +526,7 @@ const sbStyles = StyleSheet.create({
     backgroundColor: "#FFEBEE",
     borderRadius: 12,
   },
+  logoutBtnBusy: { opacity: 0.6 },
   logoutText: {
     color: palette.red,
     fontWeight: "600",

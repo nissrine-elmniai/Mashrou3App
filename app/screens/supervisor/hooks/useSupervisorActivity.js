@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { isSupabaseConfigured } from "../../../lib/supabase";
-import {
-  fetchSeanceProgressActivity,
-  fetchSeancePresenceActivity,
-  fetchSeanceInscriptionActivity,
-} from "../../../lib/supervisorActivityApi";
+import { cachedSeanceActivity } from "../../../lib/supervisorOfflineReads";
 import { ROLES } from "../../../constants/roles";
 import { normalizeAppRole } from "../../../lib/auth";
 
@@ -59,9 +55,14 @@ export function useSupervisorActivity({
   threads = [],
   enabled = true,
   saisonId: _saisonId = null,
+  onResult = null,
+  reloadKey = 0,
 }) {
   const usingSupabase = enabled && isSupabaseConfigured() && !!seanceId;
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
   const [fetched, setFetched] = useState({
+    seanceId: null,
     progress: [],
     presence: [],
     inscriptions: [],
@@ -84,16 +85,20 @@ export function useSupervisorActivity({
 
   const loadFetched = useCallback(async () => {
     if (!usingSupabase) {
-      setFetched({ progress: [], presence: [], inscriptions: [] });
+      setFetched({ seanceId: null, progress: [], presence: [], inscriptions: [] });
       return;
     }
 
     const sinceIso = new Date(Date.now() - WINDOW_MS).toISOString();
-    const [progressRes, presenceRes, inscriptionRes] = await Promise.all([
-      fetchSeanceProgressActivity(memberIds, sinceIso),
-      fetchSeancePresenceActivity(seanceId, sinceIso),
-      fetchSeanceInscriptionActivity(seanceId, sinceIso),
-    ]);
+    // Cache sup.activity.*.<seanceId> : 5 lignes par source (l'accueil en affiche 5).
+    const [progressRes, presenceRes, inscriptionRes] = await cachedSeanceActivity(
+      seanceId,
+      memberIds,
+      sinceIso
+    );
+    [progressRes, presenceRes, inscriptionRes].forEach((res) =>
+      onResultRef.current?.(res)
+    );
 
     if (!progressRes.ok) {
       console.warn("useSupervisorActivity: progression —", progressRes.error);
@@ -105,16 +110,25 @@ export function useSupervisorActivity({
       console.warn("useSupervisorActivity: inscriptions —", inscriptionRes.error);
     }
 
-    setFetched({
-      progress: progressRes.ok ? progressRes.rows : [],
-      presence: presenceRes.ok ? presenceRes.rows : [],
-      inscriptions: inscriptionRes.ok ? inscriptionRes.rows : [],
+    // Échec : la source garde ses lignes déjà chargées pour CETTE séance.
+    setFetched((prev) => {
+      const same = prev.seanceId === seanceId;
+      return {
+        seanceId,
+        progress: progressRes.ok ? progressRes.rows : same ? prev.progress : [],
+        presence: presenceRes.ok ? presenceRes.rows : same ? prev.presence : [],
+        inscriptions: inscriptionRes.ok
+          ? inscriptionRes.rows
+          : same
+          ? prev.inscriptions
+          : [],
+      };
     });
   }, [usingSupabase, seanceId, memberIds]);
 
   useEffect(() => {
     loadFetched();
-  }, [loadFetched]);
+  }, [loadFetched, reloadKey]);
 
   useFocusEffect(
     useCallback(() => {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { View, Text, StyleSheet, ScrollView, Alert } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,7 +7,9 @@ import { rtlText, rtlTextBold, fonts, row } from "../../constants/rtl";
 import { EmptyState, QuickButton, SectionCard } from "../../components/ui";
 import { MiniStat } from "./components/SupervisorWidgets";
 import BroadcastMessageModal from "./components/BroadcastMessageModal";
-import { getVisibleAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import { subscribeToNewAlerts } from "../../lib/alertsApi";
+import { cachedSupervisorAlertsPreview } from "../../lib/supervisorOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { formatRelativeTime } from "../../lib/messagesApi";
 import { useSupervisorActivity } from "./hooks/useSupervisorActivity";
 import { useApp } from "../../context/AppContext";
@@ -27,28 +29,35 @@ export default function SupervisorHomeScreen({
   onOpenAlerts,
   threads = [],
   dataSource = "mock",
+  unknownMessage = null,
 }) {
   const { seasons } = useApp();
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [recentAlerts, setRecentAlerts] = useState([]);
+  // Retour du réseau : alertes et activité rechargées (aussi rechargées au focus).
+  const [activityReloadKey, setActivityReloadKey] = useState(0);
+  const reloadAlertsRef = useRef(null);
+  const markOffline = useOfflineReload(() => {
+    reloadAlertsRef.current?.();
+    setActivityReloadKey((n) => n + 1);
+  });
   const { activities } = useSupervisorActivity({
     seanceId: activeGroup?.id || null,
     members,
     threads,
     enabled: dataSource === "supabase",
     saisonId: activeSeasonId,
+    onResult: markOffline,
+    reloadKey: activityReloadKey,
   });
 
   const loadRecentAlerts = useCallback(async () => {
-    const res = await getVisibleAlerts({
-      scopeToCurrentSeason: true,
-      saisonId: activeSeasonId,
-      role: "supervisor",
-      limit: 3,
-    });
+    const res = await cachedSupervisorAlertsPreview(activeSeasonId);
+    markOffline(res);
     if (res.ok) setRecentAlerts(res.alerts.slice(0, 3));
-  }, [activeSeasonId]);
+  }, [activeSeasonId, markOffline]);
+  reloadAlertsRef.current = loadRecentAlerts;
 
   useEffect(() => {
     loadRecentAlerts();
@@ -98,7 +107,10 @@ export default function SupervisorHomeScreen({
           ) : null}
         </View>
       ) : (
-        <EmptyState text="لا توجد مجموعة مسندة إليك بعد — انتظر تعيين الإدارة" />
+        // Séance inconnue (échec sans cache) : pas de « لا توجد مجموعة ».
+        <EmptyState
+          text={unknownMessage || "لا توجد مجموعة مسندة إليك بعد — انتظر تعيين الإدارة"}
+        />
       )}
 
       {showPresenceReminder ? (
@@ -108,7 +120,11 @@ export default function SupervisorHomeScreen({
       ) : null}
 
       <View style={styles.statsRow}>
-        <MiniStat value={members.length} label="عدد الأعضاء" color={colors.primary} />
+        <MiniStat
+          value={unknownMessage ? "—" : members.length}
+          label="عدد الأعضاء"
+          color={colors.primary}
+        />
         <MiniStat value={`${attendancePct}%`} label=" نسبة الحضور" color={colors.primary} />
         <MiniStat
           value={avgProgress == null ? "—" : `${avgProgress}%`}

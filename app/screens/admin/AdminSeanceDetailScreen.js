@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -15,9 +15,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { rtlText, arrowBack, row } from "../../constants/rtl";
 import { deleteSeance, formatSeanceScheduleLabel } from "../../lib/seancesApi";
-import { getSeanceMembers } from "../../lib/membersApi";
 import { displayProfileEmail } from "../../lib/authEmail";
-import { getSeancePresenceOverview } from "../../lib/presenceApi";
+import {
+  cachedAdminSeanceMembers,
+  cachedSeancePresenceOverview,
+} from "../../lib/adminOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE, unknownDataMessage } from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import ProfileAvatar from "../../components/ProfileAvatar";
 
 /** Chevron replié : pointe vers la gauche en RTL. */
@@ -117,6 +122,9 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
     sessionCount: 0,
     byDateRows: [],
   });
+  // Retour du réseau : relecture si l'écran est affiché (sinon au prochain focus).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const loadOverview = useCallback(async () => {
     if (!seance?.id) {
@@ -126,9 +134,10 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
     }
     setLoading(true);
     setError(null);
-    const res = await getSeancePresenceOverview(seance.id);
+    const res = await cachedSeancePresenceOverview(seance.id);
+    markOffline(res);
     if (!res.ok) {
-      setError("تعذّر تحميل بيانات الحضور");
+      setError(res.offline ? OFFLINE_UNAVAILABLE_MESSAGE : "تعذّر تحميل بيانات الحضور");
       setLoading(false);
       return;
     }
@@ -139,7 +148,7 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
       byDateRows: res.byDateRows || [],
     });
     setLoading(false);
-  }, [seance?.id]);
+  }, [seance?.id, markOffline]);
 
   const loadMembers = useCallback(async () => {
     if (!seance?.id) {
@@ -149,16 +158,21 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
     }
     setMembersLoading(true);
     setMembersError(null);
-    const res = await getSeanceMembers(seance.id);
+    const res = await cachedAdminSeanceMembers(seance.id);
+    markOffline(res);
     if (!res.ok) {
-      setMembers([]);
-      setMembersError(res.error || "تعذّر تحميل الأعضاء");
+      // Échec : la liste déjà chargée reste affichée, avec le message.
+      setMembersError(unknownDataMessage(res, "تعذّر تحميل الأعضاء"));
       setMembersLoading(false);
       return;
     }
     setMembers(res.members || []);
     setMembersLoading(false);
-  }, [seance?.id]);
+  }, [seance?.id, markOffline]);
+  reloadRef.current = () => {
+    loadOverview();
+    loadMembers();
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -168,6 +182,8 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
   );
 
   const confirmDelete = () => {
+    // Hors ligne : toast, sans confirmation.
+    if (!requireOnline()) return;
     const nom = seance?.nom || "الحصة";
     Alert.alert("حذف الحصة", `هل أنت متأكد من حذف حصة «${nom}»؟ لا يمكن التراجع عن هذه العملية.`, [
       { text: "إلغاء", style: "cancel" },
@@ -175,6 +191,7 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
         text: "حذف",
         style: "destructive",
         onPress: async () => {
+          if (!requireOnline()) return;
           setDeleting(true);
           const result = await deleteSeance(seance.id);
           setDeleting(false);
@@ -270,7 +287,12 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
             <View style={styles.infoTextWrap}>
               <Text style={styles.infoLabel}>عدد الأعضاء</Text>
               <Text style={styles.infoValue}>
-                {membersLoading ? "…" : String(members.length)}
+                {/* Nombre inconnu (échec sans liste) : « — », jamais 0. */}
+                {membersLoading
+                  ? "…"
+                  : membersError && members.length === 0
+                    ? "—"
+                    : String(members.length)}
               </Text>
             </View>
             <Ionicons
@@ -279,14 +301,14 @@ export default function AdminSeanceDetailScreen({ navigation, route }) {
               color={palette.muted}
             />
           </TouchableOpacity>
-          {membersError && !membersOpen ? (
+          {membersError && (!membersOpen || members.length > 0) ? (
             <Text style={styles.errorText}>{membersError}</Text>
           ) : null}
           {membersOpen ? (
             <View style={styles.membersList}>
               {membersLoading ? (
                 <ActivityIndicator color={palette.primary} />
-              ) : membersError ? (
+              ) : membersError && members.length === 0 ? (
                 <Text style={styles.errorText}>{membersError}</Text>
               ) : members.length === 0 ? (
                 <Text style={styles.membersEmpty}>

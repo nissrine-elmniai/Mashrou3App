@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -26,12 +26,17 @@ import { EmptyState } from "../../components/ui";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { pickAvatarImage } from "../../lib/avatarPicker";
 import {
-  getChatGroup,
-  getGroupMembers,
   updateGroupName,
   uploadGroupAvatar,
   removeGroupAvatar,
 } from "../../lib/chatGroupsApi";
+import {
+  cachedChatGroup,
+  cachedGroupMembers,
+} from "../../lib/messagingOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 
 export default function GroupInfoScreen({ navigation, route }) {
   const {
@@ -49,14 +54,20 @@ export default function GroupInfoScreen({ navigation, route }) {
   const [avatarUrl, setAvatarUrl] = useState(routeAvatar || null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [members, setMembers] = useState([]);
+  /** Membres jamais lus (échec sans cache) : message au lieu de « aucun membre ». */
+  const [membersUnknownMessage, setMembersUnknownMessage] = useState(null);
+  // Retour du réseau : rechargement (aussi rechargé au focus, pas de différé).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const reload = useCallback(async () => {
     if (!groupId) return;
     setLoading(true);
     const [groupRes, membersRes] = await Promise.all([
-      getChatGroup(groupId),
-      getGroupMembers(groupId),
+      cachedChatGroup(groupId),
+      cachedGroupMembers(groupId),
     ]);
+    markOffline(groupRes, membersRes);
     if (groupRes.ok && groupRes.group) {
       setName(groupRes.group.name || "");
       setEditName(groupRes.group.name || "");
@@ -65,9 +76,14 @@ export default function GroupInfoScreen({ navigation, route }) {
     }
     if (membersRes.ok) {
       setMembers(membersRes.members || []);
+      setMembersUnknownMessage(null);
+    } else {
+      // Liste déjà chargée : gardée ; sinon message (hors ligne ou erreur).
+      setMembersUnknownMessage(unknownDataMessage(membersRes, "تعذر تحميل الأعضاء"));
     }
     setLoading(false);
-  }, [groupId]);
+  }, [groupId, markOffline]);
+  reloadRef.current = reload;
 
   useFocusEffect(
     useCallback(() => {
@@ -88,6 +104,8 @@ export default function GroupInfoScreen({ navigation, route }) {
       Alert.alert("تنبيه", "اسم المجموعة لا يمكن أن يكون فارغًا");
       return;
     }
+    // Hors ligne : toast, le nom saisi reste dans le champ.
+    if (!requireOnline()) return;
     setSavingName(true);
     const res = await updateGroupName({ groupId, nom: trimmed });
     setSavingName(false);
@@ -124,6 +142,8 @@ export default function GroupInfoScreen({ navigation, route }) {
 
   const openAvatarMenu = () => {
     if (!isAdmin || uploadingAvatar) return;
+    // Changer ou supprimer l'avatar : hors ligne, toast seulement.
+    if (!requireOnline()) return;
     const actions = [
       { text: "التقاط صورة", onPress: () => pickGroupImage("camera") },
       { text: "اختيار من المعرض", onPress: () => pickGroupImage("library") },
@@ -255,7 +275,10 @@ export default function GroupInfoScreen({ navigation, route }) {
             ) : (
               <TouchableOpacity
                 style={styles.nameRow}
-                onPress={() => isAdmin && setEditingName(true)}
+                onPress={() => {
+                  // Modifier le nom : hors ligne, toast sans ouvrir l'édition.
+                  if (isAdmin && requireOnline()) setEditingName(true);
+                }}
                 disabled={!isAdmin}
                 activeOpacity={isAdmin ? 0.7 : 1}
               >
@@ -266,10 +289,12 @@ export default function GroupInfoScreen({ navigation, route }) {
               </TouchableOpacity>
             )}
 
-            <Text style={styles.memberCount}>
-              {members.length}{" "}
-              {members.length === 1 ? "عضو" : "أعضاء"}
-            </Text>
+            {membersUnknownMessage && members.length === 0 ? null : (
+              <Text style={styles.memberCount}>
+                {members.length}{" "}
+                {members.length === 1 ? "عضو" : "أعضاء"}
+              </Text>
+            )}
           </View>
 
           <View style={styles.sectionHeader}>
@@ -277,7 +302,7 @@ export default function GroupInfoScreen({ navigation, route }) {
           </View>
 
           {members.length === 0 ? (
-            <EmptyState text="لا يوجد أعضاء في المجموعة" />
+            <EmptyState text={membersUnknownMessage || "لا يوجد أعضاء في المجموعة"} />
           ) : (
             members.map((m) => (
               <View key={m.id} style={styles.memberRow}>

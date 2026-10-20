@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -22,16 +22,21 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { ROLES, resolveSessionRole } from "../../constants/roles";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import {
-  getVisibleAlertsWithAckStatus,
-  subscribeToNewAlerts,
-} from "../../lib/alertsApi";
+import { subscribeToNewAlerts } from "../../lib/alertsApi";
 import {
   listMyNotifications,
   markAllNotificationsRead,
   subscribeMyNotifications,
   NOTIFICATION_CATEGORY_LABELS,
 } from "../../lib/notificationsApi";
+import {
+  cachedAlertsWithAck,
+  cachedNotificationsFirstPage,
+} from "../../lib/messagingOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE } from "../../lib/offlineCache";
+import { isOffline } from "../../lib/networkState";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { useFocusEffect } from "@react-navigation/native";
 import { openNotification } from "../../lib/notificationNavigation";
 
@@ -107,31 +112,54 @@ export default function UnifiedInboxScreen({ navigation }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+  /** Alertes / notifications jamais lues (hors ligne, sans cache) : pas « aucune notification ». */
+  const [alertsUnknown, setAlertsUnknown] = useState(false);
+  const [notificationsUnknown, setNotificationsUnknown] = useState(false);
+  /** Page suivante demandée hors ligne : seules les premières sont en cache. */
+  const [moreUnavailable, setMoreUnavailable] = useState(false);
+  // Retour du réseau : rechargement (aussi rechargé au focus, pas de différé).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const loadAlerts = useCallback(async () => {
     if (!alertsRole) {
       setAlerts([]);
       return { ok: true };
     }
-    const res = await getVisibleAlertsWithAckStatus({
-      scopeToCurrentSeason: true,
-      // null → alertsApi résout la saison active en DB
-      saisonId: activeSeasonId,
-      role: alertsRole,
-    });
-    if (res.ok) setAlerts(res.alerts || []);
+    // Clé mem.|sup.alerts.withAck.<saison> ; null → alertsApi résout la saison active en DB.
+    const res = await cachedAlertsWithAck(alertsRole, activeSeasonId);
+    markOffline(res);
+    if (res.ok) {
+      setAlerts(res.alerts || []);
+      setAlertsUnknown(false);
+    } else if (res.offline) {
+      setAlertsUnknown(true);
+    }
     return res;
-  }, [alertsRole, activeSeasonId]);
+  }, [alertsRole, activeSeasonId, markOffline]);
 
   const loadNotifications = useCallback(async ({ offset = 0, append = false } = {}) => {
-    const res = await listMyNotifications({ offset });
-    if (!res.ok) return res;
+    // Première page : cache common.notifications.page1. Pages suivantes : non
+    // mises en cache, aucune requête hors ligne.
+    if (offset > 0 && isOffline()) {
+      setMoreUnavailable(true);
+      return { ok: false, offline: true };
+    }
+    const res =
+      offset > 0 ? await listMyNotifications({ offset }) : await cachedNotificationsFirstPage();
+    if (offset === 0) markOffline(res);
+    if (!res.ok) {
+      if (offset === 0 && res.offline) setNotificationsUnknown(true);
+      return res;
+    }
+    if (offset === 0) setNotificationsUnknown(false);
+    setMoreUnavailable(false);
     setHasMore(!!res.hasMore);
     setNotifications((prev) =>
       append ? [...prev, ...(res.notifications || [])] : res.notifications || []
     );
     return res;
-  }, []);
+  }, [markOffline]);
 
   const loadAll = useCallback(async () => {
     const [alertsRes, notifRes] = await Promise.all([
@@ -141,25 +169,29 @@ export default function UnifiedInboxScreen({ navigation }) {
     return { alertsRes, notifRes };
   }, [loadAlerts, loadNotifications]);
 
+  const loadWithFeedback = useCallback(async (isCancelled = () => false) => {
+    setLoading(true);
+    const { alertsRes, notifRes } = await loadAll();
+    if (isCancelled()) return;
+    // Hors ligne (cache servi ou donnée inconnue) : pas d'Alert à chaque échec.
+    if (!alertsRes.ok && alertsRole && !alertsRes.offline) {
+      Alert.alert("إشعار", alertsRes.error || "تعذر تحميل الإشعارات");
+    }
+    if (!notifRes.ok && !notifRes.offline) {
+      Alert.alert("إشعار", notifRes.error || "تعذر تحميل الإشعارات");
+    }
+    setLoading(false);
+  }, [loadAll, alertsRole]);
+  reloadRef.current = () => loadWithFeedback();
+
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      (async () => {
-        setLoading(true);
-        const { alertsRes, notifRes } = await loadAll();
-        if (cancelled) return;
-        if (!alertsRes.ok && alertsRole) {
-          Alert.alert("إشعار", alertsRes.error || "تعذر تحميل الإشعارات");
-        }
-        if (!notifRes.ok) {
-          Alert.alert("إشعار", notifRes.error || "تعذر تحميل الإشعارات");
-        }
-        setLoading(false);
-      })();
+      loadWithFeedback(() => cancelled);
       return () => {
         cancelled = true;
       };
-    }, [loadAll, alertsRole])
+    }, [loadWithFeedback])
   );
 
   useEffect(() => {
@@ -199,6 +231,7 @@ export default function UnifiedInboxScreen({ navigation }) {
   }, [alerts, notifications]);
 
   const unreadNotifCount = notifications.length;
+  const listUnknown = notificationsUnknown || (!!alertsRole && alertsUnknown);
 
   const openNotifItem = async (item) => {
     const { marked } = await openNotification(navigation, {
@@ -217,11 +250,15 @@ export default function UnifiedInboxScreen({ navigation }) {
 
   const handleMarkAll = () => {
     if (unreadNotifCount === 0) return;
+    // Écriture : hors ligne, toast seulement.
+    if (!requireOnline()) return;
     Alert.alert("تعليم الكل كمقروء", "هل تريد تعليم كل الإشعارات كمقروءة؟", [
       { text: "إلغاء", style: "cancel" },
       {
         text: "نعم",
         onPress: async () => {
+          // Réseau perdu pendant la confirmation.
+          if (!requireOnline()) return;
           setMarkingAll(true);
           const res = await markAllNotificationsRead();
           setMarkingAll(false);
@@ -324,8 +361,14 @@ export default function UnifiedInboxScreen({ navigation }) {
                 size={36}
                 color={colors.primary}
               />
-              <EmptyState text="لا توجد إشعارات" />
+              <EmptyState text={listUnknown ? OFFLINE_UNAVAILABLE_MESSAGE : "لا توجد إشعارات"} />
             </View>
+          }
+          ListHeaderComponent={
+            // Une des deux listes non lue hors ligne : l'autre est affichée, mais pas comme complète.
+            listUnknown && timeline.length > 0 ? (
+              <Text style={styles.unavailableNote}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
+            ) : null
           }
           ListFooterComponent={
             loadingMore ? (
@@ -333,6 +376,8 @@ export default function UnifiedInboxScreen({ navigation }) {
                 color={colors.primary}
                 style={styles.footerLoader}
               />
+            ) : moreUnavailable && hasMore ? (
+              <Text style={styles.unavailableNote}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
             ) : null
           }
         />
@@ -551,4 +596,11 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   footerLoader: { marginVertical: 12 },
+  unavailableNote: {
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    color: colors.muted,
+    textAlign: "center",
+    marginVertical: 10,
+  },
 });

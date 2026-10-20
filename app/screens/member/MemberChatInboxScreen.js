@@ -22,10 +22,13 @@ import {
 } from "../../constants/rtl";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { EmptyState } from "../../components/ui";
-import { getMyCurrentInscription, mergeInboxRows } from "../../lib/messagesApi";
+import { mergeInboxRows } from "../../lib/messagesApi";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
+import { cachedCurrentInscription } from "../../lib/memberOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE } from "../../lib/offlineCache";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { initials } from "../supervisor/supervisorHelpers";
 
 function supervisorContactFromSeance(seance) {
@@ -49,18 +52,40 @@ function supervisorContactFromSeance(seance) {
 const alignEdge = isRTL ? "flex-start" : "flex-end";
 
 export default function MemberChatInboxScreen({ navigation }) {
-  const { threads, loading: threadsLoading } = useInboxThreads();
-  const { groups: chatGroups, loading: groupsLoading } = useChatGroups();
+  const {
+    threads,
+    loading: threadsLoading,
+    unknown: threadsUnknown,
+  } = useInboxThreads();
+  const {
+    groups: chatGroups,
+    loading: groupsLoading,
+    unknown: groupsUnknown,
+  } = useChatGroups();
   const [supervisor, setSupervisor] = useState(null);
   const [seanceLoading, setSeanceLoading] = useState(true);
+  /** Inscription jamais lue (hors ligne, sans cache). */
+  const [seanceUnknown, setSeanceUnknown] = useState(false);
+  // Retour du réseau : rechargement (aussi rechargé au focus, pas de différé).
+  const [reloadKey, setReloadKey] = useState(0);
+  const markOffline = useOfflineReload(() => setReloadKey((n) => n + 1));
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       (async () => {
         setSeanceLoading(true);
-        const res = await getMyCurrentInscription();
+        // Clé mem.inscription.current (lot 2).
+        const res = await cachedCurrentInscription(null);
         if (cancelled) return;
+        markOffline(res);
+        if (!res.ok && res.offline) {
+          // Inconnue hors ligne : ligne superviseur déjà affichée gardée.
+          setSeanceUnknown(true);
+          setSeanceLoading(false);
+          return;
+        }
+        setSeanceUnknown(false);
         // Sans inscription du musim actif : pas de ligne superviseur.
         // L'historique DM n'est plus fusionné (appendUnknown: false).
         setSupervisor(
@@ -71,7 +96,7 @@ export default function MemberChatInboxScreen({ navigation }) {
       return () => {
         cancelled = true;
       };
-    }, [])
+    }, [reloadKey, markOffline])
   );
 
   const contacts = useMemo(
@@ -120,6 +145,8 @@ export default function MemberChatInboxScreen({ navigation }) {
   const loading = threadsLoading || seanceLoading || groupsLoading;
   const isEmpty =
     !loading && (chatGroups || []).length === 0 && dmRows.length === 0;
+  // Liste vide parce que non lue (hors ligne, sans cache) : pas « aucun message ».
+  const emptyUnknown = threadsUnknown || groupsUnknown || seanceUnknown;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -162,9 +189,11 @@ export default function MemberChatInboxScreen({ navigation }) {
           />
           <EmptyState
             text={
-              supervisor
-                ? "لا توجد رسائل بعد"
-                : "لا توجد حصة نشطة للتواصل مع المشرف"
+              emptyUnknown
+                ? OFFLINE_UNAVAILABLE_MESSAGE
+                : supervisor
+                  ? "لا توجد رسائل بعد"
+                  : "لا توجد حصة نشطة للتواصل مع المشرف"
             }
           />
         </View>

@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import { resolvePublicAvatarUrl } from "./avatarApi";
 
 const SUPABASE_TIMEOUT_MS = 15000;
@@ -155,8 +156,8 @@ function mapTableError(error, tableLabel) {
 
 /** Id de l'utilisateur connecté via la session Supabase, ou null. */
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 /**
@@ -572,14 +573,13 @@ export async function sendAlert(message, audience, options = {}) {
       : null) || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   try {
-    const { data: authData } = await supabase.auth.getUser();
     const row = {
       id,
       title,
       message: text,
       body: text,
       audience: target,
-      created_by: authData?.user?.id || null,
+      created_by: (await currentAuthId()) || null,
       saison_id: saisonId,
     };
 

@@ -9,6 +9,7 @@ import { getActiveSeason } from "./seasonScope";
 import { isHifzProgram } from "./memberProgramsApi";
 import { formatSignedTumunAmount, tumunsToPercent } from "./tumun";
 import { useSubmitLock } from "./useSubmitLock";
+import { requireOnline } from "./toast";
 
 /**
  * ± ثمن d'un programme avec validation groupée.
@@ -49,6 +50,8 @@ export function useProgramTumunDraft(program, { locked = false } = {}) {
 
   const adjust = useCallback(
     (step) => {
+      // Hors ligne : bloqué dès l'appui (pas de brouillon impossible à enregistrer).
+      if (!requireOnline()) return;
       const next = Math.min(total, Math.max(0, saved + pendingRef.current + step));
       updatePending(next - saved);
     },
@@ -58,9 +61,12 @@ export function useProgramTumunDraft(program, { locked = false } = {}) {
   const discard = useCallback(() => updatePending(0), [updatePending]);
 
   /** Une écriture avec le total. @returns {Promise<boolean>} true si enregistré. */
-  const save = useCallback(
-    () =>
-      run(async () => {
+  const save = useCallback(() => {
+    // Réseau perdu depuis l'appui sur ± : toast, écart conservé, aucun état modifié.
+    if (program?.id && pendingRef.current !== 0 && !requireOnline()) {
+      return Promise.resolve(false);
+    }
+    return run(async () => {
         const delta = pendingRef.current;
         if (!program?.id || delta === 0) return true;
         const before = saved;
@@ -84,9 +90,8 @@ export function useProgramTumunDraft(program, { locked = false } = {}) {
           await flushMemberProgressDelta();
         }
         return true;
-      }).then((ok) => ok === true),
-    [run, program, saved, adjustMemberProgramTumuns, seasons, updatePending]
-  );
+      }).then((ok) => ok === true);
+  }, [run, program, saved, adjustMemberProgramTumuns, seasons, updatePending]);
 
   /**
    * « حفظ » → confirmation, puis une seule écriture.
@@ -96,6 +101,8 @@ export function useProgramTumunDraft(program, { locked = false } = {}) {
   const confirmSave = useCallback(
     (onSaved) => {
       if (pendingRef.current === 0) return;
+      // « حفظ » hors ligne : toast, pas de confirmation.
+      if (!requireOnline()) return;
       const label = formatSignedTumunAmount(pendingRef.current) || "";
       const message = hifz
         ? `سيتم تسجيل ${label} في البرنامج وسيتم تحديث موضعك في الحفظ. هل تريد المتابعة؟`

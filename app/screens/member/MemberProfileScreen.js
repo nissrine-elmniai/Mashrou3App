@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   StyleSheet,
   View,
@@ -15,17 +15,22 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
 import { colors } from "../../constants/theme";
 import { rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
-import { getMemberProfileFields, getMyActiveEnrollment } from "../../lib/membersApi";
-import { getMyCurrentInscription } from "../../lib/messagesApi";
-import {
-  getMyProgress,
-  getMyCurrentProgressPosition,
-  computeProgressPace,
-  PROGRESS_LOCKED_MESSAGE,
-} from "../../lib/progressApi";
-import { getMyObjectif } from "../../lib/objectifsApi";
+import { computeProgressPace } from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import { getMemberPresenceSummary } from "../../lib/presenceApi";
+import {
+  ENROLLMENT_LOCK_INITIAL,
+  cachedCurrentInscription,
+  cachedMyEnrollment,
+  cachedMyObjectif,
+  cachedMyProgressHistory,
+  cachedMyProgressPosition,
+  cachedPresenceSummary,
+  cachedProfileFields,
+  enrollmentLockFromResult,
+  memberInfoFromUser,
+  unknownDataMessage,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import PersonalInfoSection from "../../components/PersonalInfoSection";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfileNotificationsCard from "../../components/profile/ProfileNotificationsCard";
@@ -41,6 +46,7 @@ export default function MemberProfileScreen({ navigation }) {
   const {
     currentUser,
     logout,
+    isLoggingOut,
     seasons,
     updateCurrentUserAvatar,
   } = useApp();
@@ -61,8 +67,11 @@ export default function MemberProfileScreen({ navigation }) {
     seanceId: null,
     saisonId: null,
     registrationDate: null,
+    // Inscription inconnue : texte à la place de « لم يتم تعيينك في حصة بعد ».
+    unknownMessage: null,
   });
-  const [progressLocked, setProgressLocked] = useState(false);
+  /** Inscription inconnue = saisie verrouillée avec message « inconnu ». */
+  const [enrollmentLock, setEnrollmentLock] = useState(ENROLLMENT_LOCK_INITIAL);
   const [progressState, setProgressState] = useState({
     loading: !!authId,
     error: null,
@@ -83,6 +92,8 @@ export default function MemberProfileScreen({ navigation }) {
     records: [],
   });
   const handleLogout = () => {
+    // Déconnexion déjà en cours : pas de nouvelle confirmation.
+    if (isLoggingOut) return;
     Alert.alert("تسجيل الخروج", "هل تريد تسجيل الخروج من الحساب؟", [
       { text: "إلغاء", style: "cancel" },
       {
@@ -94,6 +105,10 @@ export default function MemberProfileScreen({ navigation }) {
       },
     ]);
   };
+
+  // Retour du réseau : rechargement (tout est rechargé au focus, pas de différé).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const loadProfileData = useCallback(async () => {
     if (!authId) {
@@ -134,9 +149,10 @@ export default function MemberProfileScreen({ navigation }) {
     setSessionState((s) => ({ ...s, loading: true }));
 
     const [fieldsRes, currentInscRes] = await Promise.all([
-      getMemberProfileFields(authId),
-      getMyCurrentInscription(authId),
+      cachedProfileFields(authId),
+      cachedCurrentInscription(authId),
     ]);
+    markOffline(fieldsRes, currentInscRes);
 
     if (fieldsRes.ok) {
       setMemberInfo(fieldsRes);
@@ -146,8 +162,15 @@ export default function MemberProfileScreen({ navigation }) {
         level: fieldsRes.niveau || currentUser?.level || null,
         hifzAmount: fieldsRes.quantiteHifz || currentUser?.hifzAmount || null,
       });
+    } else {
+      // Champs inconnus : profil du compte (AppContext) plutôt que des « — ».
+      setMemberInfo((prev) => prev || memberInfoFromUser(currentUser));
     }
 
+    // Inscription inconnue (échec sans cache) ≠ aucune séance.
+    const unknownMessage = currentInscRes.ok
+      ? null
+      : unknownDataMessage(currentInscRes);
     const seance = currentInscRes.ok ? currentInscRes.seance : null;
     const inscription = currentInscRes.ok ? currentInscRes.inscription : null;
     const seanceId = seance?.id || null;
@@ -162,29 +185,36 @@ export default function MemberProfileScreen({ navigation }) {
       seanceId,
       saisonId,
       registrationDate: inscription?.dateInscription || null,
+      unknownMessage,
     });
 
     const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
     const [posRes, histRes, objRes, presRes, enrollRes] = await Promise.all([
-      getMyCurrentProgressPosition(),
-      getMyProgress({ saisonId: objectifSaisonId || undefined }),
+      cachedMyProgressPosition(),
+      cachedMyProgressHistory(objectifSaisonId),
       objectifSaisonId
-        ? getMyObjectif(objectifSaisonId)
+        ? cachedMyObjectif(objectifSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
       seanceId
-        ? getMemberPresenceSummary(authId, seanceId)
-        : Promise.resolve({
-            ok: true,
-            hasData: false,
-            rate: null,
-            presentCount: 0,
-            absentCount: 0,
-            records: [],
-          }),
-      getMyActiveEnrollment(),
+        ? cachedPresenceSummary(authId, seanceId)
+        : // Séance inconnue : présence inconnue (pas de « لا يوجد سجل حضور »).
+          Promise.resolve(
+            unknownMessage
+              ? { ok: false, error: unknownMessage }
+              : {
+                  ok: true,
+                  hasData: false,
+                  rate: null,
+                  presentCount: 0,
+                  absentCount: 0,
+                  records: [],
+                }
+          ),
+      cachedMyEnrollment(objectifSaisonId),
     ]);
+    markOffline(posRes, histRes, objRes, presRes, enrollRes);
 
-    if (enrollRes.ok) setProgressLocked(!enrollRes.enrolled);
+    setEnrollmentLock(enrollmentLockFromResult(enrollRes));
 
     const objectif =
       objRes.ok && objRes.objectif ? objRes.objectif : null;
@@ -192,7 +222,8 @@ export default function MemberProfileScreen({ navigation }) {
     if (!posRes.ok) {
       setProgressState({
         loading: false,
-        error: posRes.error,
+        // Position inconnue : message, pas « لم يتم تسجيل أي تقدم بعد ».
+        error: unknownDataMessage(posRes),
         hasData: false,
         metrics: null,
         note: null,
@@ -220,7 +251,7 @@ export default function MemberProfileScreen({ navigation }) {
     if (!presRes.ok) {
       setPresenceState({
         loading: false,
-        error: presRes.error,
+        error: unknownDataMessage(presRes),
         hasData: false,
         rate: null,
         presentCount: 0,
@@ -238,13 +269,14 @@ export default function MemberProfileScreen({ navigation }) {
         records: presRes.records || [],
       });
     }
-  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount, seasons]);
+  }, [authId, currentUser?.phone, currentUser?.school, currentUser?.level, currentUser?.hifzAmount, seasons, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
       loadProfileData();
     }, [loadProfileData])
   );
+  reloadRef.current = loadProfileData;
 
   useEffect(() => {
     setContactFields((prev) => ({
@@ -271,10 +303,15 @@ export default function MemberProfileScreen({ navigation }) {
         <TouchableOpacity
           style={styles.headerBtn}
           onPress={handleLogout}
+          disabled={isLoggingOut}
           activeOpacity={0.7}
           accessibilityLabel="تسجيل الخروج"
         >
-          <Ionicons name="log-out-outline" size={22} color="white" />
+          {isLoggingOut ? (
+            <ActivityIndicator size="small" color="white" />
+          ) : (
+            <Ionicons name="log-out-outline" size={22} color="white" />
+          )}
         </TouchableOpacity>
       </View>
 
@@ -304,12 +341,15 @@ export default function MemberProfileScreen({ navigation }) {
             heureDebut={sessionState.heureDebut}
             heureFin={sessionState.heureFin}
             registrationDate={sessionState.registrationDate}
+            {...(sessionState.unknownMessage
+              ? { emptyText: sessionState.unknownMessage }
+              : {})}
           />
 
           <ProgressCard
             progressState={progressState}
             onUpdate={() => navigation.navigate("MemberProgress")}
-            lockedMessage={progressLocked ? PROGRESS_LOCKED_MESSAGE : null}
+            lockedMessage={enrollmentLock.locked ? enrollmentLock.message : null}
           />
 
           <AttendanceCard

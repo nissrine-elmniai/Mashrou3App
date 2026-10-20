@@ -18,6 +18,8 @@ import { colors, radii } from "../../constants/theme";
 import { rtlText, textAlignStart, fonts, row } from "../../constants/rtl";
 import { updateOwnProfile } from "../../lib/auth";
 import { PROFILE_COLUMN_LABELS as L } from "./profileColumnLabels";
+import AppToast from "../AppToast";
+import { requireOnline } from "../../lib/toast";
 
 const PHONE_RE = /^[0-9+\s]+$/;
 
@@ -73,6 +75,8 @@ export default function EditAdminProfileModal({
   const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleSave = async () => {
+    // Hors ligne : toast dans la modale, saisie conservée.
+    if (!requireOnline()) return;
     const firstClean = form.firstName.trim();
     const lastClean = form.lastName.trim();
     const phoneClean = form.phone.trim();
@@ -202,6 +206,11 @@ export default function EditAdminProfileModal({
           </ScrollView>
         </View>
       </View>
+      {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+      <AppToast
+        replayPending={false}
+        bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+      />
     </Modal>
   );
 }

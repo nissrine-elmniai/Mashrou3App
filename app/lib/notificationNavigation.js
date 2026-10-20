@@ -1,5 +1,6 @@
 import { markNotificationRead } from "./notificationsApi";
 import { emitAlertGateRefresh } from "./alertGateEvents";
+import { isOffline } from "./networkState";
 
 /** Écrans autorisés pour la navigation au tap (payload.screen). */
 const ALLOWED_SCREENS = new Set([
@@ -191,6 +192,9 @@ export function navigateFromNotificationPayload(navigation, payload) {
 
 async function markReadIfPossible(id) {
   if (!id) return false;
+  // Hors ligne : marquage « lu » ignoré en silence (aucune file d'envoi) ;
+  // la notification reste non lue et la navigation se fait quand même.
+  if (isOffline()) return false;
   const res = await markNotificationRead(id);
   if (res?.ok) return true;
   if (res?.error) {

@@ -3,7 +3,7 @@
  * onglet « الأعضاء » (membres inscrits aux séances de ce superviseur sur le
  * musim actif).
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -19,17 +19,22 @@ import { StatusBar } from "expo-status-bar";
 import { Ionicons } from "@expo/vector-icons";
 import { rtlText, row, arrowBack } from "../../constants/rtl";
 import { formatAccountStatusLabel } from "../../constants/roles";
-import { fetchProfile, formatBirthDateLabel } from "../../lib/auth";
+import { formatBirthDateLabel } from "../../lib/auth";
 import { formatGenderLabel, isCurrentSeanceInscription } from "../../lib/membersApi";
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
-import { fetchSeasonDirectory } from "../../lib/saisonsApi";
 import {
-  getAllSeances,
-  getAllAcceptedInscriptions,
-  getMemberProfiles,
   formatSeanceScheduleLabel,
   assignOrSwapSeanceSuperviseur,
 } from "../../lib/seancesApi";
+import {
+  cachedAdminSupervisorMembers,
+  cachedAdminSupervisorProfile,
+  cachedAdminSupervisorSeances,
+  cachedSeasonDirectory,
+} from "../../lib/adminOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { initials } from "../supervisor/supervisorHelpers";
 import { displayProfileEmail } from "../../lib/authEmail";
 import ProfileAvatar from "../../components/ProfileAvatar";
@@ -106,27 +111,45 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   const [profiles, setProfiles] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [assigningSeanceId, setAssigningSeanceId] = useState(null);
+  // Séances / membres inconnus (hors ligne sans cache, ou erreur) : message, pas « vide ».
+  const [seancesError, setSeancesError] = useState(null);
+  const [membersError, setMembersError] = useState(null);
+  // Retour du réseau : relecture si l'écran est affiché (sinon au prochain focus).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const reloadDetail = useCallback(async () => {
     if (!supervisorId) return { ok: false };
-    const seasonRes = await fetchSeasonDirectory();
+    const seasonRes = await cachedSeasonDirectory();
     const season = seasonRes.ok ? seasonRes.activeSeason : null;
     setActiveSeason(season);
     const saisonId = season?.id || null;
-    const [profRes, seaRes, inscRes, memRes] = await Promise.all([
-      fetchProfile(supervisorId),
-      saisonId ? getAllSeances({ saisonId }) : Promise.resolve({ ok: true, seances: [] }),
+    const [profRes, seaRes, memRes] = await Promise.all([
+      cachedAdminSupervisorProfile(supervisorId),
       saisonId
-        ? getAllAcceptedInscriptions({ saisonId })
-        : Promise.resolve({ ok: true, inscriptions: [] }),
-      getMemberProfiles(),
+        ? cachedAdminSupervisorSeances(supervisorId, saisonId)
+        : Promise.resolve({ ok: true, seances: [] }),
+      saisonId
+        ? cachedAdminSupervisorMembers(supervisorId, saisonId)
+        : Promise.resolve({ ok: true, inscOk: true, memOk: true, inscriptions: [], members: [] }),
     ]);
+    markOffline(seasonRes, profRes, seaRes, memRes);
     if (profRes.ok) setProfileRow(profRes.profile);
     if (seaRes.ok) setSeances(seaRes.seances);
-    if (inscRes.ok) setInscriptions(inscRes.inscriptions);
-    if (memRes.ok) setProfiles(memRes.members);
+    // En ligne, chaque partie garde son état comme avant (échec partiel).
+    if (memRes.inscOk) setInscriptions(memRes.inscriptions || []);
+    if (memRes.memOk) setProfiles(memRes.members || []);
+    // Saison inconnue ≠ « لا يوجد موسم نشط » ; séances inconnues ≠ « لم يتم تعيين حصة ».
+    const seasonError = seasonRes.ok ? null : unknownDataMessage(seasonRes, "تعذر تحميل الموسم");
+    const nextSeancesError =
+      seasonError || (seaRes.ok ? null : unknownDataMessage(seaRes, "تعذر تحميل الحصص"));
+    setSeancesError(nextSeancesError);
+    setMembersError(
+      nextSeancesError || (memRes.ok ? null : unknownDataMessage(memRes, "تعذر تحميل الأعضاء"))
+    );
     return seaRes;
-  }, [supervisorId]);
+  }, [supervisorId, markOffline]);
+  reloadRef.current = reloadDetail;
 
   useFocusEffect(
     useCallback(() => {
@@ -170,6 +193,7 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
     accountStatus === "active" && supervisorSeances.length === 0;
 
   const assignSeance = async (seanceId) => {
+    if (!requireOnline()) return;
     if (!supervisorId || assigningSeanceId) return;
     setAssigningSeanceId(seanceId);
     const res = await assignOrSwapSeanceSuperviseur(seanceId, supervisorId);
@@ -183,6 +207,8 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
   };
 
   const confirmAssignSeance = (seance) => {
+    // Affecter une séance : hors ligne, toast sans confirmation.
+    if (!requireOnline()) return;
     if (assigningSeanceId) return;
     if (!seance?.superviseur_id) {
       assignSeance(seance.id);
@@ -310,7 +336,9 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
             >
               <Text style={[styles.tabText, active && styles.tabTextActive]}>
                 {item.key === "members"
-                  ? `${item.label} (${members.length})`
+                  ? `${item.label} (${
+                      membersError && members.length === 0 ? "—" : members.length
+                    })`
                   : item.label}
               </Text>
             </TouchableOpacity>
@@ -386,7 +414,9 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
             </SectionCard>
 
             <SectionCard title="الحصة">
-              {supervisorSeances[0] ? (
+              {seancesError && supervisorSeances.length === 0 ? (
+                <Text style={styles.emptyText}>{seancesError}</Text>
+              ) : supervisorSeances[0] ? (
                 <View style={styles.seanceRow}>
                   <View style={styles.infoIcon}>
                     <Ionicons
@@ -409,7 +439,11 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
                     <>
                       <TouchableOpacity
                         style={styles.assignBtn}
-                        onPress={() => setPickerOpen((open) => !open)}
+                        onPress={() => {
+                          // Liste d'affectation : inutile hors ligne (toast).
+                          if (!requireOnline()) return;
+                          setPickerOpen((open) => !open);
+                        }}
                         disabled={!!assigningSeanceId}
                         accessibilityRole="button"
                         accessibilityLabel="تعيين حصة"
@@ -449,6 +483,8 @@ export default function AdminSupervisorDetailScreen({ navigation, route }) {
               )}
             </SectionCard>
           </>
+        ) : membersError && members.length === 0 ? (
+          <Text style={styles.emptyText}>{membersError}</Text>
         ) : !activeSeason ? (
           <Text style={styles.emptyText}>لا يوجد موسم نشط</Text>
         ) : members.length === 0 ? (

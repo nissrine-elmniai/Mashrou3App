@@ -14,6 +14,13 @@ import { rtlText, row } from "../../constants/rtl";
 import { listSeasonStatsByType } from "../../lib/seasonStatsApi";
 import { STATS_LABELS } from "../../lib/statsLabels";
 import { alertForExportResult, exportComparisonPdf } from "../../lib/statsExport";
+import {
+  OFFLINE_UNAVAILABLE_MESSAGE,
+  fetchOnlineOnly,
+  unknownDataMessage,
+} from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { BarChart, UnderlinedTitle } from "../stats/StatsCharts";
 
 const palette = {
@@ -100,6 +107,9 @@ export default function SeasonsCompareView({ initialType, onExportState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exporting, setExporting] = useState(false);
+  // Comparaison de saisons : jamais en cache. Retour du réseau : relecture.
+  const loadRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadRef.current?.());
 
   useEffect(() => {
     if (typeTouched.current) return;
@@ -110,22 +120,24 @@ export default function SeasonsCompareView({ initialType, onExportState }) {
     const token = ++requestId.current;
     setLoading(true);
     setError(null);
-    const res = await listSeasonStatsByType(seasonType);
+    const res = await fetchOnlineOnly(() => listSeasonStatsByType(seasonType));
     if (token !== requestId.current) return;
+    markOffline(res);
     setLoading(false);
     if (!res.ok) {
       setViews([]);
-      setError(res.error || STATS_LABELS.loadError);
+      setError(unknownDataMessage(res, STATS_LABELS.loadError));
       return;
     }
     setViews(orderedViews(res.seasons || []));
-  }, []);
+  }, [markOffline]);
 
   useFocusEffect(
     useCallback(() => {
       load(type);
     }, [load, type])
   );
+  loadRef.current = () => load(type);
 
   const pickType = (next) => {
     if (next === type) return;
@@ -138,6 +150,8 @@ export default function SeasonsCompareView({ initialType, onExportState }) {
   const exportDisabled = exporting || loading || !!error;
 
   const exportComparison = async () => {
+    // Export PDF : hors ligne, toast, rien d'autre.
+    if (!requireOnline()) return;
     if (exportDisabled) return;
     setExporting(true);
     try {
@@ -151,8 +165,13 @@ export default function SeasonsCompareView({ initialType, onExportState }) {
   };
 
   useEffect(() => {
-    onExportState?.({ disabled: exportDisabled, busy: exporting, run: exportComparison });
-  }, [onExportState, exportDisabled, exporting, type, views]);
+    onExportState?.({
+      disabled: exportDisabled,
+      busy: exporting,
+      run: exportComparison,
+      offline: error === OFFLINE_UNAVAILABLE_MESSAGE,
+    });
+  }, [onExportState, exportDisabled, exporting, type, views, error]);
 
   return (
     <View style={styles.wrap}>

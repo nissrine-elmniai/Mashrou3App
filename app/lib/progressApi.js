@@ -1,5 +1,6 @@
 import { Alert } from "react-native";
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import {
   TUMUNS_PER_HIZB,
   TOTAL_HIZB,
@@ -73,8 +74,8 @@ async function fetchProgressionOrdered(buildQuery, label) {
 
 /** Id du membre connecté via la session Supabase, ou null. */
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 /**
@@ -317,6 +318,25 @@ let pendingNotes = null;
 let pendingSaisonId = null;
 let flushTimer = null;
 let flushInFlight = null;
+/** Incrémenté à chaque réinitialisation : un flush lancé avant est abandonné. */
+let progressStateEpoch = 0;
+
+/**
+ * Déconnexion : remet à zéro la file ± ثمن et la position mémorisée.
+ * Un flush encore en cours n'écrit plus rien (contrôle d'époque).
+ */
+export function resetMemberProgressState() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  pendingDelta = 0;
+  pendingNotes = null;
+  pendingSaisonId = null;
+  flushInFlight = null;
+  cachedMemberTumuns = null;
+  progressStateEpoch += 1;
+}
 
 async function resolveBaseMemberTumuns(userId) {
   const summary = await getMemberProgressionSummary(userId);
@@ -352,12 +372,16 @@ export function scheduleMemberProgressDelta({
   }, HISTORY_DEBOUNCE_MS);
 }
 
-/** Applique le delta en attente. À appeler au démontage d'écran. */
-export async function flushMemberProgressDelta() {
+/**
+ * Applique le delta en attente. À appeler au démontage d'écran.
+ * silent : pas d'Alert en cas d'échec (déconnexion).
+ */
+export async function flushMemberProgressDelta({ silent = false } = {}) {
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
+  const epoch = progressStateEpoch;
   const delta = pendingDelta;
   const notes = pendingNotes;
   const saisonId = pendingSaisonId;
@@ -370,10 +394,14 @@ export async function flushMemberProgressDelta() {
 
   if (flushInFlight) {
     await flushInFlight;
+    // Réinitialisé pendant l'attente (déconnexion) : le delta est abandonné.
+    if (epoch !== progressStateEpoch) {
+      return { ok: false, abandoned: true };
+    }
     pendingDelta += delta;
     pendingNotes = notes;
     pendingSaisonId = saisonId;
-    return flushMemberProgressDelta();
+    return flushMemberProgressDelta({ silent });
   }
 
   flushInFlight = (async () => {
@@ -381,10 +409,17 @@ export async function flushMemberProgressDelta() {
       return { ok: false, error: "Supabase غير مفعّل" };
     }
     const userId = await currentAuthId();
+    if (epoch !== progressStateEpoch) {
+      return { ok: false, abandoned: true };
+    }
     if (!userId) {
       return { ok: false, error: "يجب تسجيل الدخول" };
     }
     const baseOrErr = await resolveBaseMemberTumuns(userId);
+    // Pas d'écriture pour un compte dont la session a été purgée entre-temps.
+    if (epoch !== progressStateEpoch) {
+      return { ok: false, abandoned: true };
+    }
     if (baseOrErr && typeof baseOrErr === "object" && baseOrErr.error) {
       return { ok: false, error: baseOrErr.error };
     }
@@ -402,14 +437,16 @@ export async function flushMemberProgressDelta() {
     });
   })();
 
+  const task = flushInFlight;
   try {
-    const result = await flushInFlight;
-    if (result?.ok === false && result.error) {
+    const result = await task;
+    if (!silent && result?.ok === false && result.error) {
       Alert.alert("تنبيه", result.error);
     }
     return result;
   } finally {
-    flushInFlight = null;
+    // Ne pas effacer un flush démarré après une réinitialisation.
+    if (flushInFlight === task) flushInFlight = null;
   }
 }
 

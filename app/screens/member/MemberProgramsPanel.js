@@ -29,7 +29,14 @@ import {
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import { getMyActiveEnrollment } from "../../lib/membersApi";
+import {
+  ENROLLMENT_LOCK_INITIAL,
+  cachedMyEnrollment,
+  enrollmentLockFromResult,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
+import AppToast from "../../components/AppToast";
 import {
   formatHizbCount,
   formatTumunAmount,
@@ -86,7 +93,8 @@ function programStatus(program) {
 }
 
 export default function MemberProgramsPanel({ navigation }) {
-  const { getMemberPrograms, saveMemberProgram, seasons } = useApp();
+  const { getMemberPrograms, saveMemberProgram, seasons, retryMemberProgramsSync } =
+    useApp();
 
   const programs = getMemberPrograms();
   const [modalVisible, setModalVisible] = useState(false);
@@ -94,20 +102,36 @@ export default function MemberProgramsPanel({ navigation }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const activeSeasonId = getActiveRegularSeason(seasons)?.id ?? null;
-  const [progressLocked, setProgressLocked] = useState(false);
+  /** Inscription inconnue = ± ثمن (حفظ) verrouillé avec message « inconnu ». */
+  const [enrollmentLock, setEnrollmentLock] = useState(ENROLLMENT_LOCK_INITIAL);
+  const progressLocked = enrollmentLock.locked;
   /** Id du programme en création : fixé à l'ouverture du modal, réutilisé à chaque envoi. */
   const createIdRef = useRef(null);
   const { busy: saving, run: runSave } = useSubmitLock();
 
+  // Ouverture de l'onglet : relance la synchro des programmes si elle a échoué.
+  useEffect(() => {
+    retryMemberProgramsSync();
+  }, [retryMemberProgramsSync]);
+
+  // Programmes : cache d'AppContext. Inscription : cache mem.enrollment.
+  const [enrollmentReloadKey, setEnrollmentReloadKey] = useState(0);
+  const markOffline = useOfflineReload(
+    () => setEnrollmentReloadKey((n) => n + 1),
+    () => setEnrollmentReloadKey((n) => n + 1)
+  );
+
   useEffect(() => {
     let cancelled = false;
-    getMyActiveEnrollment().then((res) => {
-      if (!cancelled && res.ok) setProgressLocked(!res.enrolled);
+    cachedMyEnrollment(activeSeasonId).then((res) => {
+      if (cancelled) return;
+      markOffline(res);
+      setEnrollmentLock(enrollmentLockFromResult(res));
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeSeasonId, enrollmentReloadKey, markOffline]);
 
   useEffect(
     () => () => {
@@ -117,6 +141,8 @@ export default function MemberProgramsPanel({ navigation }) {
   );
 
   const openCreate = () => {
+    // Créer un programme : hors ligne, toast seulement (pas de formulaire inutile).
+    if (!requireOnline()) return;
     createIdRef.current = newMemberProgramId();
     setEditingId(null);
     setForm({ ...EMPTY_FORM, startDate: todayStr() });
@@ -124,6 +150,7 @@ export default function MemberProgramsPanel({ navigation }) {
   };
 
   const openEdit = (program) => {
+    if (!requireOnline()) return;
     createIdRef.current = null;
     setEditingId(program.id);
     setForm({
@@ -142,8 +169,9 @@ export default function MemberProgramsPanel({ navigation }) {
     setForm(EMPTY_FORM);
   };
 
-  const handleSave = () =>
-    runSave(async () => {
+  const handleSave = () => {
+    if (!requireOnline()) return undefined;
+    return runSave(async () => {
       const existing = editingId
         ? programs.find((program) => program.id === editingId)
         : null;
@@ -164,6 +192,7 @@ export default function MemberProgramsPanel({ navigation }) {
       }
       closeModal();
     });
+  };
 
   const quickUpdateProgress = (program) => {
     setProgressModal(program);
@@ -299,7 +328,7 @@ export default function MemberProgramsPanel({ navigation }) {
                 <Text style={styles.tumunModalPct}>{draft.predictedPct}%</Text>
                 {hifzWriteLocked ? (
                   <Text style={styles.progressModalHint}>
-                    {PROGRESS_LOCKED_MESSAGE}
+                    {enrollmentLock.message || PROGRESS_LOCKED_MESSAGE}
                   </Text>
                 ) : null}
 
@@ -366,6 +395,8 @@ export default function MemberProgramsPanel({ navigation }) {
             ) : null}
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast replayPending={false} />
       </Modal>
     </View>
   );
@@ -605,6 +636,8 @@ function ProgramFormModal({
           </View>
         </View>
       </View>
+      {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+      <AppToast replayPending={false} avoidKeyboard />
     </Modal>
   );
 }

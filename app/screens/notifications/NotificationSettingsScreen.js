@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -28,10 +28,14 @@ import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_CATEGORY_LABELS,
   emptyNotificationPreferences,
-  getNotificationPreferences,
   updateNotificationPreferences,
   updateQuietHours,
 } from "../../lib/notificationsApi";
+import { cachedNotificationPreferences } from "../../lib/messagingOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE } from "../../lib/offlineCache";
+import { isOffline } from "../../lib/networkState";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 
 const QUIET_START_DEFAULT = "22:00";
 const QUIET_END_DEFAULT = "07:00";
@@ -66,25 +70,55 @@ export default function NotificationSettingsScreen({ navigation }) {
   const [savingQuiet, setSavingQuiet] = useState(false);
   const [quietPicker, setQuietPicker] = useState(null);
   const [quietDraft, setQuietDraft] = useState(null);
+  /** État push du jeton de CET appareil : non mis en cache, inconnu s'il n'a jamais été lu. */
+  const [deviceUnknown, setDeviceUnknown] = useState(false);
+  /** Préférences jamais lues (hors ligne, sans cache). */
+  const [prefsUnknown, setPrefsUnknown] = useState(false);
+  // Retour du réseau : rechargement (aussi rechargé au focus, pas de différé).
+  const reloadRef = useRef(null);
+  const deviceKnownRef = useRef(false);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
 
   const loadDevice = useCallback(async () => {
     if (!authId) {
       setDeviceEnabled(false);
       return;
     }
+    // Non mis en cache (jeton Expo + push_tokens) : hors ligne, pas de requête ;
+    // dernier état affiché conservé, sinon « غير متاح دون اتصال ».
+    if (isOffline()) {
+      if (!deviceKnownRef.current) setDeviceUnknown(true);
+      markOffline({ offline: true });
+      return;
+    }
     setLoadingDevice(true);
     const res = await getPushNotificationsToggleState(authId);
-    if (res.ok) setDeviceEnabled(res.enabled === true);
+    if (res.ok) {
+      setDeviceEnabled(res.enabled === true);
+      deviceKnownRef.current = true;
+      setDeviceUnknown(false);
+    }
     setLoadingDevice(false);
-  }, [authId]);
+  }, [authId, markOffline]);
 
   const loadPrefs = useCallback(async () => {
     setLoadingPrefs(true);
-    const res = await getNotificationPreferences();
-    if (res.ok) setPrefs(res.preferences);
-    else if (res.error) Alert.alert("تنبيه", res.error);
+    const res = await cachedNotificationPreferences();
+    markOffline(res);
+    if (res.ok) {
+      setPrefs(res.preferences);
+      setPrefsUnknown(false);
+    } else if (res.offline) {
+      // Hors ligne sans cache : pas d'Alert, message dans l'écran.
+      setPrefsUnknown(true);
+    } else if (res.error) Alert.alert("تنبيه", res.error);
     setLoadingPrefs(false);
-  }, []);
+  }, [markOffline]);
+
+  reloadRef.current = () => {
+    loadDevice();
+    loadPrefs();
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -95,6 +129,8 @@ export default function NotificationSettingsScreen({ navigation }) {
 
   const handleDeviceToggle = async (nextValue) => {
     if (!authId || togglingDevice) return;
+    // Activer / couper les notifications (écriture push_tokens) : hors ligne, toast.
+    if (!requireOnline()) return;
     setTogglingDevice(true);
     if (nextValue) {
       const res = await registerForPushNotifications(authId);
@@ -125,6 +161,8 @@ export default function NotificationSettingsScreen({ navigation }) {
   };
 
   const handleCategoryToggle = async (key, nextValue) => {
+    // Écriture : hors ligne, toast ; l'interrupteur garde la valeur affichée.
+    if (!requireOnline()) return;
     setSavingKey(key);
     const res = await updateNotificationPreferences({ [key]: nextValue });
     setSavingKey(null);
@@ -145,6 +183,8 @@ export default function NotificationSettingsScreen({ navigation }) {
       : prefs.quietHoursEnd || QUIET_END_DEFAULT;
 
   const applyQuietHours = async (next) => {
+    // Heures calmes : hors ligne, toast ; rien n'est modifié à l'écran.
+    if (!requireOnline()) return;
     const prev = prefs;
     setPrefs(next);
     setSavingQuiet(true);
@@ -248,6 +288,8 @@ export default function NotificationSettingsScreen({ navigation }) {
             <Text style={styles.switchLabel}>تفعيل إشعارات الجهاز</Text>
             {loadingDevice || togglingDevice ? (
               <ActivityIndicator size="small" color={colors.primary} />
+            ) : deviceUnknown ? (
+              <Text style={styles.unavailableText}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
             ) : (
               <Switch
                 value={deviceEnabled}
@@ -267,6 +309,8 @@ export default function NotificationSettingsScreen({ navigation }) {
           <Text style={styles.sectionTitle}>التصنيفات</Text>
           {loadingPrefs ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />
+          ) : prefsUnknown ? (
+            <Text style={styles.unavailableText}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
           ) : (
             NOTIFICATION_CATEGORIES.map((key, index) => (
               <View
@@ -298,6 +342,8 @@ export default function NotificationSettingsScreen({ navigation }) {
           <Text style={styles.sectionTitle}>الساعات الهادئة</Text>
           {loadingPrefs ? (
             <ActivityIndicator color={colors.primary} style={styles.loader} />
+          ) : prefsUnknown ? (
+            <Text style={styles.unavailableText}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
           ) : (
             <>
               <View style={styles.switchRow}>
@@ -322,6 +368,8 @@ export default function NotificationSettingsScreen({ navigation }) {
                   <TouchableOpacity
                     style={styles.timeRow}
                     onPress={() => {
+                      // Heures calmes : hors ligne, toast sans ouvrir le sélecteur.
+                      if (!requireOnline()) return;
                       setQuietDraft(null);
                       setQuietPicker("start");
                     }}
@@ -336,6 +384,7 @@ export default function NotificationSettingsScreen({ navigation }) {
                   <TouchableOpacity
                     style={[styles.timeRow, styles.switchRowLast]}
                     onPress={() => {
+                      if (!requireOnline()) return;
                       setQuietDraft(null);
                       setQuietPicker("end");
                     }}
@@ -458,6 +507,12 @@ const styles = StyleSheet.create({
     ...rtlText,
   },
   loader: { marginVertical: 12 },
+  unavailableText: {
+    fontSize: 13,
+    fontFamily: fonts.regular,
+    color: colors.muted,
+    ...rtlText,
+  },
   timeRow: {
     flexDirection: row,
     alignItems: "center",

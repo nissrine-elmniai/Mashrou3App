@@ -16,7 +16,14 @@ import {
   flushMemberProgressDelta,
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
-import { getMyActiveEnrollment } from "../../lib/membersApi";
+import { getActiveRegularSeason } from "../../lib/seasonScope";
+import {
+  ENROLLMENT_LOCK_INITIAL,
+  cachedMyEnrollment,
+  enrollmentLockFromResult,
+} from "../../lib/memberOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
 import {
   TUMUNS_PER_HIZB,
   formatHizbCount,
@@ -30,19 +37,30 @@ import { colors, radii, shadows } from "../../constants/theme";
 
 export default function ProgrammeDetailScreen({ navigation, route }) {
   const routeProgram = route.params?.programme;
-  const { getMemberPrograms, deleteMemberProgram } = useApp();
+  const { getMemberPrograms, deleteMemberProgram, seasons } = useApp();
+  const activeSeasonId = getActiveRegularSeason(seasons)?.id ?? null;
 
-  const [progressLocked, setProgressLocked] = useState(false);
+  /** Inscription inconnue = ± ثمن (حفظ) verrouillé avec message « inconnu ». */
+  const [enrollmentLock, setEnrollmentLock] = useState(ENROLLMENT_LOCK_INITIAL);
+  const progressLocked = enrollmentLock.locked;
+  // Programme : cache d'AppContext. Inscription : cache mem.enrollment.
+  const [enrollmentReloadKey, setEnrollmentReloadKey] = useState(0);
+  const markOffline = useOfflineReload(
+    () => setEnrollmentReloadKey((n) => n + 1),
+    () => setEnrollmentReloadKey((n) => n + 1)
+  );
 
   useEffect(() => {
     let cancelled = false;
-    getMyActiveEnrollment().then((res) => {
-      if (!cancelled && res.ok) setProgressLocked(!res.enrolled);
+    cachedMyEnrollment(activeSeasonId).then((res) => {
+      if (cancelled) return;
+      markOffline(res);
+      setEnrollmentLock(enrollmentLockFromResult(res));
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeSeasonId, enrollmentReloadKey, markOffline]);
 
   const programFromContext = useMemo(() => {
     if (!routeProgram?.id) return null;
@@ -172,6 +190,8 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   const hifzWriteLocked = progressLocked && isHifzProgram(programData);
 
   const handleDeleteProgramme = () => {
+    // Supprimer : hors ligne, toast seulement (pas de confirmation).
+    if (!requireOnline()) return;
     Alert.alert(
       "حذف البرنامج",
       `هل أنت متأكد من حذف برنامج "${programData.nom}"؟\n\nسيُحذف البرنامج فقط. موضعك في القرآن يبقى كما هو.`,
@@ -187,6 +207,8 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
   };
 
   const confirmDelete = async () => {
+    // Réseau perdu pendant la confirmation : toast, rien d'autre.
+    if (!requireOnline()) return;
     try {
       if (programData.id) {
         const result = await deleteMemberProgram(programData.id);
@@ -329,7 +351,9 @@ export default function ProgrammeDetailScreen({ navigation, route }) {
             </Text>
             <Text style={styles.percentageText}>{shownPct}%</Text>
             {hifzWriteLocked ? (
-              <Text style={styles.subTitle}>{PROGRESS_LOCKED_MESSAGE}</Text>
+              <Text style={styles.subTitle}>
+                {enrollmentLock.message || PROGRESS_LOCKED_MESSAGE}
+              </Text>
             ) : null}
 
             <View style={styles.stepperRow}>

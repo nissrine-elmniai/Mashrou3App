@@ -32,6 +32,8 @@ import EditSupervisorProfileModal from "../../components/profile/EditSupervisorP
 import { PROFILE_COLUMN_LABELS as L } from "../../components/profile/profileColumnLabels";
 import ProfilePrivacyLink from "../../components/profile/ProfilePrivacyLink";
 import { displayProfileEmail } from "../../lib/authEmail";
+import { isOffline } from "../../lib/networkState";
+import { requireOnline } from "../../lib/toast";
 
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -101,6 +103,8 @@ export default function SupervisorProfileScreen({ navigation }) {
       setNotificationsEnabled(false);
       return;
     }
+    // Non mis en cache : hors ligne, pas de requête (dernier état affiché conservé).
+    if (isOffline()) return;
     setLoadingNotifications(true);
     const res = await getPushNotificationsToggleState(authId);
     if (res.ok) {
@@ -117,6 +121,8 @@ export default function SupervisorProfileScreen({ navigation }) {
 
   const handleNotificationsToggle = async (nextValue) => {
     if (!authId || togglingNotifications) return;
+    // Activer / couper les notifications (écriture push_tokens) : hors ligne, toast.
+    if (!requireOnline()) return;
 
     if (nextValue) {
       setTogglingNotifications(true);
@@ -153,6 +159,9 @@ export default function SupervisorProfileScreen({ navigation }) {
 
   useEffect(() => {
     if (!authId) return;
+    // Non mis en cache : hors ligne, pas de requête ; le profil du compte
+    // (AppContext, dernier profil serveur) est affiché.
+    if (isOffline()) return;
     let cancelled = false;
     setLoadingProfile(true);
     (async () => {
@@ -242,7 +251,11 @@ export default function SupervisorProfileScreen({ navigation }) {
 
         <SectionCard
           title="المعلومات الشخصية"
-          onEdit={() => setEditInfoModal(true)}
+          onEdit={() => {
+            // Formulaire impossible à enregistrer hors ligne : toast dès l'ouverture.
+            if (!requireOnline()) return;
+            setEditInfoModal(true);
+          }}
         >
           <ProfileRow icon="person-outline" label={L.full_name} value={fullName} />
           <ProfileRow icon="mail-outline" label={L.email} value={email} />

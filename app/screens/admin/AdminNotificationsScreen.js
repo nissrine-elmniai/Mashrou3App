@@ -19,7 +19,11 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row } from "../../constants/rtl";
 import { colors } from "../../constants/theme";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
-import { sendAlert, getAllAlertsAdmin } from "../../lib/alertsApi";
+import { sendAlert } from "../../lib/alertsApi";
+import { cachedAlertsHistory } from "../../lib/adminOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import { UnderlinedTitle } from "../../components/stats/StatsCharts";
@@ -83,6 +87,12 @@ export default function AdminNotificationsScreen({ navigation }) {
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  /** Historique jamais lu (hors ligne sans cache, ou erreur) : message, pas « لا توجد ». */
+  const [historyError, setHistoryError] = useState(null);
+  const loadHistoryRef = useRef(null);
+  // Lecture au montage (pas au focus) : relue au retour du réseau, ou au prochain focus.
+  const reloadHistory = () => loadHistoryRef.current?.();
+  const markOffline = useOfflineReload(reloadHistory, reloadHistory);
 
   const pendingCount = stats?.pendingRegs ?? 0;
 
@@ -93,10 +103,18 @@ export default function AdminNotificationsScreen({ navigation }) {
       setLoadingHistory(false);
       return;
     }
-    const res = await getAllAlertsAdmin({ saisonId: activeSeasonId });
-    if (res.ok) setHistory(res.alerts);
+    const res = await cachedAlertsHistory(activeSeasonId);
+    markOffline(res);
+    // Échec : la liste déjà chargée reste affichée.
+    if (res.ok) {
+      setHistory(res.alerts);
+      setHistoryError(null);
+    } else {
+      setHistoryError(unknownDataMessage(res, "تعذر تحميل سجل التنبيهات"));
+    }
     setLoadingHistory(false);
-  }, [activeSeasonId]);
+  }, [activeSeasonId, markOffline]);
+  loadHistoryRef.current = loadHistory;
 
   useEffect(() => {
     loadHistory();
@@ -119,6 +137,8 @@ export default function AdminNotificationsScreen({ navigation }) {
 
   const performSend = async (audience, message) => {
     if (sendingRef.current) return;
+    // Réseau perdu pendant la confirmation : toast, le texte reste dans le champ.
+    if (!requireOnline()) return;
     sendingRef.current = true;
     setSending(true);
     const result = await sendAlert(message, audience, {
@@ -142,6 +162,8 @@ export default function AdminNotificationsScreen({ navigation }) {
   };
 
   const handleSend = () => {
+    // Hors ligne : toast, rien d'autre (le texte reste dans le champ).
+    if (!requireOnline()) return;
     const audience = resolveAudience();
     if (!audience) {
       Alert.alert("تنبيه", "اختر الأعضاء أو المشرفين أو الاثنين معاً");
@@ -323,7 +345,7 @@ export default function AdminNotificationsScreen({ navigation }) {
               <ActivityIndicator size="large" color={palette.primary} />
             </View>
           ) : history.length === 0 ? (
-            <Text style={styles.emptyText}>لا توجد تنبيهات بعد</Text>
+            <Text style={styles.emptyText}>{historyError || "لا توجد تنبيهات بعد"}</Text>
           ) : (
             history.map((item) => (
               <View key={item.id} style={styles.historyCard}>

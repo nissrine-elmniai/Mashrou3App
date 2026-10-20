@@ -31,6 +31,13 @@ import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { getSeasonMemberRows, listSeasonStatsByType } from "../../lib/seasonStatsApi";
 import { STATS_LABELS } from "../../lib/statsLabels";
 import { alertForExportResult, exportSeasonPdf } from "../../lib/statsExport";
+import {
+  OFFLINE_UNAVAILABLE_MESSAGE,
+  fetchOnlineOnly,
+  unknownDataMessage,
+} from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import SeasonsCompareView from "../../components/admin/SeasonsCompareView";
 import {
   DonutChart,
@@ -382,7 +389,11 @@ export default function AdminStatsScreen({ navigation }) {
     disabled: true,
     busy: false,
     run: null,
+    offline: false,
   });
+  // Statistiques : jamais en cache. Retour du réseau : relecture si l'écran est affiché.
+  const loadRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadRef.current?.());
   const onCompareExportState = useCallback((state) => {
     setCompareExport(state);
   }, []);
@@ -402,12 +413,13 @@ export default function AdminStatsScreen({ navigation }) {
     const token = ++requestId.current;
     setLoading(true);
     setError(null);
-    const res = await listSeasonStatsByType(seasonType);
+    const res = await fetchOnlineOnly(() => listSeasonStatsByType(seasonType));
     if (token !== requestId.current) return;
+    markOffline(res);
     if (!res.ok) {
       setViews([]);
       setMemberRows([]);
-      setError(res.error || STATS_LABELS.loadError);
+      setError(unknownDataMessage(res, STATS_LABELS.loadError));
       setLoading(false);
       return;
     }
@@ -419,15 +431,18 @@ export default function AdminStatsScreen({ navigation }) {
     const season = list.find((view) => view.saisonId === nextId) || null;
     let rows = [];
     if (isAdmin && season && !season.empty) {
-      const members = await getSeasonMemberRows({
-        id: season.saisonId,
-        active: !!season.active,
-      });
+      const members = await fetchOnlineOnly(() =>
+        getSeasonMemberRows({
+          id: season.saisonId,
+          active: !!season.active,
+        })
+      );
       if (token !== requestId.current) return;
+      markOffline(members);
       if (!members.ok) {
         setViews([]);
         setMemberRows([]);
-        setError(members.error || STATS_LABELS.loadError);
+        setError(unknownDataMessage(members, STATS_LABELS.loadError));
         setLoading(false);
         return;
       }
@@ -438,13 +453,14 @@ export default function AdminStatsScreen({ navigation }) {
     selectedIdRef.current = nextId;
     setSelectedId(nextId);
     setLoading(false);
-  }, [isAdmin]);
+  }, [isAdmin, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
       load(type);
     }, [load, type])
   );
+  loadRef.current = () => load(type);
 
   const chips = useMemo(() => chipOrder(views), [views]);
   const selected = views.find((view) => view.saisonId === selectedId) || null;
@@ -476,14 +492,17 @@ export default function AdminStatsScreen({ navigation }) {
     }
     setLoading(true);
     setError(null);
-    const members = await getSeasonMemberRows({
-      id: view.saisonId,
-      active: !!view.active,
-    });
+    const members = await fetchOnlineOnly(() =>
+      getSeasonMemberRows({
+        id: view.saisonId,
+        active: !!view.active,
+      })
+    );
     if (token !== requestId.current) return;
+    markOffline(members);
     if (!members.ok) {
       setMemberRows([]);
-      setError(members.error || STATS_LABELS.loadError);
+      setError(unknownDataMessage(members, STATS_LABELS.loadError));
       setLoading(false);
       return;
     }
@@ -508,8 +527,13 @@ export default function AdminStatsScreen({ navigation }) {
     mode === "compare"
       ? compareExport.disabled || compareExport.busy || !compareExport.run
       : exportDisabled;
+  // Hors ligne (statistiques non lues) : bouton actif, l'appui affiche le toast.
+  const fabOffline =
+    mode === "compare" ? !!compareExport.offline : error === OFFLINE_UNAVAILABLE_MESSAGE;
 
   const exportSelected = async () => {
+    // Export PDF : hors ligne, toast, rien d'autre.
+    if (!requireOnline()) return;
     if (exportDisabled || !selected) return;
     setExporting(true);
     try {
@@ -1005,10 +1029,16 @@ export default function AdminStatsScreen({ navigation }) {
           style={[
             styles.exportFab,
             { bottom: Math.max(insets.bottom, 16) + 16 },
-            fabDisabled && !fabBusy && styles.exportFabDisabled,
+            fabDisabled && !fabBusy && !fabOffline && styles.exportFabDisabled,
           ]}
-          disabled={fabDisabled}
-          onPress={mode === "compare" ? compareExport.run : exportSelected}
+          disabled={fabDisabled && !fabOffline}
+          onPress={
+            fabOffline
+              ? requireOnline
+              : mode === "compare"
+                ? compareExport.run
+                : exportSelected
+          }
           activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityLabel={STATS_LABELS.exportFab}

@@ -20,14 +20,16 @@ import { colors, radii, shadows } from "../constants/theme";
 import { rtlText, row, textAlignStart } from "../constants/rtl";
 
 export default function LoginScreen({ navigation }) {
-  const { login } = useApp();
+  const { login, isLoggingOut } = useApp();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Déconnexion précédente pas terminée : son signOut effacerait la nouvelle session.
+  const busy = submitting || isLoggingOut;
 
   const handleLogin = async () => {
-    if (submitting) return;
+    if (busy) return;
     if (!username || !password) {
       Alert.alert("تنبيه", "أدخل البريد وكلمة المرور");
       return;
@@ -113,11 +115,11 @@ export default function LoginScreen({ navigation }) {
             </View>
 
             <TouchableOpacity
-              style={[styles.loginButton, submitting && { opacity: 0.7 }]}
+              style={[styles.loginButton, busy && { opacity: 0.7 }]}
               onPress={handleLogin}
-              disabled={submitting}
+              disabled={busy}
             >
-              {submitting ? (
+              {busy ? (
                 <ActivityIndicator color="white" />
               ) : (
                 <Text style={styles.loginButtonText}>تسجيل الدخول</Text>

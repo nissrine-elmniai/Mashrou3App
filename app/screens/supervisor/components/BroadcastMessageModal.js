@@ -17,6 +17,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { colors, radii } from "../../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts, textAlignStart } from "../../../constants/rtl";
 import { sendBroadcastToMembers } from "../../../lib/messagesApi";
+import { requireOnline } from "../../../lib/toast";
+import AppToast from "../../../components/AppToast";
 import { formatMemberCount } from "../supervisorHelpers";
 
 /**
@@ -60,6 +62,8 @@ export default function BroadcastMessageModal({
   };
 
   const runSend = async () => {
+    // Réseau perdu pendant la confirmation : toast, le texte reste dans le champ.
+    if (!requireOnline()) return;
     setSending(true);
     const res = await sendBroadcastToMembers({
       memberIds,
@@ -94,6 +98,8 @@ export default function BroadcastMessageModal({
       Alert.alert("تنبيه", "اكتب نص الرسالة");
       return;
     }
+    // Hors ligne : toast, le texte reste dans le champ (aucune file d'envoi).
+    if (!requireOnline()) return;
     Alert.alert(
       "تأكيد الإرسال",
       `سيتم إرسال هذه الرسالة إلى ${formatMemberCount(count)}. هل تريد المتابعة؟`,
@@ -111,69 +117,77 @@ export default function BroadcastMessageModal({
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View
-        style={[
-          styles.overlay,
-          {
-            paddingBottom:
-              keyboardHeight > 0
-                ? keyboardHeight
-                : Math.max(insets.bottom, 16),
-          },
-        ]}
-      >
-        <View style={styles.sheet}>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            bounces={false}
-            contentContainerStyle={styles.sheetContent}
-          >
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>إرسال رسالة للجميع</Text>
-              <TouchableOpacity onPress={handleClose} disabled={sending} hitSlop={12}>
-                <Ionicons name="close" size={24} color={colors.muted} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.recipientHint}>
-              سيتم الإرسال إلى {formatMemberCount(count)}
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="اكتب رسالة..."
-              placeholderTextColor={colors.placeholder}
-              textAlign={textAlignStart}
-              multiline
-              editable={!sending}
-            />
-
-            <TouchableOpacity
-              style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
-              onPress={handleSendPress}
-              disabled={sending}
-              activeOpacity={0.85}
+      <View style={styles.modalRoot}>
+        <View
+          style={[
+            styles.overlay,
+            {
+              paddingBottom:
+                keyboardHeight > 0
+                  ? keyboardHeight
+                  : Math.max(insets.bottom, 16),
+            },
+          ]}
+        >
+          <View style={styles.sheet}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              contentContainerStyle={styles.sheetContent}
             >
-              {sending ? (
-                <ActivityIndicator color="white" size="small" />
-              ) : (
-                <>
-                  <Text style={styles.sendBtnText}>إرسال</Text>
-                  <Ionicons name="send" size={18} color="white" style={styles.sendIcon} />
-                </>
-              )}
-            </TouchableOpacity>
-          </ScrollView>
+              <View style={styles.sheetHeader}>
+                <Text style={styles.sheetTitle}>إرسال رسالة للجميع</Text>
+                <TouchableOpacity onPress={handleClose} disabled={sending} hitSlop={12}>
+                  <Ionicons name="close" size={24} color={colors.muted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.recipientHint}>
+                سيتم الإرسال إلى {formatMemberCount(count)}
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                value={text}
+                onChangeText={setText}
+                placeholder="اكتب رسالة..."
+                placeholderTextColor={colors.placeholder}
+                textAlign={textAlignStart}
+                multiline
+                editable={!sending}
+              />
+
+              <TouchableOpacity
+                style={[styles.sendBtn, sending && styles.sendBtnDisabled]}
+                onPress={handleSendPress}
+                disabled={sending}
+                activeOpacity={0.85}
+              >
+                {sending ? (
+                  <ActivityIndicator color="white" size="small" />
+                ) : (
+                  <>
+                    <Text style={styles.sendBtnText}>إرسال</Text>
+                    <Ionicons name="send" size={18} color="white" style={styles.sendIcon} />
+                  </>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+        />
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  modalRoot: { flex: 1 },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",

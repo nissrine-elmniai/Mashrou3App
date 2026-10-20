@@ -19,10 +19,14 @@ import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
   computeProgressMetrics,
   computeProgressPace,
-  getMemberProgressEntries,
 } from "../../lib/progressApi";
-import { resolveMemberSeasonAlertCutoff } from "../../lib/alertsApi";
-import { getMemberObjectif } from "../../lib/objectifsApi";
+import {
+  cachedMemberCutoff,
+  cachedMemberObjectif,
+  cachedMemberRecentHistory,
+} from "../../lib/supervisorOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import {
   formatSignedTumunAmount,
   formatMemberPosition,
@@ -113,6 +117,7 @@ export default function SupervisorProgressScreen({
   activeGroup = null,
   progressLoading = false,
   avgProgress = null,
+  unknownMessage = null,
 }) {
   const { seasons } = useApp();
   const [selectedMemberId, setSelectedMemberId] = useState(null);
@@ -122,8 +127,15 @@ export default function SupervisorProgressScreen({
     memberId: null,
     entries: [],
     loading: false,
+    // Saisies inconnues (échec sans cache) : pas de « لا يوجد سجل بعد ».
+    error: null,
   });
   const [objectif, setObjectif] = useState(null);
+  // Retour du réseau : historique et objectif rechargés. Ils ne dépendent pas
+  // du focus : rechargés aussi au prochain focus si l'écran était en arrière-plan.
+  const [reloadKey, setReloadKey] = useState(0);
+  const bumpReload = () => setReloadKey((n) => n + 1);
+  const markOffline = useOfflineReload(bumpReload, bumpReload);
 
   useEffect(() => {
     if (members.length === 0) {
@@ -137,7 +149,7 @@ export default function SupervisorProgressScreen({
 
   useEffect(() => {
     if (!selectedMemberId) {
-      setHistory({ memberId: null, entries: [], loading: false });
+      setHistory({ memberId: null, entries: [], loading: false, error: null });
       return;
     }
 
@@ -146,14 +158,16 @@ export default function SupervisorProgressScreen({
       memberId: selectedMemberId,
       entries: prev.memberId === selectedMemberId ? prev.entries : [],
       loading: true,
+      error: null,
     }));
 
     (async () => {
       const seasonId =
         activeGroup?.seasonId || getActiveRegularSeason(seasons)?.id || null;
       const cutoff = seasonId
-        ? await resolveMemberSeasonAlertCutoff(selectedMemberId, seasonId)
+        ? await cachedMemberCutoff(selectedMemberId, seasonId)
         : { sinceIso: null };
+      markOffline(cutoff);
       const windowSince = historySinceIso();
       const joinSince = cutoff.sinceIso || null;
       const since =
@@ -161,21 +175,30 @@ export default function SupervisorProgressScreen({
           ? joinSince
           : windowSince;
 
-      const res = await getMemberProgressEntries(selectedMemberId, {
+      const res = await cachedMemberRecentHistory(
+        selectedMemberId,
         since,
-        limit: HISTORY_FETCH_LIMIT,
-      });
+        HISTORY_FETCH_LIMIT,
+        seasonId
+      );
       if (cancelled) return;
+      markOffline(res);
       if (!res.ok) {
         console.warn(
           "SupervisorProgressScreen: échec lecture historique —",
           res.error
         );
-        setHistory({
-          memberId: selectedMemberId,
-          entries: [],
-          loading: false,
-        });
+        // Saisies déjà affichées pour ce membre : conservées ; sinon « inconnu ».
+        setHistory((prev) =>
+          prev.memberId === selectedMemberId && prev.entries.length > 0
+            ? { ...prev, loading: false }
+            : {
+                memberId: selectedMemberId,
+                entries: [],
+                loading: false,
+                error: unknownDataMessage(res),
+              }
+        );
         return;
       }
       const entries = (res.entries || []).filter((e) => {
@@ -187,13 +210,14 @@ export default function SupervisorProgressScreen({
         memberId: selectedMemberId,
         entries,
         loading: false,
+        error: null,
       });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedMemberId, activeGroup?.seasonId, seasons]);
+  }, [selectedMemberId, activeGroup?.seasonId, seasons, reloadKey, markOffline]);
 
   const selectedMember = members.find((m) => m.user.id === selectedMemberId);
   const confirmedName = selectedMember
@@ -221,14 +245,16 @@ export default function SupervisorProgressScreen({
     }
     let cancelled = false;
     (async () => {
-      const res = await getMemberObjectif(selectedMemberId, saisonId);
+      const res = await cachedMemberObjectif(selectedMemberId, saisonId);
       if (cancelled) return;
-      setObjectif(res.ok && res.objectif ? res.objectif : null);
+      markOffline(res);
+      // Objectif inconnu : on garde la valeur connue (la ligne est masquée si null).
+      if (res.ok) setObjectif(res.objectif || null);
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectedMemberId, saisonId]);
+  }, [selectedMemberId, saisonId, reloadKey, markOffline]);
   const historyReady =
     history.memberId === selectedMemberId && !history.loading;
   const pace = useMemo(() => {
@@ -279,7 +305,8 @@ export default function SupervisorProgressScreen({
 
   const picker =
     members.length === 0 ? (
-      <EmptyState text="لا يوجد أعضاء لعرض تقدمهم" />
+      // Membres inconnus (échec sans cache) : pas de « لا يوجد أعضاء ».
+      <EmptyState text={unknownMessage || "لا يوجد أعضاء لعرض تقدمهم"} />
     ) : (
       <View style={[styles.dropdownWrap, pickerOpen && styles.dropdownWrapOpen]}>
         <View style={[styles.comboBox, pickerOpen && styles.comboBoxOpen]}>
@@ -405,7 +432,9 @@ export default function SupervisorProgressScreen({
                 </View>
               </>
             ) : history.loading ? null : (
-              <Text style={styles.historyEmpty}>لا يوجد نشاط في هذه الفترة</Text>
+              <Text style={styles.historyEmpty}>
+                {history.error || "لا يوجد نشاط في هذه الفترة"}
+              </Text>
             )}
           </View>
 
@@ -417,7 +446,9 @@ export default function SupervisorProgressScreen({
               ) : null}
             </View>
             {!history.loading && visibleEntries.length === 0 ? (
-              <Text style={styles.historyEmpty}>لا يوجد سجل بعد</Text>
+              <Text style={styles.historyEmpty}>
+                {history.error || "لا يوجد سجل بعد"}
+              </Text>
             ) : (
               visibleEntries.map((entry, idx) => (
                 <HistoryEntryRow

@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase, mapSupabaseAuthError, isSupabaseConfigured } from "./supabase";
+import { authSessionStorageKey } from "./currentAuth";
 import {
   hasEmailMarker,
   hasTechnicalMarker,
@@ -90,7 +91,8 @@ export async function fetchProfile(userId) {
     return { ok: false, error: mapSupabaseAuthError(error) };
   }
   if (!data) {
-    return { ok: false, error: "لم يُعثر على ملف المستخدم" };
+    // notFound : réponse serveur sans ligne (pas une erreur réseau).
+    return { ok: false, notFound: true, error: "لم يُعثر على ملف المستخدم" };
   }
   return { ok: true, profile: data };
 }
@@ -533,6 +535,23 @@ export async function signOutAuth() {
 }
 
 /**
+ * Repli de déconnexion quand signOut échoue (hors ligne avec jeton expiré :
+ * supabase-js renvoie l'erreur sans effacer la session). Supprime les mêmes
+ * clés que GoTrueClient._removeSession. N'émet pas SIGNED_OUT.
+ * @returns {Promise<boolean>} true si la suppression a réussi
+ */
+export async function clearLocalAuthSession() {
+  try {
+    const key = authSessionStorageKey();
+    await AsyncStorage.multiRemove([key, `${key}-code-verifier`, `${key}-user`]);
+    return true;
+  } catch (e) {
+    console.warn("[auth] clearLocalAuthSession:", e?.message || e);
+    return false;
+  }
+}
+
+/**
  * Session créée par verifyOtp (recovery) : tant qu'elle est ouverte,
  * l'app ne doit pas basculer sur l'utilisateur connecté.
  * La clé AsyncStorage survit à une fermeture forcée.
@@ -579,8 +598,10 @@ async function signOutAndMaybeClearRecoveryMarker() {
  * Démarrage : une récupération interrompue ne doit pas restaurer l'utilisateur.
  * signOut, puis effacement de la clé seulement si la session locale est vide.
  * true = rester sur le login (la clé peut rester pour le prochain démarrage).
+ * offline : pas de signOut (il attendrait l'initialisation d'auth-js, ~30 s
+ * hors ligne avec un jeton expiré) ; la clé reste pour le démarrage suivant.
  */
-export async function discardPersistedPasswordRecovery() {
+export async function discardPersistedPasswordRecovery({ offline = false } = {}) {
   let marked = false;
   try {
     marked = (await AsyncStorage.getItem(PASSWORD_RECOVERY_STORAGE_KEY)) != null;
@@ -588,7 +609,7 @@ export async function discardPersistedPasswordRecovery() {
     return false;
   }
   if (!marked) return false;
-  if (isSupabaseConfigured()) {
+  if (isSupabaseConfigured() && !offline) {
     await signOutAndMaybeClearRecoveryMarker();
   }
   setPasswordRecoveryActive(false);

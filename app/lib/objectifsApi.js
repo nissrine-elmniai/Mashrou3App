@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured, mapSupabaseAuthError } from "./supabase";
+import { getCurrentAuthId } from "./currentAuth";
 import { TOTAL_HIZB } from "./tumun";
 
 const SUPABASE_TIMEOUT_MS = 15000;
@@ -67,8 +68,8 @@ function mentionsMissingColumn(error, columnName) {
 }
 
 async function currentAuthId() {
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.id || null;
+  // Id local (AppContext ou session stockée) : pas d'appel réseau. Droits vérifiés par RLS.
+  return getCurrentAuthId();
 }
 
 function isNonEmptySaisonId(saisonId) {

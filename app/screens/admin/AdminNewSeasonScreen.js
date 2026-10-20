@@ -20,6 +20,8 @@ import { SEASON_TYPES, SEASON_TYPE_LABELS } from "../../constants/roles";
 import { colors } from "../../constants/theme";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
+import AppToast from "../../components/AppToast";
+import { requireOnline } from "../../lib/toast";
 import { parseSeasonStartDate } from "../../lib/saisonsApi";
 
 const palette = {
@@ -65,6 +67,8 @@ export default function AdminNewSeasonScreen({ navigation }) {
 
   const openConfirm = () => {
     if (saving) return;
+    // Nouvelle saison : hors ligne, toast sans ouvrir la confirmation.
+    if (!requireOnline()) return;
     const versionNum = Number.parseInt(String(version || "").trim(), 10);
     const start = parseSeasonStartDate(startDate);
     if (!seasonName || !Number.isFinite(versionNum) || versionNum < 1) {
@@ -83,6 +87,8 @@ export default function AdminNewSeasonScreen({ navigation }) {
 
   const handleVerifyAndStart = async () => {
     if (saving) return;
+    // Avant toute vérification : un échec réseau ne compte pas comme mot de passe faux.
+    if (!requireOnline()) return;
     const typed = password;
     setPassword("");
     if (!typed) {
@@ -322,7 +328,10 @@ export default function AdminNewSeasonScreen({ navigation }) {
             ) : (
               <TouchableOpacity
                 style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
-                onPress={() => setPasswordStep(true)}
+                onPress={() => {
+                  if (!requireOnline()) return;
+                  setPasswordStep(true);
+                }}
                 disabled={saving}
                 activeOpacity={0.85}
               >
@@ -338,6 +347,8 @@ export default function AdminNewSeasonScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast replayPending={false} avoidKeyboard />
       </Modal>
       {messagesFab}
       {sidebar}
