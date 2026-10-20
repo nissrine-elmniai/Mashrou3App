@@ -46,11 +46,25 @@ import {
   loadCurrentMemberSeance,
   removeMemberFromSeance,
   updateMemberSeance,
-  findAdminSeanceAssignmentSeason,
   formatGenderLabel,
-  getProfileRoles,
 } from "../../lib/membersApi";
 import { deleteMemberAccount } from "../../lib/supervisorInvitationsApi";
+import {
+  cachedMemberFields,
+  cachedMemberObjectif,
+  cachedMemberPaceHistory,
+  cachedMemberPosition,
+  cachedMemberPresence,
+  cachedMemberSeance,
+} from "../../lib/supervisorOfflineReads";
+import {
+  cachedAdminMemberAssignmentSeason,
+  cachedAdminMemberRoles,
+} from "../../lib/adminOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
+import AppToast from "../../components/AppToast";
 import { displayProfileEmail } from "../../lib/authEmail";
 import PersonalInfoSection from "../../components/PersonalInfoSection";
 import {
@@ -223,6 +237,26 @@ export default function MemberProfileScreen({ navigation, route }) {
   const isAdminViewer = viewerRole === "admin";
   const canRemoveFromSeance = viewerRole === "admin" || viewerRole === "supervisor";
 
+  // Cache hors ligne de la fiche : sup.member.<id>.* (vue superviseur) ou
+  // adm.member.<id>.* (vue admin). Autre vue : lectures directes.
+  let memberCachePrefix = null;
+  if (viewerRole === "supervisor") memberCachePrefix = "sup";
+  else if (viewerRole === "admin") memberCachePrefix = "adm";
+  const readSeance = (id) =>
+    memberCachePrefix
+      ? cachedMemberSeance(id, memberCachePrefix)
+      : loadCurrentMemberSeance(id);
+  const readFields = (id) =>
+    memberCachePrefix
+      ? cachedMemberFields(id, memberCachePrefix)
+      : getMemberProfileFields(id);
+  // Retour du réseau : lectures relancées (hors focus, donc aussi au prochain focus).
+  const [reloadKey, setReloadKey] = useState(0);
+  const bumpReload = () => setReloadKey((n) => n + 1);
+  const markOffline = useOfflineReload(bumpReload, bumpReload);
+  /** Séance du membre inconnue (échec sans cache) : présence inconnue aussi. */
+  const [seanceUnknownMessage, setSeanceUnknownMessage] = useState(null);
+
   const fullName = `${firstName || ""} ${lastName || ""}`.trim() || "عضو";
 
   const [inscriptionId, setInscriptionId] = useState(null);
@@ -327,6 +361,8 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   const openSeancePicker = async () => {
     if (!isAdminViewer || savingSeance) return;
+    // Changer de séance : hors ligne, toast dès l'ouverture du sélecteur.
+    if (!requireOnline()) return;
     if (!pickerSaisonId) {
       Alert.alert("تنبيه", assignmentHint || "لا يوجد موسم نشط");
       return;
@@ -354,6 +390,7 @@ export default function MemberProfileScreen({ navigation, route }) {
       setSeanceModalVisible(false);
       return;
     }
+    if (!requireOnline()) return;
 
     setSavingSeance(true);
     const res = await updateMemberSeance({
@@ -371,7 +408,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     }
 
     setSeanceModalVisible(false);
-    const loaded = await loadCurrentMemberSeance(memberId);
+    const loaded = await readSeance(memberId);
     if (loaded.ok) {
       applyLoadedSeance(loaded.season, loaded.inscription);
     } else if (res.inscription?.id) {
@@ -391,6 +428,8 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   const confirmRemoveFromSeance = () => {
     if (!canRemoveFromSeance || !memberId || removingFromSeance || !inscriptionId) return;
+    // Retirer de la séance : hors ligne, toast sans confirmation.
+    if (!requireOnline()) return;
     Alert.alert(
       "إزالة من الحصة",
       `هل تريد إزالة ${fullName} من حصة «${groupName || "—"}»؟\n\nسيتم حذف تسجيل العضو في هذه الحصة فقط. يمكنه التسجيل في حصة أخرى لاحقاً.`,
@@ -403,6 +442,7 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   const handleRemoveFromSeance = async () => {
     if (!memberId || !inscriptionId || removingFromSeance) return;
+    if (!requireOnline()) return;
     setRemovingFromSeance(true);
     const res = await removeMemberFromSeance(inscriptionId);
     setRemovingFromSeance(false);
@@ -410,10 +450,10 @@ export default function MemberProfileScreen({ navigation, route }) {
       Alert.alert("تنبيه", res.error || "تعذّر إزالة العضو من الحصة");
       return;
     }
-    const loaded = await loadCurrentMemberSeance(memberId);
+    const loaded = await readSeance(memberId);
     if (loaded.ok) applyLoadedSeance(loaded.season, loaded.inscription);
     if (isAdminViewer) {
-      const target = await findAdminSeanceAssignmentSeason(memberId);
+      const target = await cachedAdminMemberAssignmentSeason(memberId);
       if (target.ok) {
         setAssignmentSeasonId(target.seasonId || null);
         setAssignmentHint(
@@ -428,27 +468,41 @@ export default function MemberProfileScreen({ navigation, route }) {
     if (!memberId) return undefined;
     let cancelled = false;
     (async () => {
-      const res = await loadCurrentMemberSeance(memberId);
-      if (cancelled || !res.ok) return;
+      const res = await readSeance(memberId);
+      if (cancelled) return;
+      markOffline(res);
+      if (!res.ok) {
+        // Séance inconnue (échec sans cache) ≠ « non affecté ».
+        setSeanceUnknownMessage(unknownDataMessage(res));
+        return;
+      }
+      setSeanceUnknownMessage(null);
       applyLoadedSeance(res.season, res.inscription);
       if (!isAdminViewer) return;
-      const target = await findAdminSeanceAssignmentSeason(memberId);
-      if (cancelled || !target.ok) return;
+      const target = await cachedAdminMemberAssignmentSeason(memberId);
+      if (cancelled) return;
+      markOffline(target);
+      if (!target.ok) return;
       setAssignmentSeasonId(target.seasonId || null);
       setAssignmentHint(target.seasonId ? null : target.message || "لا يوجد طلب تسجيل مقبول");
     })();
     return () => {
       cancelled = true;
     };
-  }, [memberId, applyLoadedSeance, isAdminViewer]);
+    // readSeance suit viewerRole (stable pour l'écran) : pas en dépendance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberId, applyLoadedSeance, isAdminViewer, reloadKey, markOffline]);
 
   useEffect(() => {
     if (!memberId) return;
     let cancelled = false;
     if (isAdminViewer) setMemberDeleteEmail(null);
     void (async () => {
-      const res = await getMemberProfileFields(memberId);
-      if (cancelled || !res.ok) return;
+      const res = await readFields(memberId);
+      if (cancelled) return;
+      markOffline(res);
+      // Échec : champs de la liste (paramètres de navigation) conservés.
+      if (!res.ok) return;
       if (res.profileMissing && isAdminViewer) {
         navigation.replace("AdminRegistrations");
         return;
@@ -484,6 +538,8 @@ export default function MemberProfileScreen({ navigation, route }) {
     gender,
     isAdminViewer,
     navigation,
+    reloadKey,
+    markOffline,
   ]);
 
   useEffect(() => {
@@ -491,8 +547,10 @@ export default function MemberProfileScreen({ navigation, route }) {
     let cancelled = false;
     setCanDeleteMember(false);
     void (async () => {
-      const res = await getProfileRoles(memberId);
-      if (cancelled || !res.ok) return;
+      const res = await cachedAdminMemberRoles(memberId);
+      if (cancelled) return;
+      markOffline(res);
+      if (!res.ok) return;
       const account = { role: res.role, roles: res.roles };
       const blocked =
         userHasRole(account, ROLES.ADMIN) || userHasRole(account, ROLES.SUPERVISOR);
@@ -501,7 +559,7 @@ export default function MemberProfileScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [isAdminViewer, memberId]);
+  }, [isAdminViewer, memberId, reloadKey, markOffline]);
 
   useEffect(() => {
     if (!memberId) {
@@ -531,25 +589,42 @@ export default function MemberProfileScreen({ navigation, route }) {
 
     (async () => {
       const objectifSaisonId = activeSeasonId || saisonId || null;
-      const presPromise = seanceId
-        ? getMemberPresenceSummary(memberId, seanceId)
-        : Promise.resolve({
-            ok: true,
-            hasData: false,
-            rate: null,
-            presentCount: 0,
-            absentCount: 0,
-            records: [],
-          });
+      let presPromise;
+      if (seanceId) {
+        presPromise = memberCachePrefix
+          ? cachedMemberPresence(memberId, seanceId, memberCachePrefix)
+          : getMemberPresenceSummary(memberId, seanceId);
+      } else if (seanceUnknownMessage) {
+        // Séance inconnue : présence inconnue (pas de « لا يوجد سجل حضور »).
+        presPromise = Promise.resolve({ ok: false, error: seanceUnknownMessage });
+      } else {
+        presPromise = Promise.resolve({
+          ok: true,
+          hasData: false,
+          rate: null,
+          presentCount: 0,
+          absentCount: 0,
+          records: [],
+        });
+      }
+      let objPromise = Promise.resolve({ ok: true, objectif: null });
+      if (objectifSaisonId) {
+        objPromise = memberCachePrefix
+          ? cachedMemberObjectif(memberId, objectifSaisonId, memberCachePrefix)
+          : getMemberObjectif(memberId, objectifSaisonId);
+      }
       const [posRes, objRes, presRes, paceRes] = await Promise.all([
-        getCurrentProgressPosition(memberId),
-        objectifSaisonId
-          ? getMemberObjectif(memberId, objectifSaisonId)
-          : Promise.resolve({ ok: true, objectif: null }),
+        memberCachePrefix
+          ? cachedMemberPosition(memberId, memberCachePrefix)
+          : getCurrentProgressPosition(memberId),
+        objPromise,
         presPromise,
-        getMemberProgressEntries(memberId),
+        memberCachePrefix
+          ? cachedMemberPaceHistory(memberId, activeSeasonId, memberCachePrefix)
+          : getMemberProgressEntries(memberId),
       ]);
       if (cancelled) return;
+      markOffline(posRes, objRes, presRes, paceRes);
 
       const objectif =
         objRes.ok && objRes.objectif ? objRes.objectif : null;
@@ -557,7 +632,8 @@ export default function MemberProfileScreen({ navigation, route }) {
       if (!posRes.ok) {
         setProgressState({
           loading: false,
-          error: posRes.error,
+          // Position inconnue : message, pas « لم يتم تسجيل أي تقدم بعد ».
+          error: unknownDataMessage(posRes),
           hasData: false,
           metrics: null,
           note: null,
@@ -585,7 +661,7 @@ export default function MemberProfileScreen({ navigation, route }) {
       if (!presRes.ok) {
         setPresenceState({
           loading: false,
-          error: presRes.error,
+          error: unknownDataMessage(presRes),
           hasData: false,
           rate: null,
           presentCount: 0,
@@ -608,7 +684,17 @@ export default function MemberProfileScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [memberId, seanceId, saisonId, activeSeasonId]);
+    // memberCachePrefix suit viewerRole (stable pour l'écran) : pas en dépendance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    memberId,
+    seanceId,
+    saisonId,
+    activeSeasonId,
+    seanceUnknownMessage,
+    reloadKey,
+    markOffline,
+  ]);
 
   const showDeleteMember =
     isAdminViewer && canDeleteMember && !!memberDeleteEmail;
@@ -641,6 +727,8 @@ export default function MemberProfileScreen({ navigation, route }) {
   };
 
   const confirmDeleteMember = () => {
+    // Supprimer le compte : hors ligne, toast sans confirmation ni formulaire.
+    if (!requireOnline()) return;
     Alert.alert(
       "حذف الحساب",
       `سيتم حذف حساب ${fullName} (${memberDeleteEmail}) وجميع بياناته نهائيًا: الملف الشخصي، التقدم، الحضور، الرسائل، الصورة. لا يمكن التراجع عن هذا الإجراء.`,
@@ -660,6 +748,7 @@ export default function MemberProfileScreen({ navigation, route }) {
 
   const submitDeleteMember = async () => {
     if (deletingMemberRef.current || !emailMatches || !memberId) return;
+    if (!requireOnline()) return;
     deletingMemberRef.current = true;
     setDeletingMember(true);
     const res = await deleteMemberAccount({ userId: memberId });
@@ -903,6 +992,8 @@ export default function MemberProfileScreen({ navigation, route }) {
             )}
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast replayPending={false} />
       </Modal>
 
       <Modal
@@ -973,6 +1064,11 @@ export default function MemberProfileScreen({ navigation, route }) {
             </ScrollView>
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={deleteKeyboardHeight > 0 ? deleteKeyboardHeight + 16 : null}
+        />
       </Modal>
     </SafeAreaView>
   );

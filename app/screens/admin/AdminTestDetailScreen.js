@@ -24,11 +24,9 @@ import { rtlText, row, arrowBack, fonts } from "../../constants/rtl";
 import { colors, radii, shadows } from "../../constants/theme";
 import { SectionCard } from "../../components/ui";
 import {
-  getAllTestsAdmin,
   getTestInvitationsWithMembers,
   getMissingInviteesCount,
   inviteMissingMembers,
-  getTestDates,
   addTestDate,
   updateTestDateHeure,
   removeTestDate,
@@ -50,6 +48,15 @@ import {
   isoToLocalDate,
 } from "../../constants/tests";
 import StatusBadge, { colorWithAlpha } from "../../components/tests/StatusBadge";
+import AppToast from "../../components/AppToast";
+import { cachedAllTests, cachedTestDates } from "../../lib/adminOfflineReads";
+import {
+  OFFLINE_UNAVAILABLE_MESSAGE,
+  fetchOnlineOnly,
+  unknownDataMessage,
+} from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 
 const NOTE_ERROR = "النقطة يجب أن تكون بين 0 و 20";
 const STATUS_KEYS = ["invite", "confirme", "refuse", "note"];
@@ -153,6 +160,14 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   const [missingCount, setMissingCount] = useState(0);
   const [inviting, setInviting] = useState(false);
   const closedByUser = useRef(false);
+  /**
+   * Invitations nominatives (notes comprises) : jamais en cache. Hors ligne :
+   * message à la place des listes ; compteurs tirés des statuts du test en cache.
+   */
+  const [invitationsUnknown, setInvitationsUnknown] = useState(null);
+  // Retour du réseau : relecture discrète si l'écran est affiché (sinon au focus).
+  const loadRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadRef.current?.("refresh"));
 
   const load = useCallback(
     async (mode = "load") => {
@@ -166,12 +181,13 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       if (mode === "refresh") setRefreshing(true);
       else setLoading(true);
       const [testsRes, invitesRes, datesRes] = await Promise.all([
-        getAllTestsAdmin(),
-        getTestInvitationsWithMembers(testId),
-        getTestDates(testId),
+        cachedAllTests(),
+        fetchOnlineOnly(() => getTestInvitationsWithMembers(testId)),
+        cachedTestDates(testId),
       ]);
+      markOffline(testsRes, invitesRes, datesRes);
       if (!testsRes.ok) {
-        setError(testsRes.error || "تعذر تحميل الاختبار");
+        setError(unknownDataMessage(testsRes, "تعذر تحميل الاختبار"));
         if (mode !== "refresh") {
           setTest(null);
           setMissingCount(0);
@@ -189,6 +205,19 @@ export default function AdminTestDetailScreen({ navigation, route }) {
         setRefreshing(false);
         return;
       }
+      if (!invitesRes.ok && invitesRes.offline) {
+        // Hors ligne : en-tête et dates du cache, invitations inconnues, sans Alert.
+        setTest(found);
+        setInvitations([]);
+        setInvitationsUnknown(OFFLINE_UNAVAILABLE_MESSAGE);
+        setProposedDates(datesRes.ok ? datesRes.dates || [] : []);
+        setDateError(datesRes.ok ? "" : unknownDataMessage(datesRes, "تعذر تحميل التواريخ"));
+        setMissingCount(0);
+        setError("");
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
       if (!invitesRes.ok) {
         setError(invitesRes.error || "تعذر تحميل الدعوات");
         setTest(found);
@@ -198,20 +227,22 @@ export default function AdminTestDetailScreen({ navigation, route }) {
         return;
       }
       const missingRes = found.saison_id
-        ? await getMissingInviteesCount(testId, found.saison_id)
+        ? await fetchOnlineOnly(() => getMissingInviteesCount(testId, found.saison_id))
         : { ok: true, count: 0 };
       setTest(found);
       setInvitations(invitesRes.invitations || []);
+      setInvitationsUnknown(null);
       setProposedDates(datesRes.ok ? datesRes.dates || [] : []);
-      setDateError(datesRes.ok ? "" : datesRes.error || "تعذر تحميل التواريخ");
+      setDateError(datesRes.ok ? "" : unknownDataMessage(datesRes, "تعذر تحميل التواريخ"));
       if (missingRes.ok) setMissingCount(missingRes.count || 0);
       else if (mode !== "refresh") setMissingCount(0);
       setError("");
       setLoading(false);
       setRefreshing(false);
     },
-    [testId]
+    [testId, markOffline]
   );
+  loadRef.current = load;
 
   useFocusEffect(
     useCallback(() => {
@@ -238,7 +269,12 @@ export default function AdminTestDetailScreen({ navigation, route }) {
     });
   }, [proposedDates]);
 
-  const counts = useMemo(() => tallyOf(invitations), [invitations]);
+  // Invitations inconnues : statuts et dates choisies du test en cache (sans nom ni note).
+  const statusRows = useMemo(
+    () => (invitationsUnknown ? test?.invitations || [] : invitations),
+    [invitationsUnknown, test, invitations]
+  );
+  const counts = useMemo(() => tallyOf(statusRows), [statusRows]);
 
   // La date sélectionnée n'alimente que le bloc sous les chips, pas la liste.
   const dateMembers = useMemo(() => {
@@ -261,7 +297,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   );
 
   const notedCount = counts.note;
-  const totalCount = invitations.length;
+  const totalCount = statusRows.length;
   const notedRatio = totalCount === 0 ? 0 : Math.round((notedCount / totalCount) * 100);
 
   const sortedDates = useMemo(
@@ -282,6 +318,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   }, [test, missingCount, proposedDates]);
 
   const applyMemberUpdate = async (invitation, payload) => {
+    if (!requireOnline()) return false;
     const result = await adminUpdateInvitation(invitation.id, payload);
     if (!result.ok) {
       Alert.alert("تنبيه", result.error || "تعذر تحديث الدعوة");
@@ -298,6 +335,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const openMoveSheet = (invitation, others) => {
+    if (!requireOnline()) return;
     if (others.length === 0) {
       Alert.alert("تغيير الموعد", "لا توجد تواريخ أخرى");
       return;
@@ -307,6 +345,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const confirmMove = async () => {
+    if (!requireOnline()) return;
     if (!moveSheet?.invitation || !moveDate || moveSaving) return;
     setMoveSaving(true);
     const ok = await applyMemberUpdate(moveSheet.invitation, {
@@ -321,6 +360,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
 
   const onMemberLongPress = (invitation) => {
     if (!isPlanned(test)) return;
+    if (!requireOnline()) return;
     if (invitation.statut === "note") {
       Alert.alert("تنبيه", "لا يمكن تعديل عضو تم تنقيطه");
       return;
@@ -337,6 +377,8 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const saveNote = async (invitation) => {
+    // Note : hors ligne, toast, brouillon conservé.
+    if (!requireOnline()) return;
     if (savingId) return;
     const raw = drafts[invitation.id] ?? formatNote(invitation.note);
     const { parsed, same } = noteDraftState(raw, invitation.note);
@@ -374,6 +416,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const confirmInviteMissing = () => {
+    if (!requireOnline()) return;
     if (inviting || missingCount <= 0) return;
     const count = missingCount;
     const saisonId = test?.saison_id;
@@ -382,6 +425,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
       {
         text: "تأكيد",
         onPress: async () => {
+          if (!requireOnline()) return;
           setInviting(true);
           const result = await inviteMissingMembers(testId, saisonId);
           if (!result.ok) {
@@ -398,6 +442,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const confirmSend = () => {
+    if (!requireOnline()) return;
     if (pendingSend.length === 0 || sending) return;
     Alert.alert(
       "إرسال النتائج",
@@ -407,6 +452,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
         {
           text: "إرسال",
           onPress: async () => {
+            if (!requireOnline()) return;
             setSending(true);
             const result = await markResultsNotified(testId);
             setSending(false);
@@ -425,6 +471,8 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   const tomorrowIso = addCalendarDays(casablancaTodayIso(), 1);
 
   const applyNewSlot = async () => {
+    // Ajouter une date : hors ligne, toast sans ouvrir le sélecteur.
+    if (!requireOnline()) return;
     setDateError("");
     const slot = await pickDateTime({
       minimumDate: isoToLocalDate(tomorrowIso),
@@ -441,6 +489,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const applyEditedTime = async (row) => {
+    if (!requireOnline()) return;
     const hm = formatTestTime(row.heure_proposee);
     const base = new Date();
     if (hm) {
@@ -460,6 +509,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const deleteDate = async (row) => {
+    if (!requireOnline()) return;
     const result = await removeTestDate(row.id);
     if (!result.ok) {
       setDateError(result.error);
@@ -470,6 +520,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const onDateLongPress = (row) => {
+    if (!requireOnline()) return;
     const label = formatShortTestDate(row.date_proposee) || row.date_proposee;
     Alert.alert(label, undefined, [
       { text: "تعديل الوقت", onPress: () => applyEditedTime(row) },
@@ -495,6 +546,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const runStatusChange = async (statut) => {
+    if (!requireOnline()) return;
     if (statusBusy) return;
     setStatusBusy(statut);
     const result = await updateTestStatus({ testId, statut });
@@ -504,6 +556,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const confirmCancel = () => {
+    if (!requireOnline()) return;
     if (statusBusy) return;
     Alert.alert("إلغاء الاختبار", `هل تريد إلغاء «${test?.titre || "اختبار"}»؟`, [
       { text: "تراجع", style: "cancel" },
@@ -516,6 +569,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
   };
 
   const confirmComplete = () => {
+    if (!requireOnline()) return;
     if (statusBusy) return;
     Alert.alert("تعليم كمنجز", `هل تم إنجاز «${test?.titre || "اختبار"}»؟`, [
       { text: "تراجع", style: "cancel" },
@@ -528,7 +582,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
 
   const displayStatus = getTestDisplayStatus(test, {
     dates: proposedDates,
-    invitations,
+    invitations: statusRows,
   });
   const announced = formatTestDate(test?.created_at);
   const summaryLine = [
@@ -715,7 +769,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
                 contentContainerStyle={styles.dateStrip}
               >
                 {sortedDates.map((row) => {
-                  const chosenCount = invitations.filter(
+                  const chosenCount = statusRows.filter(
                     (invitation) => invitation.date_choisie === row.date_proposee
                   ).length;
                   const active = selectedDate === row.date_proposee;
@@ -770,7 +824,9 @@ export default function AdminTestDetailScreen({ navigation, route }) {
                     اضغط مطولاً على اسم العضو إذا أردت تغيير موعد اختباره
                   </Text>
                 ) : null}
-                {dateMembers.length === 0 ? (
+                {invitationsUnknown ? (
+                  <Text style={styles.emptyText}>{invitationsUnknown}</Text>
+                ) : dateMembers.length === 0 ? (
                   <Text style={styles.emptyText}>لم يختر أي عضو هذا التاريخ بعد</Text>
                 ) : (
                   dateMembers.map((invitation, index) => {
@@ -911,7 +967,7 @@ export default function AdminTestDetailScreen({ navigation, route }) {
                 <Text
                   style={[styles.filterChipText, statusFilter === "all" && styles.chipTextActive]}
                 >
-                  الكل {invitations.length}
+                  الكل {statusRows.length}
                 </Text>
               </TouchableOpacity>
               {STATUS_KEYS.map((key) => {
@@ -932,7 +988,9 @@ export default function AdminTestDetailScreen({ navigation, route }) {
             </ScrollView>
 
             <View style={styles.membersList}>
-              {visibleInvitations.length === 0 ? (
+              {invitationsUnknown ? (
+                <Text style={styles.emptyText}>{invitationsUnknown}</Text>
+              ) : visibleInvitations.length === 0 ? (
                 <Text style={styles.emptyText}>لا توجد دعوات لهذا الاختبار</Text>
               ) : (
                 visibleInvitations.map((invitation, index) => {
@@ -992,13 +1050,18 @@ export default function AdminTestDetailScreen({ navigation, route }) {
                 styles.sendBtn,
                 (pendingSend.length === 0 || sending) && styles.submitBtnDisabled,
               ]}
-              onPress={pendingSend.length === 0 || sending ? undefined : confirmSend}
+              onPress={
+                invitationsUnknown || (pendingSend.length > 0 && !sending)
+                  ? confirmSend
+                  : undefined
+              }
             >
               {sending ? (
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.sendBtnText}>
-                  إرسال النتائج ({pendingSend.length})
+                  {/* Résultats à envoyer inconnus hors ligne : « — ». */}
+                  إرسال النتائج ({invitationsUnknown ? "—" : pendingSend.length})
                 </Text>
               )}
             </TouchableOpacity>
@@ -1050,6 +1113,8 @@ export default function AdminTestDetailScreen({ navigation, route }) {
               )}
             </TouchableOpacity>
           </MoveSheetBody>
+          {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+          <AppToast replayPending={false} />
         </SafeAreaProvider>
       </Modal>
     </SafeAreaView>

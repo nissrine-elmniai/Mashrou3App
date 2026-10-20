@@ -16,11 +16,10 @@ import { useApp } from "../../context/AppContext";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import { colors, radii } from "../../constants/theme";
 import { rtlText, rtlTextBold, row, fonts } from "../../constants/rtl";
-import {
-  useSupervisorMembers,
-  SUPERVISOR_FETCH_DEGRADED_MESSAGE,
-} from "./hooks/useSupervisorMembers";
-import { getUnacknowledgedAlerts, subscribeToNewAlerts } from "../../lib/alertsApi";
+import { useSupervisorMembers } from "./hooks/useSupervisorMembers";
+import { subscribeToNewAlerts } from "../../lib/alertsApi";
+import { cachedSupervisorPendingAlerts } from "../../lib/supervisorOfflineReads";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 
 import SupervisorHomeScreen from "./SupervisorHomeScreen";
@@ -70,6 +69,11 @@ export default function SupervisorDashboard({ navigation }) {
   const { count: unreadNotifCount } = useUnreadNotifications();
   const activeSeasonId = getActiveRegularSeason(seasons)?.id || null;
 
+  // Retour du réseau : rechargement si des données venaient du cache. Écran en
+  // arrière-plan : le focus recharge déjà tout (refetch + alertes), pas de différé.
+  const reconnectRef = useRef(null);
+  const markOffline = useOfflineReload(() => reconnectRef.current?.());
+
   const {
     myGroups,
     activeGroup,
@@ -91,10 +95,10 @@ export default function SupervisorDashboard({ navigation }) {
     refreshNewProgressCount,
     loading,
     progressLoading,
-    fetchError,
+    unknownMessage,
     dataSource,
     refetch,
-  } = useSupervisorMembers(selectedGroupId);
+  } = useSupervisorMembers(selectedGroupId, { onResult: markOffline });
 
   const { threads } = useInboxThreads();
   const { groups: chatGroups } = useChatGroups();
@@ -140,18 +144,17 @@ export default function SupervisorDashboard({ navigation }) {
     ]);
   };
 
-  const showDegradedBanner = !!fetchError;
-  const degradedMessage = SUPERVISOR_FETCH_DEGRADED_MESSAGE;
-
   // Compte non-acquitté centralisé (RG9) : absence de alert_acknowledgments.alert_id.
   const loadPendingAlertCount = useCallback(async () => {
-    const res = await getUnacknowledgedAlerts({
-      scopeToCurrentSeason: true,
-      saisonId: activeSeasonId,
-      role: "supervisor",
-    });
+    const res = await cachedSupervisorPendingAlerts(activeSeasonId);
+    markOffline(res);
     if (res.ok) setPendingAlertCount(res.alerts.length);
-  }, [activeSeasonId]);
+  }, [activeSeasonId, markOffline]);
+
+  reconnectRef.current = () => {
+    refetch();
+    loadPendingAlertCount();
+  };
 
   useEffect(() => {
     loadPendingAlertCount();
@@ -262,13 +265,7 @@ export default function SupervisorDashboard({ navigation }) {
         </View>
       )}
 
-      {showDegradedBanner ? (
-        <View style={styles.degradedBanner}>
-          <Ionicons name="cloud-offline-outline" size={18} color={colors.gold} />
-          <Text style={styles.degradedBannerText}>{degradedMessage}</Text>
-        </View>
-      ) : null}
-
+      {/* Hors ligne : pas de bannière, seuls les toasts du lot 1 informent. */}
       <View style={styles.body}>
         {loading && tab !== "messages" ? (
           <View style={styles.loadingWrap}>
@@ -288,12 +285,14 @@ export default function SupervisorDashboard({ navigation }) {
                 onOpenAlerts={openInbox}
                 threads={threads}
                 dataSource={dataSource}
+                unknownMessage={unknownMessage}
               />
             )}
             {tab === "members" && (
               <SupervisorMembersScreen
                 membersWithStatus={membersWithStatus}
                 activeGroup={activeGroup}
+                unknownMessage={unknownMessage}
               />
             )}
             {tab === "attendance" && (
@@ -304,6 +303,7 @@ export default function SupervisorDashboard({ navigation }) {
                 onSelectGroup={setSelectedGroupId}
                 members={dataSource === "supabase" ? members : []}
                 usingSupabase={dataSource === "supabase"}
+                unknownMessage={unknownMessage}
               />
             )}
             {tab === "progress" && (
@@ -312,6 +312,7 @@ export default function SupervisorDashboard({ navigation }) {
                 activeGroup={activeGroup}
                 progressLoading={progressLoading}
                 avgProgress={avgProgress}
+                unknownMessage={unknownMessage}
               />
             )}
             {tab === "messages" && (
@@ -405,27 +406,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  degradedBanner: {
-    flexDirection: row,
-    alignItems: "center",
-    gap: 8,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: colors.primarySoft,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.gold,
-  },
-  degradedBannerText: {
-    flex: 1,
-    fontSize: 13,
-    color: colors.text,
-    lineHeight: 20,
-    ...rtlText,
-  },
-
   headerWrap: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10 },
   headerCard: {
     backgroundColor: colors.primary,

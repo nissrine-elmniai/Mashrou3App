@@ -16,16 +16,21 @@ import { rtlText, row, textAlignStart, fonts } from "../../constants/rtl";
 import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { initials } from "./supervisorHelpers";
-import { mergeInboxRows, listAdminProfiles, countUnseenConversations } from "../../lib/messagesApi";
+import { mergeInboxRows, countUnseenConversations } from "../../lib/messagesApi";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { ensureSeanceChatGroup } from "../../lib/chatGroupsApi";
 import {
-  ensureSeanceChatGroup,
-  getMyChatGroups,
-} from "../../lib/chatGroupsApi";
+  cachedAdminProfiles,
+  cachedChatGroups,
+  cachedSupervisorActiveSeance,
+} from "../../lib/messagingOfflineReads";
+import { cachedSeanceMembers } from "../../lib/supervisorOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { isOffline } from "../../lib/networkState";
 import { useApp } from "../../context/AppContext";
-import { getSupervisorActiveSeance, getSeanceMembers } from "../../lib/membersApi";
 import { isSupabaseEntityId } from "./supervisorAttendanceHelpers";
 
 function adminDisplayName(admin) {
@@ -70,6 +75,13 @@ export default function SupervisorMessagesScreen({
   );
   const [seanceChatGroup, setSeanceChatGroup] = useState(null);
   const [loading, setLoading] = useState(!paramMembers);
+  /** Séance ou membres jamais lus (échec sans cache) : message au lieu de « aucun membre ». */
+  const [membersUnknownMessage, setMembersUnknownMessage] = useState(null);
+  // Retour du réseau : la séance, les membres et le groupe sont relus, et
+  // ensureSeanceChatGroup (ignoré hors ligne) est appelé si l'écran est affiché.
+  // En arrière-plan : le focus s'en charge (pas de différé).
+  const [reloadKey, setReloadKey] = useState(0);
+  const markOffline = useOfflineReload(() => setReloadKey((n) => n + 1));
 
   useEffect(() => {
     if (membersProp) setMembers(normalizeMemberList(membersProp));
@@ -86,14 +98,16 @@ export default function SupervisorMessagesScreen({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await listAdminProfiles();
-      if (cancelled || !res.ok) return;
+      const res = await cachedAdminProfiles();
+      if (cancelled) return;
+      markOffline(res);
+      if (!res.ok) return;
       setAdmins(res.admins || []);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey, markOffline]);
 
   useFocusEffect(
     useCallback(() => {
@@ -104,23 +118,33 @@ export default function SupervisorMessagesScreen({
       let cancelled = false;
       (async () => {
         if (!paramMembers) setLoading(true);
-        const seanceRes = await getSupervisorActiveSeance(
+        const seanceRes = await cachedSupervisorActiveSeance(
           authId,
           isSupabaseEntityId(seanceId) ? seanceId : null
         );
         if (cancelled) return;
+        markOffline(seanceRes);
+        if (!seanceRes.ok && seanceRes.offline) {
+          // Séance inconnue hors ligne : membres déjà affichés gardés, sinon message.
+          setMembersUnknownMessage(unknownDataMessage(seanceRes));
+          setLoading(false);
+          return;
+        }
         const seance = seanceRes.ok ? seanceRes.seance : null;
         if (!seance) {
           if (!paramMembers) {
             setActiveGroup(null);
             setMembers([]);
           }
+          setMembersUnknownMessage(null);
           setLoading(false);
           return;
         }
         setActiveGroup({ id: seance.id, name: seance.nom });
-        const membersRes = await getSeanceMembers(seance.id);
+        // Clé sup.seanceMembers.<seance> partagée avec les écrans du lot 3.
+        const membersRes = await cachedSeanceMembers(seance.id);
         if (cancelled) return;
+        markOffline(membersRes);
         if (membersRes.ok) {
           setMembers(
             (membersRes.members || []).map((m) => ({
@@ -132,11 +156,20 @@ export default function SupervisorMessagesScreen({
               },
             }))
           );
+          setMembersUnknownMessage(null);
+        } else if (membersRes.offline) {
+          setMembersUnknownMessage(unknownDataMessage(membersRes));
         }
-        // Groupe de discussion de la séance (création auto + sync membres)
-        await ensureSeanceChatGroup(seance.id);
-        if (cancelled) return;
-        const groupsRes = await getMyChatGroups();
+        // Groupe de discussion de la séance (création auto + sync membres).
+        // Écriture serveur : jamais hors ligne ; relancée au retour du réseau
+        // (reloadKey) si l'écran est affiché, sinon au prochain focus.
+        if (isOffline() || seanceRes.fromCache) {
+          markOffline({ offline: true });
+        } else {
+          await ensureSeanceChatGroup(seance.id);
+          if (cancelled) return;
+        }
+        const groupsRes = await cachedChatGroups();
         if (!cancelled && groupsRes.ok) {
           const match =
             (groupsRes.groups || []).find((g) => g.seanceId === seance.id) ||
@@ -149,7 +182,7 @@ export default function SupervisorMessagesScreen({
       return () => {
         cancelled = true;
       };
-    }, [authId, seanceId, paramMembers, reloadChatGroups])
+    }, [authId, seanceId, paramMembers, reloadChatGroups, reloadKey, markOffline])
   );
 
   const adminContacts = useMemo(() => {
@@ -355,7 +388,7 @@ export default function SupervisorMessagesScreen({
               text={
                 search.trim()
                   ? "لا يوجد عضو بهذا الاسم في مجموعاتك"
-                  : "لا يوجد أعضاء بعد"
+                  : membersUnknownMessage || "لا يوجد أعضاء بعد"
               }
             />
           ) : (

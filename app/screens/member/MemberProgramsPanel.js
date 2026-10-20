@@ -36,6 +36,7 @@ import {
 } from "../../lib/memberOfflineReads";
 import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { requireOnline } from "../../lib/toast";
+import AppToast from "../../components/AppToast";
 import {
   formatHizbCount,
   formatTumunAmount,
@@ -394,6 +395,8 @@ export default function MemberProgramsPanel({ navigation }) {
             ) : null}
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast replayPending={false} />
       </Modal>
     </View>
   );
@@ -633,6 +636,8 @@ function ProgramFormModal({
           </View>
         </View>
       </View>
+      {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+      <AppToast replayPending={false} avoidKeyboard />
     </Modal>
   );
 }

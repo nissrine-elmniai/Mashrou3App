@@ -34,6 +34,7 @@ import {
 } from "../../lib/memberOfflineReads";
 import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { requireOnline } from "../../lib/toast";
+import AppToast from "../AppToast";
 
 /** Partie haute de MemberBottomTabBar, hors marge basse. */
 const TAB_BAR_BODY = 52;
@@ -477,6 +478,8 @@ export default function MemberTestsPanel({ invitationId = null, onInviteCount })
             </TouchableOpacity>
           ) : null}
           </TestSheetBody>
+          {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+          <AppToast replayPending={false} />
         </SafeAreaProvider>
       </Modal>
     </>

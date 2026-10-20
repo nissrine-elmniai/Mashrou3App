@@ -12,6 +12,7 @@ import { initials, formatMemberCount } from "./supervisorHelpers";
 export default function SupervisorMembersScreen({
   membersWithStatus = [],
   activeGroup = null,
+  unknownMessage = null,
 }) {
   const navigation = useNavigation();
   const [search, setSearch] = useState("");
@@ -89,13 +90,18 @@ export default function SupervisorMembersScreen({
           </View>
         ) : null}
 
+        {/* Séance ou membres inconnus (échec sans cache) : pas de faux vide. */}
         {!activeGroup ? (
-          <EmptyState text="لم يتم تحديد حصة لك بعد" />
+          <EmptyState text={unknownMessage || "لم يتم تحديد حصة لك بعد"} />
         ) : membersWithStatus.length === 0 ? (
-          <EmptyState
-            text="لا يوجد أعضاء في حصتك بعد"
-            subtitle="سيظهر الأعضاء هنا بعد قبول تسجيلهم من طرف الإدارة"
-          />
+          unknownMessage ? (
+            <EmptyState text={unknownMessage} />
+          ) : (
+            <EmptyState
+              text="لا يوجد أعضاء في حصتك بعد"
+              subtitle="سيظهر الأعضاء هنا بعد قبول تسجيلهم من طرف الإدارة"
+            />
+          )
         ) : filtered.length === 0 ? (
           <EmptyState text="لا يوجد عضو بهذا الاسم" />
         ) : (

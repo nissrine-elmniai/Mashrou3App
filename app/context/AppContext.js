@@ -23,6 +23,7 @@ import {
 import { isOffline, onBackOnline, probeServer } from "../lib/networkState";
 import {
   purgeAllOfflineCache,
+  purgeRoleCache,
   readCache,
   readLastAuthId,
   writeCache,
@@ -147,6 +148,10 @@ async function rememberServerProfile(profile) {
   if (!profile?.id) return;
   await writeCache(profile.id, PROFILE_CACHE_RESOURCE, profile);
   await writeLastAuthId(profile.id);
+  // Rôle absent du profil serveur : son cache hors ligne est supprimé.
+  const roles = rolesFromServerProfile(profile);
+  if (!roles.includes(ROLES.SUPERVISOR)) await purgeRoleCache(profile.id, "sup");
+  if (!roles.includes(ROLES.ADMIN)) await purgeRoleCache(profile.id, "adm");
 }
 
 let lastSessionValidationAt = 0;

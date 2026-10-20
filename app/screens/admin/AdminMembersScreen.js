@@ -17,7 +17,6 @@ import { useAdminSidebar } from "../../components/AdminSidebar";
 import { rtlText, row } from "../../constants/rtl";
 import { colors, shadows } from "../../constants/theme";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
-import { fetchSeasonDirectory } from "../../lib/saisonsApi";
 import {
   getMemberProfiles,
   getAllAcceptedInscriptions,
@@ -27,6 +26,9 @@ import {
   isAcceptedInActiveSeason,
 } from "../../lib/membersApi";
 import { getAllProgressionAdmin, computeProgressMetrics } from "../../lib/progressApi";
+import { cachedAdminMembers, cachedSeasonDirectory } from "../../lib/adminOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { initials } from "../supervisor/supervisorHelpers";
 import ProfileAvatar from "../../components/ProfileAvatar";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
@@ -81,23 +83,139 @@ function formatLastSeance(inscription, seasonNames) {
   return `آخر حصة: ${seanceName} (${seasonName})`;
 }
 
+/**
+ * Lignes affichées (une par membre) à partir des tables lues. Même calcul que
+ * l'écran : catégorie, séance, superviseur, pourcentage du dernier progrès.
+ */
+function buildMemberRows({
+  profiles,
+  inscriptions,
+  progressions,
+  activatedIds,
+  activeSeasonIds,
+  seasonNames,
+  inscriptionsOk,
+  progressOk,
+}) {
+  const activatedSet = new Set(activatedIds);
+  const activeIdSet = new Set(activeSeasonIds);
+  const byMember = new Map();
+  inscriptions.forEach((inscription) => {
+    if (!inscription.membre_id) return;
+    if (!byMember.has(inscription.membre_id)) byMember.set(inscription.membre_id, []);
+    byMember.get(inscription.membre_id).push(inscription);
+  });
+
+  return profiles
+    .filter((profile) => profile.account_status !== "invited")
+    .map((profile) => {
+      const memberInscriptions = byMember.get(profile.id) || [];
+      const current = latestInscription(
+        memberInscriptions.filter((row) =>
+          isAcceptedInActiveSeason(row, activeIdSet)
+        )
+      );
+      const hasArchived = memberInscriptions.some((row) =>
+        isAcceptedInActiveSeason(row, activeIdSet, { archivedOnly: true })
+      );
+      const categoryKey = current
+        ? CATEGORY_REGISTERED
+        : activatedSet.has(profile.id) || hasArchived
+          ? CATEGORY_WAITING
+          : CATEGORY_OTHER;
+
+      const entries = progressions
+        .filter((entry) => entry.membre_id === profile.id)
+        .sort((a, b) => {
+          const byDate =
+            new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
+          if (byDate !== 0) return byDate;
+          return String(b.id || "").localeCompare(String(a.id || ""));
+        });
+      const latest = entries[0];
+      const metrics = progressOk && latest ? computeProgressMetrics(latest) : null;
+      const pct = metrics?.globalPct ?? null;
+      const name = `${profile.first_name || ""} ${profile.last_name || ""}`.trim();
+      const seance = current?.seance || null;
+
+      const lastSeanceLabel =
+        categoryKey === CATEGORY_OTHER
+          ? formatLastSeance(latestInscription(memberInscriptions), seasonNames)
+          : null;
+
+      return {
+        id: profile.id,
+        name,
+        firstName: profile.first_name || "",
+        lastName: profile.last_name || "",
+        avatarUrl: profile.avatar_url || null,
+        email: profile.email || "",
+        phone: profile.phone || null,
+        school: profile.school || null,
+        levelLabel: profile.level || null,
+        hifzAmount: profile.hifz_amount || null,
+        gender: normalizeGender(profile.genre),
+        pct,
+        category: categoryKey,
+        session: !inscriptionsOk ? "—" : seance?.nom || null,
+        seanceId: current?.seance_id || seance?.id || null,
+        inscriptionId: current?.id || null,
+        supervisorName: current ? supervisorName(seance?.superviseur) : null,
+        lastSeanceLabel,
+        registrationDate: current?.date_inscription || null,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "ar"));
+}
+
+/**
+ * Lecture en ligne des tables (profils, inscriptions, progression, demandes
+ * activées) et calcul des lignes. Seules les lignes et les drapeaux d'échec
+ * partiel sont renvoyés (et écrits dans adm.members.<saison>).
+ */
+async function fetchMemberRows(activeSeasonIds, seasonNames) {
+  const [profRes, inscRes, progRes, appsRes] = await Promise.all([
+    getMemberProfiles(),
+    getAllAcceptedInscriptions(),
+    getAllProgressionAdmin(),
+    fetchActivatedMemberIdsForSeason(activeSeasonIds),
+  ]);
+  if (!profRes.ok) {
+    console.warn("[AdminMembers] getMemberProfiles failed:", profRes.error);
+    return { ok: false, error: profRes.error };
+  }
+  return {
+    ok: true,
+    inscriptionsOk: !!inscRes.ok,
+    progressOk: !!progRes.ok,
+    applicationsOk: !!appsRes.ok,
+    members: buildMemberRows({
+      profiles: profRes.members || [],
+      inscriptions: inscRes.ok ? inscRes.inscriptions || [] : [],
+      progressions: progRes.ok ? progRes.entries || [] : [],
+      activatedIds: appsRes.ok ? appsRes.ids || [] : [],
+      activeSeasonIds,
+      seasonNames,
+      inscriptionsOk: !!inscRes.ok,
+      progressOk: !!progRes.ok,
+    }),
+  };
+}
+
 export default function AdminMembersScreen({ navigation }) {
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "members");
   const { currentUser } = useApp();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [profilesError, setProfilesError] = useState(false);
+  /** Liste inconnue ou relecture en échec : message (hors ligne ou erreur), sinon null. */
+  const [profilesError, setProfilesError] = useState(null);
   const [inscriptionsOk, setInscriptionsOk] = useState(true);
   const [progressOk, setProgressOk] = useState(true);
   const [applicationsOk, setApplicationsOk] = useState(true);
   const [activeSeason, setActiveSeason] = useState(null);
-  const [activeSeasonIds, setActiveSeasonIds] = useState([]);
-  const [seasonNames, setSeasonNames] = useState({});
-  const [profiles, setProfiles] = useState([]);
-  const [inscriptions, setInscriptions] = useState([]);
-  const [activatedIds, setActivatedIds] = useState([]);
-  const [progressions, setProgressions] = useState([]);
+  // Lignes affichées (en ligne : calculées ; hors ligne : adm.members.<saison>).
+  const [members, setMembers] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(CATEGORY_REGISTERED);
   // Conservé pendant la session de l'écran (pas de stockage).
@@ -106,83 +224,65 @@ export default function AdminMembersScreen({ navigation }) {
   const categoryDefaultedRef = useRef(false);
   const [avatarNonce, setAvatarNonce] = useState(() => Date.now());
   const loadSeq = useRef(0);
+  // Retour du réseau : relecture discrète (indicateur de rafraîchissement).
+  const loadMembersRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadMembersRef.current?.("refresh"));
 
   const loadMembers = useCallback(async (mode) => {
     const seq = ++loadSeq.current;
     if (mode === "refresh") setRefreshing(true);
     else setLoading(true);
+    // Échec : la liste déjà chargée reste affichée, avec le message.
+    const failText = (res) =>
+      res?.offline ? OFFLINE_UNAVAILABLE_MESSAGE : "تعذّر تحميل الأعضاء";
     try {
-      const seasonRes = await fetchSeasonDirectory();
+      const seasonRes = await cachedSeasonDirectory();
       if (seq !== loadSeq.current) return;
+      markOffline(seasonRes);
       if (!seasonRes.ok) {
         console.warn("[AdminMembers] fetchSeasonDirectory failed:", seasonRes.error);
-        setProfilesError(true);
+        setProfilesError(failText(seasonRes));
         return;
       }
       const names = {};
       (seasonRes.seasons || []).forEach((season) => {
         names[String(season.id)] = season.name || "";
       });
-      setSeasonNames(names);
       setActiveSeason(seasonRes.activeSeason);
       const activeIds = (seasonRes.seasons || [])
         .filter((season) => season.active)
         .map((season) => String(season.id));
-      setActiveSeasonIds(activeIds);
       if (!seasonRes.activeSeason && activeIds.length === 0) {
-        setProfiles([]);
-        setInscriptions([]);
-        setActivatedIds([]);
-        setProgressions([]);
-        setProfilesError(false);
+        setMembers([]);
+        setProfilesError(null);
         setInscriptionsOk(true);
         setProgressOk(true);
         setApplicationsOk(true);
         return;
       }
 
-      const [profRes, inscRes, progRes, appsRes] = await Promise.all([
-        getMemberProfiles(),
-        getAllAcceptedInscriptions(),
-        getAllProgressionAdmin(),
-        fetchActivatedMemberIdsForSeason(activeIds),
-      ]);
+      const res = await cachedAdminMembers(seasonRes.activeSeason?.id, () =>
+        fetchMemberRows(activeIds, names)
+      );
       if (seq !== loadSeq.current) return;
-      if (profRes.ok) {
-        setProfiles(profRes.members);
-        setProfilesError(false);
-      } else {
-        console.warn("[AdminMembers] getMemberProfiles failed:", profRes.error);
-        setProfilesError(true);
+      markOffline(res);
+      if (!res.ok) {
+        setProfilesError(failText(res));
+        return;
       }
-      if (inscRes.ok) {
-        setInscriptions(inscRes.inscriptions);
-        setInscriptionsOk(true);
-      } else {
-        setInscriptions([]);
-        setInscriptionsOk(false);
-      }
-      if (progRes.ok) {
-        setProgressions(progRes.entries);
-        setProgressOk(true);
-      } else {
-        setProgressions([]);
-        setProgressOk(false);
-      }
-      if (appsRes.ok) {
-        setActivatedIds(appsRes.ids);
-        setApplicationsOk(true);
-      } else {
-        setActivatedIds([]);
-        setApplicationsOk(false);
-      }
+      setMembers(res.members || []);
+      setProfilesError(null);
+      setInscriptionsOk(res.inscriptionsOk !== false);
+      setProgressOk(res.progressOk !== false);
+      setApplicationsOk(res.applicationsOk !== false);
     } finally {
       if (seq === loadSeq.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [markOffline]);
+  loadMembersRef.current = loadMembers;
 
   useFocusEffect(
     useCallback(() => {
@@ -191,90 +291,6 @@ export default function AdminMembersScreen({ navigation }) {
     }, [loadMembers])
   );
 
-  const activatedSet = useMemo(() => new Set(activatedIds), [activatedIds]);
-  const activeIdSet = useMemo(() => new Set(activeSeasonIds), [activeSeasonIds]);
-
-  const members = useMemo(() => {
-    const byMember = new Map();
-    inscriptions.forEach((inscription) => {
-      if (!inscription.membre_id) return;
-      if (!byMember.has(inscription.membre_id)) byMember.set(inscription.membre_id, []);
-      byMember.get(inscription.membre_id).push(inscription);
-    });
-
-    return profiles
-      .filter((profile) => profile.account_status !== "invited")
-      .map((profile) => {
-        const memberInscriptions = byMember.get(profile.id) || [];
-        const current = latestInscription(
-          memberInscriptions.filter((row) =>
-            isAcceptedInActiveSeason(row, activeIdSet)
-          )
-        );
-        const hasArchived = memberInscriptions.some((row) =>
-          isAcceptedInActiveSeason(row, activeIdSet, { archivedOnly: true })
-        );
-        const categoryKey = current
-          ? CATEGORY_REGISTERED
-          : activatedSet.has(profile.id) || hasArchived
-            ? CATEGORY_WAITING
-            : CATEGORY_OTHER;
-
-        const entries = progressions
-          .filter((entry) => entry.membre_id === profile.id)
-          .sort((a, b) => {
-            const byDate =
-              new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
-            if (byDate !== 0) return byDate;
-            return String(b.id || "").localeCompare(String(a.id || ""));
-          });
-        const latest = entries[0];
-        const metrics = progressOk && latest ? computeProgressMetrics(latest) : null;
-        const pct = metrics?.globalPct ?? null;
-        const name = `${profile.first_name || ""} ${profile.last_name || ""}`.trim();
-        const seance = current?.seance || null;
-
-        const lastSeanceLabel =
-          categoryKey === CATEGORY_OTHER
-            ? formatLastSeance(latestInscription(memberInscriptions), seasonNames)
-            : null;
-
-        return {
-          id: profile.id,
-          name,
-          firstName: profile.first_name || "",
-          lastName: profile.last_name || "",
-          avatarUrl: profile.avatar_url || null,
-          email: profile.email || "",
-          phone: profile.phone || null,
-          school: profile.school || null,
-          levelLabel: profile.level || null,
-          hifzAmount: profile.hifz_amount || null,
-          gender: normalizeGender(profile.genre),
-          pct,
-          category: categoryKey,
-          session: !inscriptionsOk ? "—" : seance?.nom || null,
-          seanceId: current?.seance_id || seance?.id || null,
-          inscriptionId: current?.id || null,
-          saisonId: activeSeason?.id || null,
-          seasonName: activeSeason?.name || null,
-          supervisorName: current ? supervisorName(seance?.superviseur) : null,
-          lastSeanceLabel,
-          registrationDate: current?.date_inscription || null,
-        };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
-  }, [
-    profiles,
-    inscriptions,
-    progressions,
-    activatedSet,
-    activeIdSet,
-    seasonNames,
-    activeSeason,
-    inscriptionsOk,
-    progressOk,
-  ]);
 
   // Compteurs des onglets : selon le genre choisi (pas la recherche, comme avant).
   const categoryCounts = useMemo(() => {
@@ -324,7 +340,7 @@ export default function AdminMembersScreen({ navigation }) {
     navigation.navigate("MemberProfile", {
       memberId: member.id,
       seanceId: member.seanceId,
-      saisonId: member.saisonId,
+      saisonId: activeSeason?.id || null,
       firstName: member.firstName,
       lastName: member.lastName,
       avatarUrl: member.avatarUrl,
@@ -336,7 +352,7 @@ export default function AdminMembersScreen({ navigation }) {
       groupName: member.session && member.session !== "—" ? member.session : null,
       registrationDate: member.registrationDate,
       supervisorName: member.supervisorName,
-      seasonName: member.seasonName,
+      seasonName: activeSeason?.name || null,
       canEditSeance: true,
       adminTheme: true,
       viewerRole: "admin",
@@ -360,6 +376,10 @@ export default function AdminMembersScreen({ navigation }) {
     if (parts.length === 0) return null;
     return `تعذّر تحميل ${parts.join(" و")}`;
   })();
+
+  // Liste jamais lue (hors ligne sans cache, ou erreur) : compteurs « — », pas 0.
+  const listUnknown = !!profilesError && members.length === 0;
+  const countLabel = (key) => (listUnknown ? "—" : categoryCounts[key]);
 
   return (
     <SafeAreaView
@@ -438,17 +458,17 @@ export default function AdminMembersScreen({ navigation }) {
           contentContainerStyle={styles.filterRow}
         >
           <FilterChip
-            label={`المسجّلون (${categoryCounts[CATEGORY_REGISTERED]})`}
+            label={`المسجّلون (${countLabel(CATEGORY_REGISTERED)})`}
             active={category === CATEGORY_REGISTERED}
             onPress={() => chooseCategory(CATEGORY_REGISTERED)}
           />
           <FilterChip
-            label={`مسجّلون بدون حصة (${categoryCounts[CATEGORY_WAITING]})`}
+            label={`مسجّلون بدون حصة (${countLabel(CATEGORY_WAITING)})`}
             active={category === CATEGORY_WAITING}
             onPress={() => chooseCategory(CATEGORY_WAITING)}
           />
           <FilterChip
-            label={`غير مسجّلين (${categoryCounts[CATEGORY_OTHER]})`}
+            label={`غير مسجّلين (${countLabel(CATEGORY_OTHER)})`}
             active={category === CATEGORY_OTHER}
             onPress={() => chooseCategory(CATEGORY_OTHER)}
           />
@@ -468,9 +488,9 @@ export default function AdminMembersScreen({ navigation }) {
           <View style={styles.emptyCard}>
             <ActivityIndicator size="large" color={palette.primary} />
           </View>
-        ) : profilesError ? (
+        ) : listUnknown ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>تعذّر تحميل الأعضاء</Text>
+            <Text style={styles.emptyText}>{profilesError}</Text>
             <TouchableOpacity
               style={styles.retryBtn}
               onPress={() => loadMembers("initial")}
@@ -482,6 +502,12 @@ export default function AdminMembersScreen({ navigation }) {
           </View>
         ) : (
           <>
+            {/* Relecture en échec : la liste déjà chargée reste affichée. */}
+            {profilesError ? (
+              <View style={styles.warningBanner}>
+                <Text style={styles.warningText}>{profilesError}</Text>
+              </View>
+            ) : null}
             {partialWarning ? (
               <View style={styles.warningBanner}>
                 <Text style={styles.warningText}>{partialWarning}</Text>

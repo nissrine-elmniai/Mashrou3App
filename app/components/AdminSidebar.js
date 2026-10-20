@@ -37,7 +37,7 @@ import {
 } from "../constants/notifications";
 import { useInboxThreads } from "../hooks/useInboxThreads";
 import { filterAdminInboxRows, formatUnreadBadge } from "../lib/messagesApi";
-import { countPlannedTestsAdmin } from "../lib/testsApi";
+import { cachedPlannedTestsCount } from "../lib/adminOfflineReads";
 import AdminMessagesFab from "./AdminMessagesFab";
 import ProfileAvatar from "./ProfileAvatar";
 
@@ -302,10 +302,11 @@ export function useAdminSidebar(navigation, activeItem = "home", options = {}) {
   );
   const [plannedTestsCount, setPlannedTestsCount] = useState(0);
 
-  // Tests planifiés seulement. 0 ou erreur → pas de badge.
+  // Tests planifiés seulement. 0 → pas de badge. Échec : dernière valeur conservée
+  // (hors ligne : adm.tests.plannedCount), jamais remise à 0.
   const refreshPlannedTests = useCallback(async () => {
-    const res = await countPlannedTestsAdmin();
-    setPlannedTestsCount(res?.ok ? Number(res.count) || 0 : 0);
+    const res = await cachedPlannedTestsCount();
+    if (res?.ok) setPlannedTestsCount(Number(res.count) || 0);
   }, []);
 
   useFocusEffect(

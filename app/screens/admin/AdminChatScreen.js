@@ -16,7 +16,9 @@ import { EmptyState } from "../../components/ui";
 import { ChatThreadRow } from "../../components/ChatThreadRow";
 import { useApp } from "../../context/AppContext";
 import { useAdminSidebar } from "../../components/AdminSidebar";
-import { getAdminChatSupervisors } from "../../lib/seancesApi";
+import { cachedAdminChatSupervisors } from "../../lib/messagingOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE, unknownDataMessage } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
   adminInboxContactRole,
@@ -45,6 +47,9 @@ export default function AdminChatScreen({ navigation }) {
   const [contactsError, setContactsError] = useState(null);
   const [retrying, setRetrying] = useState(false);
   const requestRef = useRef(0);
+  // Retour du réseau : superviseurs relus (aussi relus au focus, pas de différé).
+  const reloadContactsRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadContactsRef.current?.());
 
   const loadContacts = useCallback(async () => {
     const requestId = ++requestRef.current;
@@ -55,10 +60,11 @@ export default function AdminChatScreen({ navigation }) {
       return;
     }
     setContactsLoading(true);
-    const sRes = await getAdminChatSupervisors({ saisonId: activeSeasonId });
+    const sRes = await cachedAdminChatSupervisors(activeSeasonId);
     if (requestId !== requestRef.current) return;
+    markOffline(sRes);
     if (!sRes.ok) {
-      setContactsError(sRes.error || "تعذر تحميل المحادثات");
+      setContactsError(unknownDataMessage(sRes, "تعذر تحميل المحادثات"));
       setContactsLoading(false);
       return;
     }
@@ -79,7 +85,8 @@ export default function AdminChatScreen({ navigation }) {
     setContacts(list);
     setContactsError(null);
     setContactsLoading(false);
-  }, [activeSeasonId]);
+  }, [activeSeasonId, markOffline]);
+  reloadContactsRef.current = loadContacts;
 
   // Recharge à chaque focus et quand la saison active change.
   // Pas de useEffect en plus : le premier montage ne lance qu'un appel.
@@ -108,6 +115,12 @@ export default function AdminChatScreen({ navigation }) {
 
   const loading = retrying || contactsLoading || threadsLoading;
   const failed = !loading && (contactsError || threadsError);
+  // Hors ligne sans cache : « غير متاح دون اتصال » au lieu de l'erreur générique.
+  const failedText =
+    contactsError === OFFLINE_UNAVAILABLE_MESSAGE ||
+    threadsError === OFFLINE_UNAVAILABLE_MESSAGE
+      ? OFFLINE_UNAVAILABLE_MESSAGE
+      : "تعذر تحميل المحادثات";
 
   const openThread = (row) => {
     navigation.navigate("ChatConversation", {
@@ -155,7 +168,7 @@ export default function AdminChatScreen({ navigation }) {
         </View>
       ) : failed ? (
         <View style={styles.errorWrap}>
-          <Text style={styles.errorText}>تعذر تحميل المحادثات</Text>
+          <Text style={styles.errorText}>{failedText}</Text>
           <TouchableOpacity
             style={styles.retryBtn}
             onPress={retry}

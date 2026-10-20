@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -18,7 +18,9 @@ import {
   groupAttendanceRowsByMonth,
   computeAttendanceHistorySummary,
 } from "./supervisorAttendanceHelpers";
-import { buildSeanceAttendanceHistory } from "../../lib/presenceApi";
+import { cachedAttendanceHistory } from "../../lib/supervisorOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { arabicSessionCountLabel } from "./supervisorHelpers";
 
 const DEGRADED_MESSAGE =
@@ -40,14 +42,19 @@ export default function SupervisorAttendanceScreen({
   onSelectGroup,
   members = [],
   usingSupabase = false,
+  unknownMessage = null,
 }) {
   const navigation = useNavigation();
 
   const [historyState, setHistoryState] = useState({
+    seanceId: null,
     loading: false,
     rows: [],
     error: null,
   });
+  // Retour du réseau : rechargement (l'historique est aussi rechargé au focus).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.());
   const [markingContext, setMarkingContext] = useState(null);
 
   const groupMembers = useMemo(() => {
@@ -107,25 +114,38 @@ export default function SupervisorAttendanceScreen({
 
     setHistoryState((s) => ({ ...s, loading: true, error: null }));
 
-    const res = await buildSeanceAttendanceHistory(
+    const res = await cachedAttendanceHistory(
       activeGroup.id,
       activeGroup.jour,
       activeGroup.heureDebut,
       activeGroup.saisonDateDebut,
       memberIds
     );
+    markOffline(res);
 
     if (!res.ok) {
-      setHistoryState({
-        loading: false,
-        rows: [],
-        error: res.error || "تعذر تحميل بيانات الحضور",
-      });
-      setMarkingContext(null);
+      // Historique déjà affiché pour cette séance : conservé (pas de liste vidée).
+      setHistoryState((s) =>
+        s.seanceId === activeGroup.id && s.rows.length > 0
+          ? { ...s, loading: false, error: null }
+          : {
+              seanceId: activeGroup.id,
+              loading: false,
+              rows: [],
+              error: res.offline
+                ? unknownDataMessage(res)
+                : res.error || "تعذر تحميل بيانات الحضور",
+            }
+      );
       return;
     }
 
-    setHistoryState({ loading: false, rows: res.rows || [], error: null });
+    setHistoryState({
+      seanceId: activeGroup.id,
+      loading: false,
+      rows: res.rows || [],
+      error: null,
+    });
     setMarkingContext(res.markingContext || null);
   }, [
     usingSupabase,
@@ -134,6 +154,7 @@ export default function SupervisorAttendanceScreen({
     activeGroup?.heureDebut,
     activeGroup?.saisonDateDebut,
     memberIds,
+    markOffline,
   ]);
 
   useFocusEffect(
@@ -141,6 +162,7 @@ export default function SupervisorAttendanceScreen({
       loadHistory();
     }, [loadHistory])
   );
+  reloadRef.current = loadHistory;
 
   const openDetail = useCallback(
     (row, readOnly) => {
@@ -214,7 +236,8 @@ export default function SupervisorAttendanceScreen({
         ) : historyState.error ? (
           <EmptyState text={historyState.error} />
         ) : !activeGroup || groupMembers.length === 0 ? (
-          <EmptyState text="لا يوجد أعضاء في هذه المجموعة" />
+          // Séance ou membres inconnus : pas de « لا يوجد أعضاء ».
+          <EmptyState text={unknownMessage || "لا يوجد أعضاء في هذه المجموعة"} />
         ) : historyState.rows.length === 0 ? (
           <EmptyState text="لا توجد حصص سابقة لعرضها" />
         ) : (

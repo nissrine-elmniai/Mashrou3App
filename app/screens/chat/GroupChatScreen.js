@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
-  Image,
   Alert,
   ActivityIndicator,
 } from "react-native";
@@ -28,15 +27,22 @@ import {
 } from "../../constants/rtl";
 import { useApp } from "../../context/AppContext";
 import {
-  getGroupMessages,
   sendGroupMessage,
   subscribeGroupMessages,
   markGroupRead,
   resolvePublicGroupAvatarUrl,
-  getChatGroup,
 } from "../../lib/chatGroupsApi";
+import {
+  cachedChatGroup,
+  cachedGroupMessages,
+} from "../../lib/messagingOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE } from "../../lib/offlineCache";
+import { isOffline } from "../../lib/networkState";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { supabase } from "../../lib/supabase";
 import ProfileAvatar from "../../components/ProfileAvatar";
+import ChatBubbleImage from "../../components/ChatBubbleImage";
 
 function formatTime(iso) {
   const d = iso ? new Date(iso) : new Date();
@@ -80,22 +86,41 @@ export default function GroupChatScreen({ navigation, route }) {
     routeAvatarUrl || resolvePublicGroupAvatarUrl(groupId, null)
   );
 
+  /** Groupe jamais lu en ligne (hors ligne, sans cache) : message, pas de fil vide. */
+  const [historyUnavailable, setHistoryUnavailable] = useState(false);
+  // Retour du réseau : messages relus (reçus pendant la coupure) et en-tête relu.
+  const [reloadKey, setReloadKey] = useState(0);
+  const loadHeaderRef = useRef(null);
+  const onReconnect = () => {
+    setReloadKey((n) => n + 1);
+    loadHeaderRef.current?.();
+  };
+  const markOffline = useOfflineReload(onReconnect, () => setReloadKey((n) => n + 1));
+
   useEffect(() => {
     if (!authId || !groupId) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await getGroupMessages(groupId);
+        const res = await cachedGroupMessages(groupId);
         if (cancelled) return;
+        markOffline(res);
         if (!res.ok) {
+          // Hors ligne sans cache : ni Alert ni retour ; message dans l'écran.
+          if (res.offline) {
+            setHistoryUnavailable(true);
+            return;
+          }
           Alert.alert("تعذر فتح المجموعة", res.error || "حاول مرة أخرى");
           navigation.goBack();
           return;
         }
+        setHistoryUnavailable(false);
         setMessages(
           (res.messages || []).map((m) => normalizeGroupMessage(m, authId))
         );
-        markGroupRead(groupId);
+        // Marquage « lu » ignoré en silence hors ligne (aucune file d'envoi).
+        if (!res.fromCache && !isOffline()) markGroupRead(groupId);
       } catch (e) {
         console.warn("GroupChatScreen: load failed —", e?.message || e);
       }
@@ -103,7 +128,7 @@ export default function GroupChatScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [authId, groupId, navigation]);
+  }, [authId, groupId, navigation, reloadKey, markOffline]);
 
   useEffect(() => {
     if (!authId || !groupId) return;
@@ -150,6 +175,8 @@ export default function GroupChatScreen({ navigation, route }) {
     runSend(async () => {
       const trimmed = inputText.trim();
       if (!trimmed || !groupId || !authId) return;
+      // Hors ligne : toast, le texte reste dans le champ (aucune file d'envoi).
+      if (!requireOnline()) return;
       setInputText("");
       const res = await sendGroupMessage({
         groupId,
@@ -178,6 +205,18 @@ export default function GroupChatScreen({ navigation, route }) {
     });
   };
 
+  // En-tête (nom, avatar) : cache common.group.<id>.info hors ligne.
+  const loadHeader = async () => {
+    if (!groupId) return;
+    const res = await cachedChatGroup(groupId);
+    markOffline(res);
+    if (res.ok && res.group) {
+      setHeaderName(res.group.name || headerName);
+      setHeaderAvatarUrl(res.group.avatarUrl || null);
+    }
+  };
+  loadHeaderRef.current = loadHeader;
+
   // Refresh header after returning from GroupInfo / focus
   useEffect(() => {
     const unsub = navigation.addListener("focus", async () => {
@@ -185,12 +224,7 @@ export default function GroupChatScreen({ navigation, route }) {
       if (route.params?.groupAvatarUrl !== undefined) {
         setHeaderAvatarUrl(route.params.groupAvatarUrl);
       }
-      if (!groupId) return;
-      const res = await getChatGroup(groupId);
-      if (res.ok && res.group) {
-        setHeaderName(res.group.name || headerName);
-        setHeaderAvatarUrl(res.group.avatarUrl || null);
-      }
+      await loadHeaderRef.current?.();
     });
     return unsub;
   }, [navigation, route.params, groupId, headerName]);
@@ -211,11 +245,7 @@ export default function GroupChatScreen({ navigation, route }) {
             </Text>
           ) : null}
           {item.image ? (
-            <Image
-              source={{ uri: item.image }}
-              style={styles.bubbleImage}
-              resizeMode="cover"
-            />
+            <ChatBubbleImage uri={item.image} style={styles.bubbleImage} />
           ) : null}
           {item.text ? (
             <Text
@@ -295,13 +325,19 @@ export default function GroupChatScreen({ navigation, route }) {
           </TouchableOpacity>
         </View>
 
-        <FlatList
-          data={[...messages].reverse()}
-          keyExtractor={(item) => item.id}
-          renderItem={renderMessage}
-          inverted
-          contentContainerStyle={styles.listContent}
-        />
+        {historyUnavailable && messages.length === 0 ? (
+          <View style={styles.unavailableWrap}>
+            <Text style={styles.unavailableText}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={[...messages].reverse()}
+            keyExtractor={(item) => item.id}
+            renderItem={renderMessage}
+            inverted
+            contentContainerStyle={styles.listContent}
+          />
+        )}
 
         <View style={styles.inputBar}>
           <TextInput
@@ -379,6 +415,13 @@ const styles = StyleSheet.create({
   },
 
   listContent: { paddingVertical: 12 },
+  unavailableWrap: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  unavailableText: {
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    color: colors.muted,
+    textAlign: "center",
+  },
   bubbleRow: { flexDirection: row, paddingHorizontal: 16, marginVertical: 4 },
   bubble: {
     maxWidth: "80%",

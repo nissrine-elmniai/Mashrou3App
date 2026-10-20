@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -28,11 +28,9 @@ import { SEASON_TYPES, SEASON_TYPE_LABELS } from "../../constants/roles";
 import { rtlText, row, textAlignStart, arrowForward } from "../../constants/rtl";
 import { displayProfileEmail } from "../../lib/authEmail";
 import {
-  getAllSeances,
   createSeance,
   updateSeance,
   findOccupiedSeanceForSuperviseur,
-  getAssignableSupervisors,
   excludeDuplicateSupervisorAccounts,
   JOUR_SEMAINE_VALUES,
   sortSeancesByJour,
@@ -42,6 +40,14 @@ import { GENDER_OPTIONS } from "../../constants/roles";
 import { colors, radii } from "../../constants/theme";
 import AdminTopBarAvatar from "../../components/admin/AdminTopBarAvatar";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
+import AppToast from "../../components/AppToast";
+import {
+  cachedAssignableSupervisors,
+  cachedSeasonSeances,
+} from "../../lib/adminOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 
 /** Chips genre : le thème n'a pas de rose, ni de bleu doux apparié à un texte foncé. */
 const GENRE_FEMALE_CHIP = { background: "#FDE8EF", text: "#9D174D" };
@@ -190,6 +196,11 @@ export default function AdminSeasonsScreen({ navigation }) {
   const [saving, setSaving] = useState(false);
   const [timePickerField, setTimePickerField] = useState(null);
   const [genreFilter, setGenreFilter] = useState("all");
+  /** Séances inconnues (hors ligne sans cache, ou erreur) : message, pas « لا توجد حصص ». */
+  const [seancesError, setSeancesError] = useState(null);
+  // Retour du réseau : relecture discrète si l'écran est affiché (sinon au focus).
+  const loadAllRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadAllRef.current?.({ silent: true }));
 
   const pendingCount = stats?.pendingRegs ?? 0;
 
@@ -208,19 +219,24 @@ export default function AdminSeasonsScreen({ navigation }) {
   const loadAll = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     const [seancesRes, supervisorsRes] = await Promise.all([
-      getAllSeances(),
-      getAssignableSupervisors({ saisonId: activeSeason?.id || null }),
+      cachedSeasonSeances(activeSeason?.id || null),
+      cachedAssignableSupervisors(activeSeason?.id || null),
     ]);
+    markOffline(seancesRes, supervisorsRes);
     if (seancesRes.ok) {
+      setSeancesError(null);
       const scoped = activeSeason?.id
         ? filterSeancesForSeason(seancesRes.seances, activeSeason.id).filter(
             (seance) => seance.statut === "active"
           )
         : [];
       setSeances(sortSeancesByJour(scoped));
-    } else if (!silent) {
-      Alert.alert("تنبيه", seancesRes.error || "تعذر تحميل الحصص");
-      setSeances([]);
+    } else {
+      // Échec : les séances déjà chargées restent affichées ; pas d'Alert hors ligne.
+      if (!silent && !seancesRes.offline) {
+        Alert.alert("تنبيه", seancesRes.error || "تعذر تحميل الحصص");
+      }
+      setSeancesError(unknownDataMessage(seancesRes, "تعذر تحميل الحصص"));
     }
     if (supervisorsRes.ok) {
       const ids = supervisorIdsForSeason(
@@ -232,11 +248,11 @@ export default function AdminSeasonsScreen({ navigation }) {
           (s) => s.account_status !== "inactive" || ids.has(s.id)
         )
       );
-    } else {
-      setSupervisors([]);
     }
+    // Échec des superviseurs : liste précédente conservée (affectation impossible hors ligne).
     if (!silent) setLoading(false);
-  }, [activeSeason?.id]);
+  }, [activeSeason?.id, markOffline]);
+  loadAllRef.current = loadAll;
 
   useFocusEffect(
     useCallback(() => {
@@ -263,6 +279,8 @@ export default function AdminSeasonsScreen({ navigation }) {
   }, [modalVisible]);
 
   const openCreate = () => {
+    // Formulaire impossible à enregistrer hors ligne : toast seulement.
+    if (!requireOnline()) return;
     setEditingId(null);
     setForm({ ...EMPTY_FORM });
     setTimePickerField(null);
@@ -270,6 +288,7 @@ export default function AdminSeasonsScreen({ navigation }) {
   };
 
   const openEdit = (seance) => {
+    if (!requireOnline()) return;
     setEditingId(seance.id);
     setForm({
       nom: seance.nom || "",
@@ -292,6 +311,8 @@ export default function AdminSeasonsScreen({ navigation }) {
   };
 
   const handleSave = async () => {
+    // Réseau perdu formulaire ouvert : toast, saisie conservée.
+    if (!requireOnline()) return;
     const nom = String(form.nom || "").trim();
     if (!nom) {
       Alert.alert("تنبيه", "أدخل اسم الحصة");
@@ -563,7 +584,11 @@ export default function AdminSeasonsScreen({ navigation }) {
         ) : !activeSeason ? (
           <Text style={styles.emptyText}>أنشئ موسماً جديداً أولاً</Text>
         ) : visibleSeances.length === 0 ? (
-          <Text style={styles.emptyText}>{emptySeancesMessage(genreFilter)}</Text>
+          <Text style={styles.emptyText}>
+            {seancesError && seances.length === 0
+              ? seancesError
+              : emptySeancesMessage(genreFilter)}
+          </Text>
         ) : (
           visibleSeances.map((seance) => {
             const memberCount = (seance.inscriptions || []).filter(
@@ -880,6 +905,11 @@ export default function AdminSeasonsScreen({ navigation }) {
             </ScrollView>
           </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+        />
       </Modal>
       {messagesFab}
       {sidebar}

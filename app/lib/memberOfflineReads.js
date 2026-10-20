@@ -1,5 +1,12 @@
-import { cachedFetch } from "./offlineCache";
-import { USER_ERROR_MESSAGES } from "./userError";
+import {
+  OFFLINE_UNAVAILABLE_MESSAGE,
+  cachedFetch,
+  cacheKeySegment as seg,
+  compactPositionForCache,
+  filterProgressEntriesSince,
+  mergeProgressHistoryForCache,
+  unknownDataMessage,
+} from "./offlineCache";
 import {
   getMemberDeclaredHizbCount,
   getMemberSeasonObjectif,
@@ -29,19 +36,8 @@ import { fetchMySeasonRegistrationView } from "./memberApplicationsApi";
  *                  un vide : utiliser unknownDataMessage(res).
  */
 
-export const OFFLINE_UNAVAILABLE_MESSAGE = "غير متاح دون اتصال";
-
-/** Texte d'une donnée inconnue : hors ligne → message fixe ; en ligne → erreur actuelle. */
-export function unknownDataMessage(res, fallback) {
-  if (res?.offline) return OFFLINE_UNAVAILABLE_MESSAGE;
-  return res?.error || fallback || USER_ERROR_MESSAGES.unknown;
-}
-
-/** Segment de clé autorisé par offlineCache ([A-Za-z0-9_.:-]). */
-function seg(value) {
-  const raw = value == null || value === "" ? "none" : String(value);
-  return raw.replace(/[^A-Za-z0-9_:-]/g, "_");
-}
+// Génériques (offlineCache) réexportés : les écrans du lot 2 les importent d'ici.
+export { OFFLINE_UNAVAILABLE_MESSAGE, unknownDataMessage };
 
 /** Genre arabe → segment ASCII de clé. */
 function genreSeg(genre) {
@@ -50,62 +46,60 @@ function genreSeg(genre) {
   return "x";
 }
 
-/** Historique : lignes conservées dans le cache (au plus 100). */
-const HISTORY_CACHE_MAX = 100;
-/** MemberProgressScreen n'affiche que les 5 dernières saisies. */
-const RECENT_CACHE_MAX = 5;
-
-function entryDateMs(entry) {
-  const t = new Date(String(entry?.date || entry?.date_saisie || entry?.created_at || "")).getTime();
-  return Number.isFinite(t) ? t : 0;
-}
-
 /**
- * Historique du tableau de bord (activités + rythme) : les 99 lignes les plus
- * récentes, plus la plus ancienne de la saison (delta de saison exact hors ligne).
+ * Historique du membre : UNE clé par saison (mem.progress.history.<saison>),
+ * partagée par le tableau de bord (historique complet) et MemberProgressScreen
+ * (saisies depuis l'inscription). Lignes allégées, au plus 100 (99 récentes +
+ * la plus ancienne de la saison, pour un delta de saison exact).
  */
-function trimHistoryForCache(result, saisonId) {
-  const entries = Array.isArray(result?.entries) ? result.entries : [];
-  if (entries.length <= HISTORY_CACHE_MAX) return result;
-  const kept = entries.slice(0, HISTORY_CACHE_MAX - 1);
-  const sid = saisonId == null ? "" : String(saisonId);
-  const ofSeason = sid
-    ? entries.filter((e) => e?.saison_id != null && String(e.saison_id) === sid)
-    : [];
-  if (ofSeason.length > 0) {
-    const oldest = ofSeason.reduce((a, b) => (entryDateMs(b) < entryDateMs(a) ? b : a));
-    if (!kept.includes(oldest)) kept.push(oldest);
-  } else {
-    kept.push(entries[HISTORY_CACHE_MAX - 1]);
-  }
-  return { ...result, entries: kept };
+const MEMBER_HISTORY_CACHE_MAX = 100;
+
+function memberHistoryKey(saisonId) {
+  return `mem.progress.history.${seg(saisonId)}`;
 }
 
 /** Historique de progression (tableau de bord, ملفي), saison active. */
 export function cachedMyProgressHistory(saisonId) {
   return cachedFetch(
-    `mem.progress.history.${seg(saisonId)}`,
+    memberHistoryKey(saisonId),
     () => getMyProgress({ saisonId: saisonId || undefined }),
-    { toCache: (res) => trimHistoryForCache(res, saisonId) }
-  );
-}
-
-/** Dernières saisies affichées par MemberProgressScreen (5 au plus en cache). */
-export function cachedMyRecentProgress(saisonId, since) {
-  return cachedFetch(
-    `mem.progress.recent.${seg(saisonId)}`,
-    () => getMyProgress({ since: since || undefined, saisonId }),
     {
-      toCache: (res) => ({
-        ...res,
-        entries: (res?.entries || []).slice(0, RECENT_CACHE_MAX),
-      }),
+      mergePrevious: true,
+      toCache: (res, previous) =>
+        mergeProgressHistoryForCache(res, previous, {
+          cap: MEMBER_HISTORY_CACHE_MAX,
+          saisonId,
+        }),
     }
   );
 }
 
+/** Saisies depuis l'inscription (MemberProgressScreen). Même clé que l'historique. */
+export async function cachedMyRecentProgress(saisonId, since) {
+  const res = await cachedFetch(
+    memberHistoryKey(saisonId),
+    () => getMyProgress({ since: since || undefined, saisonId }),
+    {
+      mergePrevious: true,
+      toCache: (result, previous) =>
+        mergeProgressHistoryForCache(result, previous, {
+          cap: MEMBER_HISTORY_CACHE_MAX,
+          saisonId,
+          since,
+        }),
+    }
+  );
+  // Servi du cache : ramené à la fenêtre demandée (comme la requête en ligne).
+  if (res.fromCache) {
+    return { ...res, entries: filterProgressEntriesSince(res.entries, since) };
+  }
+  return res;
+}
+
 export function cachedMyProgressPosition() {
-  return cachedFetch("mem.progress.position", () => getMyCurrentProgressPosition());
+  return cachedFetch("mem.progress.position", () => getMyCurrentProgressPosition(), {
+    toCache: compactPositionForCache,
+  });
 }
 
 /** Inscription active (verrou de saisie). saisonId sert seulement à la clé. */

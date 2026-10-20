@@ -25,8 +25,12 @@ function hasNavigablePayload(payload) {
  * n'existe pas sur Auth).
  */
 export default function PushNotificationBridge({ navigationRef, navTick = 0 }) {
-  const { supabaseSession, currentUser } = useApp();
-  const authId = supabaseSession?.user?.id || null;
+  const { supabaseSession, currentUser, offlineRestored } = useApp();
+  // Restauration hors ligne : pas de session Supabase, id du compte restauré
+  // (openNotification ne marque rien comme lu hors ligne).
+  const authId =
+    supabaseSession?.user?.id ||
+    (offlineRestored ? currentUser?.authId || null : null);
   const signedIn = Boolean(currentUser?.role);
   const authIdRef = useRef(authId);
   const signedInRef = useRef(signedIn);

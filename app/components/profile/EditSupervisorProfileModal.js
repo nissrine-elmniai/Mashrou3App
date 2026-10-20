@@ -25,6 +25,8 @@ import {
   dateToIsoLocal,
 } from "../../lib/auth";
 import { formatGenderLabel } from "../../lib/membersApi";
+import { requireOnline } from "../../lib/toast";
+import AppToast from "../AppToast";
 import { PROFILE_COLUMN_LABELS as L } from "./profileColumnLabels";
 
 const DEFAULT_BIRTH = new Date(2000, 0, 1);
@@ -102,6 +104,8 @@ export default function EditSupervisorProfileModal({
   };
 
   const handleSave = async () => {
+    // Hors ligne : toast seulement, aucune modification.
+    if (!requireOnline()) return;
     const firstClean = form.firstName.trim();
     const lastClean = form.lastName.trim();
     const phoneClean = form.phone.trim();
@@ -144,156 +148,163 @@ export default function EditSupervisorProfileModal({
       animationType="slide"
       onRequestClose={saving ? undefined : onClose}
     >
-      <View
-        style={[
-          styles.overlay,
-          {
-            paddingBottom:
-              keyboardHeight > 0
-                ? keyboardHeight + 8
-                : Math.max(insets.bottom, bottomInset),
-          },
-        ]}
-      >
-        <View style={styles.card}>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            bounces={false}
-            contentContainerStyle={styles.cardContent}
-          >
-            <View style={styles.header}>
-              <Text style={styles.title}>تعديل المعلومات الشخصية</Text>
-              <TouchableOpacity
-                onPress={saving ? undefined : onClose}
-                hitSlop={10}
-              >
-                <Ionicons name="close" size={22} color={colors.muted} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.label}>{L.first_name}</Text>
-            <TextInput
-              style={styles.input}
-              value={form.firstName}
-              onChangeText={(v) => setField("firstName", v)}
-              placeholder="الاسم"
-              placeholderTextColor={colors.placeholder}
-              textAlign={textAlignStart}
-              returnKeyType="next"
-            />
-
-            <Text style={styles.label}>{L.last_name}</Text>
-            <TextInput
-              style={styles.input}
-              value={form.lastName}
-              onChangeText={(v) => setField("lastName", v)}
-              placeholder="النسب"
-              placeholderTextColor={colors.placeholder}
-              textAlign={textAlignStart}
-              returnKeyType="next"
-            />
-
-            <Text style={styles.label}>{L.phone}</Text>
-            <TextInput
-              style={styles.input}
-              value={form.phone}
-              onChangeText={(v) => setField("phone", v)}
-              placeholder="06xxxxxxxx"
-              placeholderTextColor={colors.placeholder}
-              keyboardType="phone-pad"
-              textAlign={textAlignStart}
-              returnKeyType="done"
-            />
-
-            <Text style={styles.label}>{L.date_naissance}</Text>
-            <TouchableOpacity
-              style={styles.dateField}
-              onPress={() => setShowDatePicker(true)}
-              activeOpacity={0.85}
+      <View style={styles.modalRoot}>
+        <View
+          style={[
+            styles.overlay,
+            {
+              paddingBottom:
+                keyboardHeight > 0
+                  ? keyboardHeight + 8
+                  : Math.max(insets.bottom, bottomInset),
+            },
+          ]}
+        >
+          <View style={styles.card}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              contentContainerStyle={styles.cardContent}
             >
-              <Ionicons name="calendar-outline" size={20} color={colors.muted} />
-              <Text
-                style={[
-                  styles.dateFieldText,
-                  !form.birthDate && styles.datePlaceholder,
-                ]}
-              >
-                {form.birthDate
-                  ? formatBirthDateLabel(form.birthDate)
-                  : "اختر تاريخ الميلاد"}
-              </Text>
-            </TouchableOpacity>
-            {showDatePicker ? (
-              <DateTimePicker
-                value={pickerDate}
-                mode="date"
-                display={Platform.OS === "ios" ? "spinner" : "default"}
-                maximumDate={new Date()}
-                onChange={onDateChange}
+              <View style={styles.header}>
+                <Text style={styles.title}>تعديل المعلومات الشخصية</Text>
+                <TouchableOpacity
+                  onPress={saving ? undefined : onClose}
+                  hitSlop={10}
+                >
+                  <Ionicons name="close" size={22} color={colors.muted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.label}>{L.first_name}</Text>
+              <TextInput
+                style={styles.input}
+                value={form.firstName}
+                onChangeText={(v) => setField("firstName", v)}
+                placeholder="الاسم"
+                placeholderTextColor={colors.placeholder}
+                textAlign={textAlignStart}
+                returnKeyType="next"
               />
-            ) : null}
-            {Platform.OS === "ios" && showDatePicker ? (
+
+              <Text style={styles.label}>{L.last_name}</Text>
+              <TextInput
+                style={styles.input}
+                value={form.lastName}
+                onChangeText={(v) => setField("lastName", v)}
+                placeholder="النسب"
+                placeholderTextColor={colors.placeholder}
+                textAlign={textAlignStart}
+                returnKeyType="next"
+              />
+
+              <Text style={styles.label}>{L.phone}</Text>
+              <TextInput
+                style={styles.input}
+                value={form.phone}
+                onChangeText={(v) => setField("phone", v)}
+                placeholder="06xxxxxxxx"
+                placeholderTextColor={colors.placeholder}
+                keyboardType="phone-pad"
+                textAlign={textAlignStart}
+                returnKeyType="done"
+              />
+
+              <Text style={styles.label}>{L.date_naissance}</Text>
               <TouchableOpacity
-                style={styles.dateDoneBtn}
-                onPress={() => setShowDatePicker(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.dateDoneText}>تم</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            <Text style={styles.label}>{L.genre}</Text>
-            <View style={styles.chipsRow}>
-              {GENDER_OPTIONS.map((opt) => {
-                const active = form.genre === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[styles.chip, active && styles.chipActive]}
-                    onPress={() => setField("genre", opt.value)}
-                    activeOpacity={0.75}
-                  >
-                    <Text
-                      style={[styles.chipText, active && styles.chipTextActive]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.readOnlyBlock}>
-              <Text style={styles.readOnlyHint}>
-                هذه المعلومات غير قابلة للتعديل من هنا
-              </Text>
-              <ReadOnlyRow label={L.email} value={email} />
-            </View>
-
-            <View style={styles.actions}>
-              <TouchableOpacity
-                style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-                onPress={saving ? undefined : handleSave}
+                style={styles.dateField}
+                onPress={() => setShowDatePicker(true)}
                 activeOpacity={0.85}
               >
-                {saving ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={styles.saveBtnText}>حفظ</Text>
-                )}
+                <Ionicons name="calendar-outline" size={20} color={colors.muted} />
+                <Text
+                  style={[
+                    styles.dateFieldText,
+                    !form.birthDate && styles.datePlaceholder,
+                  ]}
+                >
+                  {form.birthDate
+                    ? formatBirthDateLabel(form.birthDate)
+                    : "اختر تاريخ الميلاد"}
+                </Text>
               </TouchableOpacity>
+              {showDatePicker ? (
+                <DateTimePicker
+                  value={pickerDate}
+                  mode="date"
+                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  maximumDate={new Date()}
+                  onChange={onDateChange}
+                />
+              ) : null}
+              {Platform.OS === "ios" && showDatePicker ? (
+                <TouchableOpacity
+                  style={styles.dateDoneBtn}
+                  onPress={() => setShowDatePicker(false)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.dateDoneText}>تم</Text>
+                </TouchableOpacity>
+              ) : null}
 
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={saving ? undefined : onClose}
-                activeOpacity={0.75}
-              >
-                <Text style={styles.cancelBtnText}>إلغاء</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
+              <Text style={styles.label}>{L.genre}</Text>
+              <View style={styles.chipsRow}>
+                {GENDER_OPTIONS.map((opt) => {
+                  const active = form.genre === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.chip, active && styles.chipActive]}
+                      onPress={() => setField("genre", opt.value)}
+                      activeOpacity={0.75}
+                    >
+                      <Text
+                        style={[styles.chipText, active && styles.chipTextActive]}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.readOnlyBlock}>
+                <Text style={styles.readOnlyHint}>
+                  هذه المعلومات غير قابلة للتعديل من هنا
+                </Text>
+                <ReadOnlyRow label={L.email} value={email} />
+              </View>
+
+              <View style={styles.actions}>
+                <TouchableOpacity
+                  style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+                  onPress={saving ? undefined : handleSave}
+                  activeOpacity={0.85}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>حفظ</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={saving ? undefined : onClose}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.cancelBtnText}>إلغاء</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
         </View>
+        {/* La modale couvre le toast global : toast « hors ligne » affiché ici. */}
+        <AppToast
+          replayPending={false}
+          bottomOffset={keyboardHeight > 0 ? keyboardHeight + 16 : null}
+        />
       </View>
     </Modal>
   );
@@ -311,6 +322,7 @@ function ReadOnlyRow({ label, value }) {
 }
 
 const styles = StyleSheet.create({
+  modalRoot: { flex: 1 },
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",

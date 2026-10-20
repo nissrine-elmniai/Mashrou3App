@@ -23,7 +23,12 @@ import { rtlText, row, textAlignStart, fonts } from "../../constants/rtl";
 import { colors, radii } from "../../constants/theme";
 import { SectionCard } from "../../components/ui";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
-import { getAllTestsAdmin, createTest, newTestId } from "../../lib/testsApi";
+import { createTest, newTestId } from "../../lib/testsApi";
+import { cachedAllTests } from "../../lib/adminOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { isOffline } from "../../lib/networkState";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { useSubmitLock } from "../../lib/useSubmitLock";
 import {
   getTestDisplayStatus,
@@ -83,7 +88,11 @@ export default function AdminTestsScreen({ navigation, route }) {
     [seasons]
   );
 
-  const [tab, setTab] = useState(route?.params?.initialTab || "all");
+  // Formulaire de création demandé hors ligne : liste affichée (toast par l'effet ci-dessous).
+  const [tab, setTab] = useState(() => {
+    const initial = route?.params?.initialTab || "all";
+    return initial === "create" && isOffline() ? "all" : initial;
+  });
   const [testType, setTestType] = useState("hifz");
   const [title, setTitle] = useState("");
   const [saisonId, setSaisonId] = useState(null);
@@ -101,21 +110,26 @@ export default function AdminTestsScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  // Retour du réseau : relecture discrète si l'écran est affiché (sinon au focus).
+  const loadAllRef = useRef(null);
+  const markOffline = useOfflineReload(() => loadAllRef.current?.("refresh"));
 
   const loadAll = useCallback(async (mode = "load") => {
     if (mode === "refresh") setRefreshing(true);
     else setLoading(true);
-    const testsRes = await getAllTestsAdmin();
+    const testsRes = await cachedAllTests();
+    markOffline(testsRes);
     if (!testsRes.ok) {
-      setError(testsRes.error || "تعذر تحميل الاختبارات");
-      if (mode !== "refresh") setTests([]);
+      // Échec : les tests déjà chargés restent affichés, avec le message.
+      setError(unknownDataMessage(testsRes, "تعذر تحميل الاختبارات"));
     } else {
       setError("");
       setTests(testsRes.tests || []);
     }
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [markOffline]);
+  loadAllRef.current = loadAll;
 
   useFocusEffect(
     useCallback(() => {
@@ -135,8 +149,15 @@ export default function AdminTestsScreen({ navigation, route }) {
 
   useEffect(() => {
     const next = route?.params?.initialTab;
+    // Formulaire impossible à enregistrer hors ligne : toast, onglet inchangé.
+    if (next === "create" && !requireOnline()) return;
     if (next) setTab(next);
   }, [route?.params?.initialTab]);
+
+  const openCreateTab = () => {
+    if (!requireOnline()) return;
+    setTab("create");
+  };
 
   // Ouverture du formulaire : un id par test saisi, conservé entre les envois.
   useEffect(() => {
@@ -227,8 +248,10 @@ export default function AdminTestsScreen({ navigation, route }) {
     setSlotError("");
   };
 
-  const handleCreate = () =>
-    runCreate(async () => {
+  const handleCreate = () => {
+    // Réseau perdu formulaire ouvert : toast, saisie conservée.
+    if (!requireOnline()) return undefined;
+    return runCreate(async () => {
       if (quantityMissing) setQuantityAttempted(true);
       if (datesMissing) setDatesAttempted(true);
       if (!canSubmit) return;
@@ -257,6 +280,7 @@ export default function AdminTestsScreen({ navigation, route }) {
       setTab("upcoming");
       loadAll();
     });
+  };
 
   const renderTestCard = (test) => {
     const status = testStatusOf(test);
@@ -384,7 +408,7 @@ export default function AdminTestsScreen({ navigation, route }) {
               backgroundColor: colorWithAlpha(colors.primary, 0.12),
             },
           ]}
-          onPress={() => setTab("create")}
+          onPress={openCreateTab}
           accessibilityRole="button"
           accessibilityLabel="إنشاء اختبار"
         >
@@ -396,6 +420,8 @@ export default function AdminTestsScreen({ navigation, route }) {
           if (item.key === "all") count = counts.all;
           if (item.key === "upcoming") count = counts.upcoming;
           if (item.key === "past") count = counts.past;
+          // Liste jamais lue (hors ligne sans cache, ou erreur) : « — », pas 0.
+          if (error && tests.length === 0) count = "—";
           return (
             <TouchableOpacity
               key={item.key}
@@ -588,7 +614,7 @@ export default function AdminTestsScreen({ navigation, route }) {
               <View style={styles.centerBlock}>
                 <Text style={styles.emptyTitle}>لا توجد اختبارات هنا</Text>
                 <Text style={styles.emptyText}>{EMPTY_BY_TAB[tab] || EMPTY_BY_TAB.all}</Text>
-                <TouchableOpacity style={styles.retryBtn} onPress={() => setTab("create")}>
+                <TouchableOpacity style={styles.retryBtn} onPress={openCreateTab}>
                   <Text style={styles.retryText}>إنشاء اختبار</Text>
                 </TouchableOpacity>
               </View>

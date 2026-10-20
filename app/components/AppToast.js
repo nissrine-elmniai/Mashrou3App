@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { Animated, Keyboard, Platform, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { fonts } from "../constants/rtl";
 import { getLastToast, subscribeToast } from "../lib/toast";
@@ -13,12 +13,37 @@ const BOTTOM_CLEARANCE = 88;
  * Toast global, monté une fois dans App.js.
  * Non bloquant (pointerEvents="none"), RTL, police de l'app.
  * Un nouveau message remplace celui affiché.
+ *
+ * Une <Modal> RN s'affiche au-dessus du toast global : les modales d'écriture
+ * (requireOnline() ou non) montent aussi <AppToast replayPending={false} /> dans
+ * leur contenu (pas de nouvel affichage du message émis avant leur ouverture).
+ * bottomOffset : distance au bas de l'écran (par ex. au-dessus du clavier).
+ * avoidKeyboard : modale sans suivi du clavier, toast placé au-dessus du clavier.
  */
-export default function AppToast() {
+export default function AppToast({
+  replayPending = true,
+  bottomOffset = null,
+  avoidKeyboard = false,
+}) {
   const insets = useSafeAreaInsets();
   const [toast, setToast] = useState(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const opacity = useRef(new Animated.Value(0)).current;
   const hideTimer = useRef(null);
+
+  useEffect(() => {
+    if (!avoidKeyboard) return undefined;
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [avoidKeyboard]);
 
   useEffect(() => {
     const show = (next) => {
@@ -44,7 +69,7 @@ export default function AppToast() {
     };
 
     // Message émis avant le montage (démarrage hors ligne) : encore affichable.
-    const pending = getLastToast();
+    const pending = replayPending ? getLastToast() : null;
     if (pending && Date.now() - pending.shownAt < VISIBLE_MS) show(pending);
 
     const unsubscribe = subscribeToast(show);
@@ -52,15 +77,16 @@ export default function AppToast() {
       unsubscribe();
       clearTimeout(hideTimer.current);
     };
-  }, [opacity]);
+  }, [opacity, replayPending]);
 
   if (!toast) return null;
 
+  let bottom = insets.bottom + BOTTOM_CLEARANCE;
+  if (bottomOffset != null) bottom = bottomOffset;
+  else if (keyboardHeight > 0) bottom = keyboardHeight + 16;
+
   return (
-    <View
-      pointerEvents="none"
-      style={[styles.host, { bottom: insets.bottom + BOTTOM_CLEARANCE }]}
-    >
+    <View pointerEvents="none" style={[styles.host, { bottom }]}>
       <Animated.View style={[styles.toast, { opacity }]}>
         <Text style={[styles.text, { fontFamily: fonts.medium }]} numberOfLines={3}>
           {toast.message}

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -40,6 +40,9 @@ import {
   sendMemberAcceptEmail,
   sendMemberRejectEmail,
 } from "../../utils/sendInviteEmail";
+import { OFFLINE_UNAVAILABLE_MESSAGE, fetchOnlineOnly } from "../../lib/offlineCache";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 
 const palette = {
   primary: "#2E7D32",
@@ -75,22 +78,28 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  // Retour du réseau : relecture si l'écran est affiché (sinon au prochain focus).
+  const reloadRef = useRef(null);
+  const markOffline = useOfflineReload(() => reloadRef.current?.("refresh"));
 
   const reloadRegistrations = useCallback(
     async (mode) => {
       if (mode === "refresh") setRefreshing(true);
       else setLoading(true);
-      const res = await refreshRegistrations();
+      // Demandes d'inscription : jamais en cache. Hors ligne : message tout de suite.
+      const res = await fetchOnlineOnly(() => refreshRegistrations());
+      markOffline(res);
       if (!res?.ok && !res?.skipped) {
-        setLoadError("تعذّر تحميل الطلبات");
+        setLoadError(res?.offline ? OFFLINE_UNAVAILABLE_MESSAGE : "تعذّر تحميل الطلبات");
       } else {
         setLoadError(null);
       }
       setLoading(false);
       setRefreshing(false);
     },
-    [refreshRegistrations]
+    [refreshRegistrations, markOffline]
   );
+  reloadRef.current = reloadRegistrations;
 
   useFocusEffect(
     useCallback(() => {
@@ -171,6 +180,8 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   const bellCount = stats?.pendingRegs ?? pendingCount;
 
   const acceptAndInvite = async (reg) => {
+    // Accepter : hors ligne, toast avant tout appel (reviewRegistration inchangé).
+    if (!requireOnline()) return;
     if (getRegistrationKind(reg) === REGISTRATION_KIND.SEASON_RENEWAL) {
       setSendingId(reg.id);
       try {
@@ -234,12 +245,14 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   };
 
   const rejectRegistration = (reg) => {
+    if (!requireOnline()) return;
     Alert.alert("تأكيد الرفض", `هل تريد رفض طلب ${reg.fullName}؟`, [
       { text: "إلغاء", style: "cancel" },
       {
         text: "رفض",
         style: "destructive",
         onPress: async () => {
+          if (!requireOnline()) return;
           setSendingId(reg.id);
           let rejected = false;
           try {
@@ -286,6 +299,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   };
 
   const resendInvite = async (reg) => {
+    if (!requireOnline()) return;
     setSendingId(reg.id);
     try {
       const mail = await sendMemberAcceptEmail({
@@ -313,7 +327,13 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
   // « الكل » en tête ; l'onglet par défaut reste « قيد الانتظار ».
   const filters = [
     ["all", "الكل"],
-    ["pending", `قيد الانتظار${pendingCount ? ` (${pendingCount})` : ""}`],
+    // Hors ligne : demandes non lues, pas de compteur.
+    [
+      "pending",
+      `قيد الانتظار${
+        pendingCount && loadError !== OFFLINE_UNAVAILABLE_MESSAGE ? ` (${pendingCount})` : ""
+      }`,
+    ],
     ["accepted", "المقبولة"],
     ["rejected", "المرفوضة"],
   ];

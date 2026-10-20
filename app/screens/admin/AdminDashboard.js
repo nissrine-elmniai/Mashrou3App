@@ -24,19 +24,25 @@ import { useApp } from "../../context/AppContext";
 import InboxHeaderButton from "../../components/InboxHeaderButton";
 import { useAdminSidebar } from "../../components/AdminSidebar";
 import { pickDisplayedActiveSeason } from "../../lib/seasonScope";
-import { getSeasonDashboardStats } from "../../lib/saisonsApi";
 import { STATS_LABELS } from "../../lib/statsLabels";
 import {
   countPendingApplications,
   getApplicationEventDate,
   listRecentMemberApplications,
 } from "../../lib/memberApplicationsApi";
-import { listRecentAlertsAdmin } from "../../lib/alertsApi";
+import { mapTestToDashboardExam } from "../../lib/testsApi";
 import {
-  countTestsAdmin,
-  listRecentTestsAdmin,
-  mapTestToDashboardExam,
-} from "../../lib/testsApi";
+  cachedDashboardStats,
+  cachedRecentAlerts,
+  cachedRecentTests,
+  cachedTestsCount,
+} from "../../lib/adminOfflineReads";
+import {
+  OFFLINE_UNAVAILABLE_MESSAGE,
+  fetchOnlineOnly,
+  servedOffline,
+} from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import { REGISTRATION_KIND, REGISTRATION_STATUS } from "../../constants/roles";
 import { rtlText, rtlTextCenter, row, fonts } from "../../constants/rtl";
 import { colors, radii } from "../../constants/theme";
@@ -238,6 +244,8 @@ function DashboardHome({
   onRetry,
   noSeason,
   multipleActive,
+  activitiesUnknown = false,
+  applicationsUnavailable = false,
 }) {
   if (loading) {
     return (
@@ -287,11 +295,12 @@ function DashboardHome({
     );
   }
 
-  const members = stats?.members ?? 0;
+  // Compteur inconnu (hors ligne, jamais lu) : « — », jamais 0.
+  const members = stats?.members ?? null;
   // Hero = membres du saison. 1 → عضو مسجّل, sinon → أعضاء مسجّلون.
   const secondaryStats = [
-    { key: "supervisors", label: "المشرفون", value: stats?.supervisors ?? 0 },
-    { key: "seances", label: "الحصص", value: stats?.seances ?? 0 },
+    { key: "supervisors", label: "المشرفون", value: stats?.supervisors ?? "—" },
+    { key: "seances", label: "الحصص", value: stats?.seances ?? "—" },
     {
       key: "exams",
       label: "الاختبارات",
@@ -303,7 +312,7 @@ function DashboardHome({
     <View style={dhStyles.wrapper}>
       <SectionCard borderColor={colors.border}>
         <View style={dhStyles.heroRow}>
-          <Text style={dhStyles.heroValue}>{members}</Text>
+          <Text style={dhStyles.heroValue}>{members ?? "—"}</Text>
           <Text style={dhStyles.heroLabel}>{membersLabel(members)}</Text>
         </View>
         {multipleActive ? (
@@ -344,8 +353,18 @@ function DashboardHome({
       </View>
 
       <SectionCard title="آخر النشاطات" borderColor={colors.border}>
-        {activities.length === 0 ? (
-          <Text style={dhStyles.activityEmpty}>لا يوجد نشاط بعد</Text>
+        {/* Hors ligne : demandes d'inscription jamais en cache (tests et alertes : cache). */}
+        {applicationsUnavailable && !activitiesUnknown ? (
+          <Text style={dhStyles.activityEmpty}>
+            {`طلبات التسجيل: ${OFFLINE_UNAVAILABLE_MESSAGE}`}
+          </Text>
+        ) : null}
+        {activitiesUnknown ? (
+          <Text style={dhStyles.activityEmpty}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
+        ) : activities.length === 0 ? (
+          applicationsUnavailable ? null : (
+            <Text style={dhStyles.activityEmpty}>لا يوجد نشاط بعد</Text>
+          )
         ) : (
           activities.map((activity) => {
             const Icon = activity.icon;
@@ -388,6 +407,11 @@ export default function AdminDashboard({ navigation }) {
   const [dashLoading, setDashLoading] = useState(true);
   const [dashError, setDashError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Hors ligne : tests et alertes récents tous deux inconnus / demandes non lues.
+  const [activitiesUnknown, setActivitiesUnknown] = useState(false);
+  const [applicationsUnavailable, setApplicationsUnavailable] = useState(false);
+  // Retour du réseau : relecture si l'écran est affiché (sinon au prochain focus).
+  const markOffline = useOfflineReload(() => setReloadKey((n) => n + 1));
   const { openSidebar, sidebar, messagesFab } = useAdminSidebar(navigation, "home", {
     registrationsBadge: pendingApplications,
   });
@@ -407,19 +431,43 @@ export default function AdminDashboard({ navigation }) {
             setRecentApplications([]);
             setRecentAlerts([]);
             setPendingApplications(0);
+            setActivitiesUnknown(false);
+            setApplicationsUnavailable(false);
             setDashLoading(false);
           }
           return;
         }
         const [res, countRes, listRes, pendingRes, appsRes, alertsRes] = await Promise.all([
-          getSeasonDashboardStats(activeSeason.id),
-          countTestsAdmin(null, activeSeason.id),
-          listRecentTestsAdmin(8, activeSeason.id),
-          countPendingApplications(activeSeason.id),
-          listRecentMemberApplications(activeSeason.id, 30),
-          listRecentAlertsAdmin(activeSeason.id, 10),
+          cachedDashboardStats(activeSeason.id),
+          cachedTestsCount(activeSeason.id),
+          cachedRecentTests(activeSeason.id, 8),
+          // Demandes d'inscription : jamais en cache.
+          fetchOnlineOnly(() => countPendingApplications(activeSeason.id)),
+          fetchOnlineOnly(() => listRecentMemberApplications(activeSeason.id, 30)),
+          cachedRecentAlerts(activeSeason.id, 10),
         ]);
         if (cancelled) return;
+        const results = [res, countRes, listRes, pendingRes, appsRes, alertsRes];
+        markOffline(...results);
+        if (results.some(servedOffline)) {
+          // Hors ligne : chaque bloc affiche ce qui est connu, sans Alert ni erreur globale.
+          setSeasonStats(
+            res.ok
+              ? { members: res.members, supervisors: res.supervisors, seances: res.seances }
+              : null
+          );
+          setExamCount(countRes.ok ? countRes.count ?? 0 : null);
+          setRecentExams(listRes.ok ? (listRes.tests || []).map(mapTestToDashboardExam) : []);
+          setRecentApplications(appsRes.ok ? appsRes.applications || [] : []);
+          setRecentAlerts(alertsRes.ok ? alertsRes.alerts || [] : []);
+          setPendingApplications(pendingRes.ok ? pendingRes.count ?? 0 : null);
+          setActivitiesUnknown(!listRes.ok && !alertsRes.ok);
+          setApplicationsUnavailable(!appsRes.ok);
+          setDashLoading(false);
+          return;
+        }
+        setActivitiesUnknown(false);
+        setApplicationsUnavailable(false);
         if (
           !res.ok ||
           !countRes.ok ||
@@ -455,14 +503,15 @@ export default function AdminDashboard({ navigation }) {
       return () => {
         cancelled = true;
       };
-    }, [activeSeason?.id, reloadKey])
+    }, [activeSeason?.id, reloadKey, markOffline])
   );
 
+  // null : compteur inconnu hors ligne (affiché « — »). En ligne, toujours lu.
   const derivedStats = {
-    members: seasonStats?.members ?? 0,
-    supervisors: seasonStats?.supervisors ?? 0,
-    seances: seasonStats?.seances ?? 0,
-    exams: examCount ?? 0,
+    members: seasonStats?.members ?? null,
+    supervisors: seasonStats?.supervisors ?? null,
+    seances: seasonStats?.seances ?? null,
+    exams: examCount,
   };
 
   const recentActivities = useMemo(
@@ -529,6 +578,8 @@ export default function AdminDashboard({ navigation }) {
           onRetry={() => setReloadKey((n) => n + 1)}
           noSeason={!activeSeason?.id}
           multipleActive={multipleActive}
+          activitiesUnknown={activitiesUnknown}
+          applicationsUnavailable={applicationsUnavailable}
         />
       </ScrollView>
 

@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
-  Image,
   Alert,
   ActivityIndicator,
 } from "react-native";
@@ -21,16 +20,23 @@ import { colors, radii } from "../../constants/theme";
 import { row, rtlText, rtlTextBold, fonts, arrowBack, textAlignStart } from "../../constants/rtl";
 import { useApp } from "../../context/AppContext";
 import { ROLES } from "../../constants/roles";
-import { getSupervisorActiveSeance } from "../../lib/membersApi";
 import {
-  getMyAcceptedSeance,
-  resolveAdminProfile,
-  getConversation,
   markConversationRead,
   sendMessage,
   subscribeConversation,
 } from "../../lib/messagesApi";
+import {
+  cachedAdminProfile,
+  cachedConversation,
+  cachedMyAcceptedSeance,
+  cachedSupervisorActiveSeance,
+} from "../../lib/messagingOfflineReads";
+import { OFFLINE_UNAVAILABLE_MESSAGE } from "../../lib/offlineCache";
+import { isOffline } from "../../lib/networkState";
+import { requireOnline } from "../../lib/toast";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
 import ProfileAvatar from "../../components/ProfileAvatar";
+import ChatBubbleImage from "../../components/ChatBubbleImage";
 import { resolvePublicAvatarUrl } from "../../lib/avatarApi";
 
 function formatTime(iso) {
@@ -73,6 +79,14 @@ export default function ChatConversationScreen({ navigation, route }) {
   const isSupervisor = role === ROLES.SUPERVISOR;
   const isMember = role === ROLES.MEMBER;
 
+  /** Conversation jamais lue en ligne (hors ligne, sans cache) : message, pas de fil vide. */
+  const [historyUnavailable, setHistoryUnavailable] = useState(false);
+  // Retour du réseau : conversation relue (messages reçus pendant la coupure).
+  // L'effet ne dépend pas du focus et Realtime ne relit rien : pas de double requête.
+  const [reloadKey, setReloadKey] = useState(0);
+  const bumpReload = () => setReloadKey((n) => n + 1);
+  const markOffline = useOfflineReload(bumpReload, bumpReload);
+
   // Chargement de la conversation réelle (au lieu de l'ancien mock
   // INITIAL_MESSAGES) : résolution du correspondant + séance selon le rôle.
   // otherId ne contient JAMAIS la chaîne "admin" : uniquement un UUID de
@@ -85,6 +99,8 @@ export default function ChatConversationScreen({ navigation, route }) {
         let otherId = null;
         let seanceId = null;
         let failReason = null;
+        /** Résolution impossible faute de réseau (sans cache) : ni Alert ni retour. */
+        let resolutionOffline = false;
 
         if (isMember) {
           if (isAdmin) {
@@ -94,10 +110,11 @@ export default function ChatConversationScreen({ navigation, route }) {
             // Conversation permanente avec le superviseur assigné (même sans
             // historique). On ancre l'envoi sur la séance où ce superviseur
             // est réellement lié, sinon RLS refuse le message.
-            const assignedRes = await getMyAcceptedSeance({
+            const assignedRes = await cachedMyAcceptedSeance({
               seanceId: routeSeanceId || null,
               superviseurId: contactId || null,
             });
+            markOffline(assignedRes);
             const assigned = assignedRes?.ok ? assignedRes.seance : null;
             if (assigned?.superviseur_id) {
               seanceId = assigned.id;
@@ -105,6 +122,8 @@ export default function ChatConversationScreen({ navigation, route }) {
             } else if (routeSeanceId && contactId) {
               seanceId = routeSeanceId;
               otherId = contactId;
+            } else if (assignedRes?.offline) {
+              resolutionOffline = true;
             } else {
               failReason =
                 assignedRes?.error || "لم يتم العثور على حصة مرتبطة بالمشرف";
@@ -118,12 +137,15 @@ export default function ChatConversationScreen({ navigation, route }) {
               setHeaderAvatarUrl(resolvePublicAvatarUrl(contactId, null));
             }
           } else {
-            const res = await resolveAdminProfile();
+            const res = await cachedAdminProfile();
+            markOffline(res);
             if (res?.ok && res.admin) {
               otherId = res.admin.id;
               setHeaderAvatarUrl((prev) =>
                 prev || resolvePublicAvatarUrl(res.admin.id, res.admin.avatar_url)
               );
+            } else if (res?.offline) {
+              resolutionOffline = true;
             } else {
               failReason = res?.error || "لم يتم العثور على حساب الإدارة";
             }
@@ -142,7 +164,8 @@ export default function ChatConversationScreen({ navigation, route }) {
           if (routeSeanceId) {
             seanceId = routeSeanceId;
           } else {
-            const seanceRes = await getSupervisorActiveSeance(authId);
+            const seanceRes = await cachedSupervisorActiveSeance(authId);
+            markOffline(seanceRes);
             seanceId =
               seanceRes?.ok && seanceRes.seance ? seanceRes.seance.id : null;
           }
@@ -152,6 +175,10 @@ export default function ChatConversationScreen({ navigation, route }) {
         if (cancelled) return;
         setConversation({ otherId, seanceId });
         if (!otherId) {
+          if (resolutionOffline) {
+            setHistoryUnavailable(true);
+            return;
+          }
           if (failReason) {
             Alert.alert("تعذر فتح المحادثة", failReason);
           }
@@ -162,13 +189,20 @@ export default function ChatConversationScreen({ navigation, route }) {
         // Côté membre : un seul fil avec le superviseur, toutes saisons
         // confondues. L'envoi reste lié à la séance courante (RG6).
         const historySeanceId = isMember ? null : seanceId;
-        const res = await getConversation({
-          otherUserId: otherId,
-          seanceId: historySeanceId,
-        });
-        if (cancelled || !res.ok) return;
+        const res = await cachedConversation(otherId, historySeanceId);
+        if (cancelled) return;
+        markOffline(res);
+        if (!res.ok) {
+          // Hors ligne sans cache : message ; les messages déjà affichés restent.
+          if (res.offline) setHistoryUnavailable(true);
+          return;
+        }
+        setHistoryUnavailable(false);
         setMessages((res.messages || []).map((m) => normalizeMessage(m, authId)));
-        markConversationRead({ otherUserId: otherId, seanceId: historySeanceId });
+        // Marquage « lu » ignoré en silence hors ligne (aucune file d'envoi).
+        if (!res.fromCache && !isOffline()) {
+          markConversationRead({ otherUserId: otherId, seanceId: historySeanceId });
+        }
       } catch (e) {
         console.warn(
           "ChatConversationScreen: échec de chargement —",
@@ -179,7 +213,7 @@ export default function ChatConversationScreen({ navigation, route }) {
     return () => {
       cancelled = true;
     };
-  }, [authId, contactId, contactRole, routeSeanceId, isAdmin, isSupervisor, isMember, navigation]);
+  }, [authId, contactId, contactRole, routeSeanceId, isAdmin, isSupervisor, isMember, navigation, reloadKey, markOffline]);
 
   // Abonnement Realtime aux nouveaux messages du binôme
   useEffect(() => {
@@ -201,6 +235,8 @@ export default function ChatConversationScreen({ navigation, route }) {
     runSend(async () => {
       const trimmed = inputText.trim();
       if (!trimmed) return;
+      // Hors ligne : toast, le texte reste dans le champ (aucune file d'envoi).
+      if (!requireOnline()) return;
       if (!conversation.otherId || !authId) return;
       if (isMember && !conversation.seanceId) {
         Alert.alert("تعذر الإرسال", "لا توجد حصة مرتبطة بالمشرف");
@@ -232,7 +268,7 @@ export default function ChatConversationScreen({ navigation, route }) {
       <View style={[styles.bubbleRow, { justifyContent: isMine ? "flex-start" : "flex-end" }]}>
         <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
           {item.image ? (
-            <Image source={{ uri: item.image }} style={styles.bubbleImage} resizeMode="cover" />
+            <ChatBubbleImage uri={item.image} style={styles.bubbleImage} />
           ) : null}
           {item.text ? (
             <Text style={[styles.bubbleText, isMine ? styles.bubbleTextMine : styles.bubbleTextOther]}>
@@ -285,13 +321,19 @@ export default function ChatConversationScreen({ navigation, route }) {
             </View>
           </LinearGradient>
         </View>
-        <FlatList
-          data={[...messages].reverse()}
-          keyExtractor={(item) => item.id}
-          renderItem={renderMessage}
-          inverted
-          contentContainerStyle={styles.listContent}
-        />
+        {historyUnavailable && messages.length === 0 ? (
+          <View style={styles.unavailableWrap}>
+            <Text style={styles.unavailableText}>{OFFLINE_UNAVAILABLE_MESSAGE}</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={[...messages].reverse()}
+            keyExtractor={(item) => item.id}
+            renderItem={renderMessage}
+            inverted
+            contentContainerStyle={styles.listContent}
+          />
+        )}
 
         <View style={styles.inputBar}>
           <TextInput
@@ -355,6 +397,13 @@ const styles = StyleSheet.create({
   },
 
   listContent: { paddingVertical: 12 },
+  unavailableWrap: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  unavailableText: {
+    fontSize: 14,
+    fontFamily: fonts.regular,
+    color: colors.muted,
+    textAlign: "center",
+  },
   bubbleRow: { flexDirection: row, paddingHorizontal: 16, marginVertical: 4 },
   bubble: {
     maxWidth: "80%",

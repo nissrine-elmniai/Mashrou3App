@@ -21,11 +21,14 @@ import {
   formatDeadlineLabel,
   recordsFromByMemberId,
 } from "./supervisorAttendanceHelpers";
+import { saveSeancePresence } from "../../lib/presenceApi";
 import {
-  getSeancePresenceForDate,
-  saveSeancePresence,
-} from "../../lib/presenceApi";
-import { getSeanceMembers } from "../../lib/membersApi";
+  cachedSeanceMembers,
+  cachedSeancePresenceForDate,
+} from "../../lib/supervisorOfflineReads";
+import { unknownDataMessage } from "../../lib/offlineCache";
+import { useOfflineReload } from "../../hooks/useOfflineReload";
+import { requireOnline } from "../../lib/toast";
 import { emitSupervisorAttendanceSaved } from "./supervisorAttendanceBridge";
 
 /** Fenêtre dépassée : maintenant > fin (heure_debut + 48h). Fermée mais pas encore commencée = false. */
@@ -239,6 +242,13 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
   const [membersLoading, setMembersLoading] = useState(
     !(membersFromRoute && membersFromRoute.length > 0)
   );
+  /** Membres inconnus (échec sans cache) : message au lieu de « بيانات الحصة غير مكتملة ». */
+  const [membersError, setMembersError] = useState(null);
+  // Retour du réseau : membres et présence du jour rechargés (hors focus,
+  // donc aussi au prochain focus si l'écran était en arrière-plan).
+  const [reloadKey, setReloadKey] = useState(0);
+  const bumpReload = () => setReloadKey((n) => n + 1);
+  const markOffline = useOfflineReload(bumpReload, bumpReload);
 
   useEffect(() => {
     if (membersFromRoute && membersFromRoute.length > 0) {
@@ -253,9 +263,11 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     let cancelled = false;
     setMembersLoading(true);
     (async () => {
-      const res = await getSeanceMembers(seanceId);
+      const res = await cachedSeanceMembers(seanceId);
       if (cancelled) return;
+      markOffline(res);
       if (res.ok) {
+        setMembersError(null);
         setMembers(
           (res.members || []).map((m) => ({
             id: m.userId,
@@ -264,13 +276,15 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
             avatarUrl: m.avatarUrl || null,
           }))
         );
+      } else {
+        setMembersError(unknownDataMessage(res));
       }
       setMembersLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [seanceId, membersFromRoute]);
+  }, [seanceId, membersFromRoute, reloadKey, markOffline]);
 
   const memberIds = useMemo(
     () => (members || []).map((m) => m.id).filter(Boolean),
@@ -297,7 +311,9 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     }
     if (!seanceId || !sessionDate || memberIds.length === 0) {
       setLoading(false);
-      setError("بيانات الحصة غير مكتملة");
+      setError(
+        memberIds.length === 0 && membersError ? membersError : "بيانات الحصة غير مكتملة"
+      );
       return;
     }
     if (correctingRef.current) return;
@@ -307,11 +323,15 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     setError(null);
 
     (async () => {
-      const res = await getSeancePresenceForDate(seanceId, sessionDate, memberIds);
+      const res = await cachedSeancePresenceForDate(seanceId, sessionDate, memberIds);
       if (cancelled) return;
+      markOffline(res);
 
       if (!res.ok) {
-        setError(res.error || "تعذر تحميل بيانات الحضور");
+        // Hors ligne, jour jamais ouvert en ligne : « غير متاح دون اتصال ».
+        setError(
+          res.offline ? unknownDataMessage(res) : res.error || "تعذر تحميل بيانات الحضور"
+        );
         setLoading(false);
         return;
       }
@@ -331,10 +351,21 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
     return () => {
       cancelled = true;
     };
-  }, [seanceId, sessionDate, memberIds, readOnly, membersLoading]);
+  }, [
+    seanceId,
+    sessionDate,
+    memberIds,
+    readOnly,
+    membersLoading,
+    membersError,
+    reloadKey,
+    markOffline,
+  ]);
 
   const handleSave = async () => {
     if (readOnly || !seanceId || !sessionDate || saving || loading) return;
+    // Hors ligne : toast seulement, aucune modification.
+    if (!requireOnline()) return;
 
     const payload = {};
     memberIds.forEach((id) => {
@@ -363,6 +394,8 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
 
   const startCorrection = () => {
     if (!windowExceeded || loading || error || saving) return;
+    // Correction (formulaire) impossible à enregistrer hors ligne : toast dès l'ouverture.
+    if (!requireOnline()) return;
     setCorrectionRecords(recordsFromByMemberId(memberIds, byMemberId));
     correctingRef.current = true;
     setCorrecting(true);
@@ -377,11 +410,14 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
 
   const toggleCorrection = (id, value) => {
     if (saving) return;
+    if (!requireOnline()) return;
     setCorrectionRecords((prev) => ({ ...prev, [id]: value }));
   };
 
   const commitCorrection = async (payload) => {
     if (!correctingRef.current || saveLock.current || !seanceId || !sessionDate) return;
+    // Réseau perdu pendant la confirmation : toast, correction conservée.
+    if (!requireOnline()) return;
     saveLock.current = true;
     setSaving(true);
     const res = await saveSeancePresence(seanceId, sessionDate, payload);
@@ -405,6 +441,7 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
 
   const requestCorrectionSave = () => {
     if (!correcting || saving || loading) return;
+    if (!requireOnline()) return;
 
     const payload = {};
     let unsetSavedAbsent = 0;
@@ -489,9 +526,11 @@ export default function SupervisorAttendanceDetailScreen({ navigation, route }) 
           correctionRecords={correctionRecords}
           records={records}
           onToggleCorrection={toggleCorrection}
-          onToggleRecord={(id, value) =>
-            setRecords((prev) => ({ ...prev, [id]: value }))
-          }
+          onToggleRecord={(id, value) => {
+            // Pointage hors ligne : toast dès l'appui (aucune modification locale).
+            if (!requireOnline()) return;
+            setRecords((prev) => ({ ...prev, [id]: value }));
+          }}
         />
       }
     />
