@@ -179,8 +179,17 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
 
   const bellCount = stats?.pendingRegs ?? pendingCount;
 
+  // Demande déjà traitée ou supprimée : la liste est déjà relue par reviewRegistration.
+  const alertReviewFailure = (result, fallback) => {
+    if (result?.code === "stale") {
+      Alert.alert("تنبيه", result.error);
+      return;
+    }
+    Alert.alert("خطأ", result?.error || fallback);
+  };
+
   const acceptAndInvite = async (reg) => {
-    // Accepter : hors ligne, toast avant tout appel (reviewRegistration inchangé).
+    // Accepter : hors ligne, toast avant tout appel.
     if (!requireOnline()) return;
     if (getRegistrationKind(reg) === REGISTRATION_KIND.SEASON_RENEWAL) {
       setSendingId(reg.id);
@@ -190,7 +199,7 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
           REGISTRATION_STATUS.ACCEPTED
         );
         if (!result?.ok) {
-          Alert.alert("خطأ", result?.error || "تعذر قبول إعادة التسجيل");
+          alertReviewFailure(result, "تعذر قبول إعادة التسجيل");
           return;
         }
         Alert.alert("تم القبول", "قُبلت إعادة تسجيل العضو للموسم.");
@@ -217,19 +226,21 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
         REGISTRATION_STATUS.ACCEPTED
       );
       if (!result?.ok) {
-        Alert.alert("خطأ", result?.error || "تعذر قبول الطلب");
+        alertReviewFailure(result, "تعذر قبول الطلب");
         return;
       }
 
+      // Adresse de la ligne renvoyée par le serveur, pas de la liste en mémoire.
+      const decided = result.registration || reg;
       const mail = await sendMemberAcceptEmail({
-        toEmail: reg.email,
-        fullName: reg.fullName,
+        toEmail: decided.email,
+        fullName: decided.fullName,
       });
 
       if (mail.ok) {
         Alert.alert(
           "تم القبول",
-          `تم حفظ البيانات في Supabase وإرسال الرسالة إلى:\n${reg.email}`
+          `تم حفظ البيانات في Supabase وإرسال الرسالة إلى:\n${decided.email}`
         );
       } else {
         Alert.alert(
@@ -261,12 +272,13 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
               REGISTRATION_STATUS.REJECTED
             );
             if (!result?.ok) {
-              Alert.alert("خطأ", result?.error || "تعذر رفض الطلب");
+              alertReviewFailure(result, "تعذر رفض الطلب");
               return;
             }
             rejected = true;
             if (result.kind !== REGISTRATION_KIND.JOIN) return;
-            if (!reg.email) {
+            const decided = result.registration || reg;
+            if (!decided.email) {
               Alert.alert(
                 "تم الرفض",
                 "حُفظ الرفض، لكن لا يوجد بريد إلكتروني لإعلام المترشح."
@@ -274,8 +286,8 @@ export default function AdminRegistrationsScreen({ navigation, route }) {
               return;
             }
             const mail = await sendMemberRejectEmail({
-              toEmail: reg.email,
-              fullName: reg.fullName,
+              toEmail: decided.email,
+              fullName: decided.fullName,
             });
             if (!mail.ok) {
               Alert.alert(

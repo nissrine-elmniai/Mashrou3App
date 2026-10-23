@@ -46,15 +46,21 @@ function isMissingColumnOrRelationship(error) {
   );
 }
 
+/** Début de saison : uniquement saisons.start_date (jointure ou ligne saisons). */
 function seasonStartFromRow(row) {
-  return row?.date_debut || row?.start_date || row?.saisons?.date_debut || row?.saisons?.start_date || null;
+  return row?.saisons?.start_date || row?.start_date || null;
 }
 
 function withNormalizedSaison(seance, startDate) {
   if (!seance) return seance;
-  const date_debut = startDate || seasonStartFromRow(seance);
-  if (!date_debut) return seance;
-  return { ...seance, saisons: { date_debut, start_date: date_debut } };
+  // Ne pas écraser l'objet saisons de la jointure PostgREST.
+  if (seance.saisons?.start_date) return seance;
+  const start = startDate || seasonStartFromRow(seance);
+  if (!start) return seance;
+  return {
+    ...seance,
+    saisons: { ...(seance.saisons || {}), start_date: start },
+  };
 }
 
 /** Traduit une erreur de table Supabase (table absente / RLS / doublon / autre). */
@@ -145,8 +151,8 @@ async function attachSaisonDatesToSeances(seances) {
 
   return list.map((s) => {
     if (!s) return s;
-    const date_debut = seasonStartFromRow(s) || dateById[s.saison_id];
-    return withNormalizedSaison(s, date_debut);
+    const start = seasonStartFromRow(s) || dateById[s.saison_id];
+    return withNormalizedSaison(s, start);
   });
 }
 

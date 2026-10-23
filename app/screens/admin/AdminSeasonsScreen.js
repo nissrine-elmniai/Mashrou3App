@@ -97,11 +97,6 @@ function formatTimeDisplay(str) {
   return normalized ? normalized.slice(0, 5) : "";
 }
 
-function seasonDateToStorage(value) {
-  if (!value) return "";
-  return String(value).trim().replace(/\//g, "-").slice(0, 10);
-}
-
 function confirmSuperviseurSwap({ nomB }) {
   const message = `هذا المشرف مكلف حالياً بحصة «${nomB}». هل تريد تبديل المشرفين بين الحصتين؟`;
   return new Promise((resolve) => {
@@ -380,8 +375,6 @@ export default function AdminSeasonsScreen({ navigation }) {
     }
 
     setSaving(true);
-    const seasonStart = seasonDateToStorage(activeSeason?.startDate) || null;
-    const seasonEnd = seasonDateToStorage(activeSeason?.endDate) || null;
     let result;
     if (editingId) {
       result = await updateSeance({
@@ -396,6 +389,7 @@ export default function AdminSeasonsScreen({ navigation }) {
         },
       });
     } else {
+      // Bornes de saison : saisons.start_date uniquement — pas de copie dans seances.
       result = await createSeance({
         nom,
         superviseurId: form.superviseurId,
@@ -404,8 +398,6 @@ export default function AdminSeasonsScreen({ navigation }) {
         saisonId: activeSeason.id,
         heureDebut: form.heureDebut,
         heureFin: form.heureFin,
-        dateDebut: seasonStart,
-        dateFin: seasonEnd,
       });
     }
     if (!result.ok) {

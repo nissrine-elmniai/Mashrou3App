@@ -23,6 +23,49 @@ import InboxHeaderButton from "../../components/InboxHeaderButton";
 import AppToast from "../../components/AppToast";
 import { requireOnline } from "../../lib/toast";
 import { parseSeasonStartDate } from "../../lib/saisonsApi";
+import { monthLabelAr } from "../../lib/seasonStatsApi";
+import { WEEKDAY_JS_INDEX_TO_JOUR_ENUM } from "../supervisor/supervisorHelpers";
+
+const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function digitsOnly(value, max) {
+  return String(value || "").replace(/\D/g, "").slice(0, max);
+}
+
+function isLeapYear(year) {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/** YYYY-MM-DD, ou null. Pas de toISOString : le calendrier est vérifié à la main. */
+function seasonStartFromParts(dayRaw, monthRaw, yearRaw) {
+  const dayText = String(dayRaw || "").trim();
+  const monthText = String(monthRaw || "").trim();
+  const yearText = String(yearRaw || "").trim();
+  if (!/^\d{1,2}$/.test(dayText) || !/^\d{1,2}$/.test(monthText) || !/^\d{4}$/.test(yearText)) {
+    return null;
+  }
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  if (month < 1 || month > 12 || day < 1) return null;
+  const maxDay = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month];
+  if (day > maxDay) return null;
+  return `${yearText}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** « تاريخ البداية : الأحد 4 أكتوبر 2026 ». Jour de la semaine en UTC. */
+function formatSeasonStartLabel(dayRaw, monthRaw, yearRaw) {
+  const iso = seasonStartFromParts(dayRaw, monthRaw, yearRaw);
+  if (!iso || !parseSeasonStartDate(iso)) return "";
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const weekday = WEEKDAY_JS_INDEX_TO_JOUR_ENUM[
+    new Date(Date.UTC(year, month - 1, day)).getUTCDay()
+  ];
+  if (!weekday) return "";
+  return `تاريخ البداية : ${weekday} ${day} ${monthLabelAr(iso.slice(0, 7))}`;
+}
 
 const palette = {
   primary: "#2E7D32",
@@ -44,7 +87,9 @@ export default function AdminNewSeasonScreen({ navigation }) {
 
   const [seasonType, setSeasonType] = useState(SEASON_TYPES.REGULAR);
   const [name, setName] = useState("");
-  const [startDate, setStartDate] = useState("");
+  const [startDay, setStartDay] = useState("");
+  const [startMonth, setStartMonth] = useState("");
+  const [startYear, setStartYear] = useState("");
   const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -56,6 +101,7 @@ export default function AdminNewSeasonScreen({ navigation }) {
   const seasonName = name.trim();
   const typeLabel =
     SEASON_TYPE_LABELS[seasonType] || SEASON_TYPE_LABELS.regular;
+  const startDateLabel = formatSeasonStartLabel(startDay, startMonth, startYear);
 
   const closeConfirm = () => {
     if (saving) return;
@@ -70,13 +116,25 @@ export default function AdminNewSeasonScreen({ navigation }) {
     // Nouvelle saison : hors ligne, toast sans ouvrir la confirmation.
     if (!requireOnline()) return;
     const versionNum = Number.parseInt(String(version || "").trim(), 10);
-    const start = parseSeasonStartDate(startDate);
     if (!seasonName || !Number.isFinite(versionNum) || versionNum < 1) {
       Alert.alert("تنبيه", "املأ جميع الحقول");
       return;
     }
-    if (!start) {
-      Alert.alert("تنبيه", "صيغة التاريخ غير صالحة — استخدم 2026/09/01");
+    if (!String(startDay).trim() || !String(startMonth).trim() || !String(startYear).trim()) {
+      Alert.alert("تنبيه", "أدخل اليوم والشهر والسنة");
+      return;
+    }
+    const start = seasonStartFromParts(startDay, startMonth, startYear);
+    if (!start || !parseSeasonStartDate(start)) {
+      Alert.alert("تنبيه", "التاريخ غير صالح");
+      return;
+    }
+    const year = Number(String(startYear).trim());
+    const currentYear = new Date().getFullYear();
+    const minYear = currentYear - 1;
+    const maxYear = currentYear + 1;
+    if (year < minYear || year > maxYear) {
+      Alert.alert("تنبيه", `السنة يجب أن تكون بين ${minYear} و ${maxYear}`);
       return;
     }
     setPassword("");
@@ -116,9 +174,14 @@ export default function AdminNewSeasonScreen({ navigation }) {
         return;
       }
       setFailedAttempts(0);
+      const start = seasonStartFromParts(startDay, startMonth, startYear);
+      if (!start || !parseSeasonStartDate(start)) {
+        Alert.alert("تنبيه", "التاريخ غير صالح");
+        return;
+      }
       const result = await startNewSeason({
         name,
-        startDate,
+        startDate: start,
         version,
         type: seasonType,
       });
@@ -130,7 +193,9 @@ export default function AdminNewSeasonScreen({ navigation }) {
       setPasswordStep(false);
       setSeasonType(SEASON_TYPES.REGULAR);
       setName("");
-      setStartDate("");
+      setStartDay("");
+      setStartMonth("");
+      setStartYear("");
       setVersion("");
       const deleted = result.supervisorsDeleted ?? 0;
       const total = result.supervisorsTotal ?? 0;
@@ -242,15 +307,47 @@ export default function AdminNewSeasonScreen({ navigation }) {
             />
 
             <Text style={styles.fieldLabel}>تاريخ البداية</Text>
-            <TextInput
-              style={styles.fieldInput}
-              placeholder="2026/09/01"
-              placeholderTextColor={palette.placeholder}
-              value={startDate}
-              onChangeText={setStartDate}
-              keyboardType="numbers-and-punctuation"
-              textAlign={textAlignStart}
-            />
+            <View style={styles.dateRow}>
+              <View style={styles.dateField}>
+                <Text style={styles.dateFieldLabel}>اليوم</Text>
+                <TextInput
+                  style={styles.dateFieldInput}
+                  placeholder="4"
+                  placeholderTextColor={palette.placeholder}
+                  value={startDay}
+                  onChangeText={(value) => setStartDay(digitsOnly(value, 2))}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  textAlign="center"
+                />
+              </View>
+              <View style={styles.dateField}>
+                <Text style={styles.dateFieldLabel}>الشهر</Text>
+                <TextInput
+                  style={styles.dateFieldInput}
+                  placeholder="10"
+                  placeholderTextColor={palette.placeholder}
+                  value={startMonth}
+                  onChangeText={(value) => setStartMonth(digitsOnly(value, 2))}
+                  keyboardType="number-pad"
+                  maxLength={2}
+                  textAlign="center"
+                />
+              </View>
+              <View style={styles.dateField}>
+                <Text style={styles.dateFieldLabel}>السنة</Text>
+                <TextInput
+                  style={styles.dateFieldInput}
+                  placeholder="2026"
+                  placeholderTextColor={palette.placeholder}
+                  value={startYear}
+                  onChangeText={(value) => setStartYear(digitsOnly(value, 4))}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  textAlign="center"
+                />
+              </View>
+            </View>
 
             <Text style={styles.fieldLabel}>رقم النسخة</Text>
             <TextInput
@@ -285,6 +382,9 @@ export default function AdminNewSeasonScreen({ navigation }) {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{`تأكيد انطلاق ${typeLabel}`}</Text>
+            {startDateLabel ? (
+              <Text style={styles.modalDate}>{startDateLabel}</Text>
+            ) : null}
             <Text style={styles.modalLead}>
               سيُحذف نهائياً، لكل المواسم (العادي والصيفي):
             </Text>
@@ -444,6 +544,34 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     ...rtlText,
   },
+  dateRow: {
+    flexDirection: row,
+    gap: 8,
+    marginBottom: 14,
+  },
+  dateField: {
+    flex: 1,
+  },
+  dateFieldLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: palette.textSecondary,
+    marginBottom: 6,
+    textAlign: "center",
+    writingDirection: "rtl",
+  },
+  dateFieldInput: {
+    backgroundColor: "#FAFAFA",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: palette.textPrimary,
+    textAlign: "center",
+    writingDirection: "ltr",
+  },
   typeRow: {
     flexDirection: row,
     gap: 8,
@@ -516,6 +644,13 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: palette.textPrimary,
     marginBottom: 10,
+    ...rtlText,
+  },
+  modalDate: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: palette.primary,
+    marginBottom: 8,
     ...rtlText,
   },
   modalLead: {

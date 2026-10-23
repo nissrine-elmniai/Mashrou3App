@@ -574,7 +574,8 @@ async function buildTheoreticalOccurrencesForSeance(
 }
 
 /**
- * Historique agrégé par occurrence de séance (depuis saisons.start_date).
+ * Historique agrégé par occurrence de séance.
+ * Borne basse = saisons.start_date (paramètre saisonDateDebut), jamais seances.date_debut.
  * getLatestSeanceOccurrenceStatus reste inchangé pour les pastilles / occurrence courante.
  */
 export async function buildSeanceAttendanceHistory(
@@ -593,6 +594,15 @@ export async function buildSeanceAttendanceHistory(
   }
   if (!saisonDateDebut) {
     return { ok: false, error: "تاريخ بداية الموسم غير متوفر — تعذر عرض سجل الحضور" };
+  }
+
+  const seasonSlash = String(saisonDateDebut)
+    .slice(0, 10)
+    .replace(/-/g, "/");
+  const todaySlash = timestampToSlashDate(refDate);
+  // Ex-ligne 512 (startBound > endBound) : saison future → erreur, pas liste vide.
+  if (seasonSlash && todaySlash && seasonSlash > todaySlash) {
+    return { ok: false, error: "الموسم لم يبدأ بعد", rows: [] };
   }
 
   const ids = [...new Set((memberIds || []).filter(Boolean))];
@@ -622,6 +632,14 @@ export async function buildSeanceAttendanceHistory(
     recordedRes.dates || []
   );
 
+  if (recordedRes.degraded || theoreticalRes.degraded) {
+    return {
+      ok: false,
+      error: "تعذر قراءة سجل الحضور من قاعدة البيانات",
+      rows: [],
+    };
+  }
+
   if (sessionDates.length === 0) {
     return { ok: true, rows: [], markingContext: null };
   }
@@ -634,7 +652,7 @@ export async function buildSeanceAttendanceHistory(
   if (!presRes.ok) {
     return { ok: false, error: presRes.error, rows: [] };
   }
-  if (presRes.degraded || recordedRes.degraded || theoreticalRes.degraded) {
+  if (presRes.degraded) {
     return {
       ok: false,
       error: "تعذر قراءة سجل الحضور من قاعدة البيانات",
