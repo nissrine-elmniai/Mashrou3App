@@ -71,7 +71,7 @@ import {
   normalizeAppRole,
 } from "../lib/auth";
 import {
-  upsertMemberApplication,
+  decideMemberApplication,
   insertPendingMemberApplication,
   listMemberApplications,
   findOpenSeasonRenewal,
@@ -1596,34 +1596,65 @@ export function AppProvider({ children }) {
       const kind = getRegistrationKind(reg);
       const isSeasonRenewal = kind === REGISTRATION_KIND.SEASON_RENEWAL;
 
-      if (status === REGISTRATION_STATUS.REJECTED) {
-        const memberForEmail = users.find(
-          (u) => u.id === reg.userId || u.authId === reg.userId
-        );
-        const sync = await upsertMemberApplication(
-          {
-            ...reg,
-            email:
-              reg.email ||
-              memberForEmail?.email ||
-              "",
-          },
-          REGISTRATION_STATUS.REJECTED
-        );
-        if (!sync.ok && !sync.skipped) {
-          return {
-            ok: false,
-            error: sync.error || "تعذر حفظ الرفض في Supabase",
-          };
-        }
-
+      if (
+        status !== REGISTRATION_STATUS.REJECTED &&
+        status !== REGISTRATION_STATUS.ACCEPTED
+      ) {
         setRegistrations((prev) =>
-          prev.map((r) =>
-            r.id === registrationId
-              ? { ...r, status: REGISTRATION_STATUS.REJECTED }
-              : r
-          )
+          prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
         );
+        return { ok: true };
+      }
+
+      // Un seul UPDATE conditionné par status = 'pending' ; le reste vient des triggers.
+      const decided = await decideMemberApplication({
+        id: reg.id,
+        expectedStatus: "pending",
+        kind,
+        decision: status,
+      });
+      if (decided.code === "stale") {
+        // Déjà traitée, supprimée, ou requête précédente validée après le délai.
+        await refreshRegistrations();
+        return {
+          ok: false,
+          code: "stale",
+          error: "تمت معالجة هذا الطلب أو حذفه",
+        };
+      }
+      if (!decided.ok) {
+        return {
+          ok: false,
+          error:
+            decided.error ||
+            (status === REGISTRATION_STATUS.REJECTED
+              ? "تعذر حفظ الرفض في Supabase"
+              : isSeasonRenewal
+                ? "تعذر حفظ قبول إعادة التسجيل في Supabase"
+                : "تعذر حفظ بيانات العضو في Supabase — نفّذ member_applications.sql وتأكد من جلسة الأدمن"),
+        };
+      }
+
+      // Ligne renvoyée par le serveur ; sans Supabase (skipped), état local.
+      const decidedAt = new Date().toISOString();
+      const localStatus =
+        status === REGISTRATION_STATUS.REJECTED
+          ? REGISTRATION_STATUS.REJECTED
+          : isSeasonRenewal
+            ? REGISTRATION_STATUS.ACCEPTED
+            : REGISTRATION_STATUS.INVITED;
+      const updated = decided.registration || {
+        ...reg,
+        status: localStatus,
+        ...(status === REGISTRATION_STATUS.REJECTED
+          ? { rejectedAt: decidedAt }
+          : { inviteToken: null, acceptedAt: decidedAt }),
+      };
+      setRegistrations((prev) =>
+        prev.map((r) => (r.id === registrationId ? updated : r))
+      );
+
+      if (status === REGISTRATION_STATUS.REJECTED) {
         pushNotification({
           title: isSeasonRenewal ? "رُفضت إعادة التسجيل" : "تم رفض طلب الانضمام",
           body: isSeasonRenewal
@@ -1632,139 +1663,54 @@ export function AppProvider({ children }) {
           audience: isSeasonRenewal && reg.userId ? "user" : "admin",
           userId: isSeasonRenewal ? reg.userId : undefined,
         });
-        return { ok: true, kind };
+        return { ok: true, kind, registration: updated };
       }
 
-      if (status === REGISTRATION_STATUS.ACCEPTED) {
-        // Horodatage complet de la décision (renouvellement et adhésion).
-        const acceptedAt = new Date().toISOString();
-
-        if (isSeasonRenewal) {
-          const member = users.find(
-            (u) => u.id === reg.userId || u.authId === reg.userId
-          );
-          const authUserId = member?.authId || reg.userId;
-          const email = String(reg.email || member?.email || "")
-            .trim()
-            .toLowerCase();
-          const goal = String(
-            reg.hifzAmount || reg.formAnswers?.seasonGoal || ""
-          ).trim();
-
-          if (!email) {
-            return {
-              ok: false,
-              error: "تعذر قبول الطلب — البريد الإلكتروني غير متوفر",
-            };
-          }
-
-          const sync = await upsertMemberApplication(
-            {
-              ...reg,
-              email,
-              userId: authUserId,
-              hifzAmount: goal || reg.hifzAmount,
-              acceptedAt,
-            },
-            REGISTRATION_STATUS.ACTIVATED
-          );
-          if (!sync.ok && !sync.skipped) {
-            return {
-              ok: false,
-              error: sync.error || "تعذر حفظ قبول إعادة التسجيل في Supabase",
-            };
-          }
-
-          if (authUserId && goal) {
-            const profileSync = await updateMemberInfo(authUserId, {
-              hifzAmount: goal,
-            });
-            if (!profileSync.ok && !profileSync.skipped) {
-              return {
-                ok: false,
-                error:
-                  profileSync.error ||
-                  "قُبل الطلب في القاعدة لكن تعذر تحديث مقدار الحفظ في الملف الشخصي",
-              };
-            }
-            setUsers((prev) =>
-              prev.map((u) =>
-                u.id === reg.userId || u.authId === reg.userId
-                  ? { ...u, hifzAmount: goal }
-                  : u
-              )
-            );
-            if (
-              currentUser?.id === reg.userId ||
-              currentUser?.authId === reg.userId
-            ) {
-              setCurrentUser((prev) =>
-                prev ? { ...prev, hifzAmount: goal } : prev
-              );
-            }
-          }
-
-          setRegistrations((prev) =>
-            prev.map((r) =>
-              r.id === registrationId
-                ? { ...r, status: REGISTRATION_STATUS.ACCEPTED, acceptedAt }
-                : r
+      if (isSeasonRenewal) {
+        // profiles.hifz_amount est écrit par sync_profile_from_member_application ;
+        // ici on aligne seulement le cache local sur la ligne renvoyée.
+        const goal = String(updated.hifzAmount || "").trim();
+        if (updated.userId && goal) {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.id === updated.userId || u.authId === updated.userId
+                ? { ...u, hifzAmount: goal }
+                : u
             )
           );
-          if (reg.userId) {
-            pushNotification({
-              title: "قُبل تسجيلك للموسم",
-              body: "تم قبول طلب إعادة تسجيلك للموسم الجديد.",
-              audience: "user",
-              userId: reg.userId,
-            });
+          if (
+            currentUser?.id === updated.userId ||
+            currentUser?.authId === updated.userId
+          ) {
+            setCurrentUser((prev) =>
+              prev ? { ...prev, hifzAmount: goal } : prev
+            );
           }
+        }
+
+        if (reg.userId) {
           pushNotification({
-            title: "إعادة تسجيل مقبولة",
-            body: "قُبلت إعادة تسجيل عضو للموسم.",
-            audience: "admin",
+            title: "قُبل تسجيلك للموسم",
+            body: "تم قبول طلب إعادة تسجيلك للموسم الجديد.",
+            audience: "user",
+            userId: reg.userId,
           });
-          return { ok: true, registration: reg, kind };
         }
-
-        // Adhésion : le même horodatage complet, statut invited (compte encore à créer).
-        const sync = await upsertMemberApplication(
-          { ...reg, acceptedAt },
-          REGISTRATION_STATUS.INVITED
-        );
-        if (!sync.ok) {
-          return {
-            ok: false,
-            error:
-              sync.error ||
-              "تعذر حفظ بيانات العضو في Supabase — نفّذ member_applications.sql وتأكد من جلسة الأدمن",
-          };
-        }
-
-        setRegistrations((prev) =>
-          prev.map((r) =>
-            r.id === registrationId
-              ? {
-                  ...r,
-                  status: REGISTRATION_STATUS.INVITED,
-                  inviteToken: null,
-                  acceptedAt,
-                }
-              : r
-          )
-        );
         pushNotification({
-          title: "دعوة انضمام",
-          body: `تم قبول طلب انضمام ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
+          title: "إعادة تسجيل مقبولة",
+          body: "قُبلت إعادة تسجيل عضو للموسم.",
           audience: "admin",
         });
-        return { ok: true, registration: reg, kind };
+        return { ok: true, registration: updated, kind };
       }
 
-      setRegistrations((prev) =>
-        prev.map((r) => (r.id === registrationId ? { ...r, status } : r))
-      );
-      return { ok: true };
+      // Adhésion : statut invited (compte encore à créer).
+      pushNotification({
+        title: "دعوة انضمام",
+        body: `تم قبول طلب انضمام ${reg.fullName}. يمكنه إنشاء حسابه بالبريد الإلكتروني.`,
+        audience: "admin",
+      });
+      return { ok: true, registration: updated, kind };
     } catch (e) {
       return {
         ok: false,

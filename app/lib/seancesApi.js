@@ -246,7 +246,8 @@ export async function getAllSeances({ saisonId = null, lite = false } = {}) {
 
 /**
  * (Admin) Création d'une séance.
- * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId?, genre?, dateDebut?, dateFin? }
+ * Pas de date_debut/date_fin : le début de saison se lit sur saisons.start_date.
+ * @param {object} payload { nom, saisonId?, jour?, heureDebut?, heureFin?, superviseurId?, genre? }
  * @returns { ok, seance? }
  */
 export async function createSeance({
@@ -257,8 +258,6 @@ export async function createSeance({
   heureFin = null,
   superviseurId = null,
   genre = null,
-  dateDebut = null,
-  dateFin = null,
 }) {
   if (!isSupabaseConfigured()) {
     return { ok: false, error: "Supabase غير مفعّل" };
@@ -296,12 +295,6 @@ export async function createSeance({
     return { ok: false, error: "ساعة النهاية يجب أن تكون بعد ساعة البداية" };
   }
 
-  const start = normalizePgDate(dateDebut);
-  const end = normalizePgDate(dateFin);
-  if (start && end && end < start) {
-    return { ok: false, error: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية" };
-  }
-
   const row = {
     nom: cleanNom,
     saison_id: saisonId || null,
@@ -310,8 +303,6 @@ export async function createSeance({
     heure_fin: endTime,
     superviseur_id: superviseurId || null,
     genre,
-    date_debut: start,
-    date_fin: end,
     statut: "active",
   };
 
