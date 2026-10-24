@@ -32,6 +32,8 @@ export const OBJECTIF_POSITION_REQUIRED_MESSAGE =
 function mapTableError(error, tableLabel) {
   const msg = error?.message || "";
   const details = `${error?.details || ""} ${error?.hint || ""}`;
+  // Messages des triggers (arabe) : renvoyés tels quels à l'UI.
+  if (/[\u0600-\u06FF]/.test(msg)) return msg;
   if (
     msg.includes(OBJECTIF_LOCKED_MESSAGE) ||
     details.includes(OBJECTIF_LOCKED_MESSAGE)
@@ -76,27 +78,69 @@ function isNonEmptySaisonId(saisonId) {
   return saisonId != null && String(saisonId).trim() !== "";
 }
 
+export const OBJECTIF_RESTE_INSUFFISANT_MESSAGE =
+  "بقي أقل من حزب لإتمام الحفظ، لا يمكن تحديد هدف بالأحزاب";
+
+/** Champ vide au clic « حفظ الهدف ». */
+export const OBJECTIF_EMPTY_MESSAGE = "أدخل عدد الأحزاب";
+
+/** Objectif existant déjà atteint (G ≥ cible × 8) — à la place de l'équation. */
+export const OBJECTIF_ALREADY_ACHIEVED_MESSAGE = "تحقق هدفك لهذا الموسم";
+
 /**
- * Saisie d'un objectif de saison : entier 1–60 (hizb), lu comme INCRÉMENT.
- * Chaîne vide ou texte non numérique (ex. « جزء عم ») → ok: false, sans valeur inventée.
+ * Messages de saisie objectif (MIN–N en حزب).
+ * exceeds = T5 serveur ; belowMin = T11 serveur.
  */
-export function parseObjectifInput(raw) {
+export function objectifInputMessages(min, max) {
+  const lo = Number(min);
+  const hi = Number(max);
+  const loLabel = Number.isFinite(lo) ? String(lo) : "—";
+  const hiLabel = Number.isFinite(hi) ? String(hi) : "—";
+  return {
+    empty: OBJECTIF_EMPTY_MESSAGE,
+    invalid: `أدخل عددًا صحيحًا بين ${loLabel} و ${hiLabel}`,
+    belowMin: `الهدف أقل مما حفظته هذا الموسم (الحد الأدنى: ${loLabel})`,
+    exceeds: `الهدف يتجاوز ما تبقى لك من القرآن (الحد الأقصى: ${hiLabel})`,
+  };
+}
+
+/**
+ * Saisie d'un objectif de saison : entier min–max (hizb), lu comme INCRÉMENT.
+ * Défauts : min=1, max=TOTAL_HIZB (inscription sans D/G).
+ */
+export function parseObjectifInput(raw, min = 1, max = TOTAL_HIZB) {
+  const floor = Number(min);
+  const ceiling = Number(max);
+  if (
+    !Number.isFinite(floor) ||
+    !Number.isFinite(ceiling) ||
+    floor < 1 ||
+    ceiling < 1 ||
+    floor > ceiling
+  ) {
+    return { ok: false, error: OBJECTIF_RESTE_INSUFFISANT_MESSAGE };
+  }
+  const msgs = objectifInputMessages(floor, ceiling);
   const trimmed = String(raw ?? "").trim();
   if (trimmed === "") {
-    return { ok: false, error: "أدخل عدد الأحزاب المستهدفة (1 إلى 60)" };
+    return { ok: false, error: msgs.empty };
   }
   const n = Number(trimmed);
-  if (!Number.isInteger(n) || n < 1 || n > TOTAL_HIZB) {
-    return {
-      ok: false,
-      error: "عدد الأحزاب المستهدفة يجب أن يكون بين 1 و 60",
-    };
+  if (!Number.isInteger(n)) {
+    return { ok: false, error: msgs.invalid };
+  }
+  if (n < floor) {
+    return { ok: false, error: msgs.belowMin };
+  }
+  if (n > ceiling) {
+    return { ok: false, error: msgs.exceeds };
   }
   return { ok: true, value: n };
 }
 
 function parseNbHizbCible(raw) {
-  return parseObjectifInput(raw);
+  // Lecture d'une ligne déjà en base : borne absolue 1–60 (CHECK SQL).
+  return parseObjectifInput(raw, 1, TOTAL_HIZB);
 }
 
 function mapObjectifRow(row) {

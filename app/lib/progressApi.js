@@ -211,6 +211,54 @@ const HISTORY_DEBOUNCE_MS = 800;
 /** Total des ثمن (8 × 60 حزب) pour le % global du Coran. */
 export const PROGRESS_TOTAL_TUMUN = TOTAL_HIZB * TUMUNS_PER_HIZB;
 
+/** خاتم : position actuelle = 480 أثمان (60 حزب). */
+export function isKhatm(positionTumuns) {
+  if (positionTumuns == null || positionTumuns === "") return false;
+  return Number(positionTumuns) === PROGRESS_TOTAL_TUMUN;
+}
+
+/**
+ * Plafond d'objectif en حزب : floor((480 − D) / 8).
+ * D null / hors plage → null (pas de plafond calculable).
+ */
+export function computeObjectifMax(departTumuns) {
+  if (departTumuns == null || departTumuns === "") return null;
+  const d = Number(departTumuns);
+  if (!Number.isFinite(d) || d < 0 || d > PROGRESS_TOTAL_TUMUN) return null;
+  return Math.floor((PROGRESS_TOTAL_TUMUN - d) / TUMUNS_PER_HIZB);
+}
+
+/**
+ * Minimum d'objectif en حزب : floor(G / 8) + 1, au moins 1.
+ * G = gain saison (أثمان), null/invalide → 1.
+ */
+export function computeObjectifMin(gainTumuns) {
+  const g = Math.max(0, Number(gainTumuns) || 0);
+  if (!Number.isFinite(g)) return 1;
+  return Math.max(1, Math.floor(g / TUMUNS_PER_HIZB) + 1);
+}
+
+/**
+ * Avancement agrégé des programmes مراجعة (saison déjà filtrée côté appelant).
+ * @returns {null | { objectifHizb, realiseTumuns, pct }}
+ */
+export function computeMouraja3aProgress(programs) {
+  const list = (programs || []).filter(
+    (p) => String(p?.type || "").trim().toLowerCase() === "mouraja3a"
+  );
+  if (list.length === 0) return null;
+  let objectifHizb = 0;
+  let realiseTumuns = 0;
+  for (const p of list) {
+    objectifHizb += Math.max(0, Number(p.nbHizb) || 0);
+    realiseTumuns += Math.max(0, Number(p.completedTumuns) || 0);
+  }
+  if (objectifHizb <= 0) return null;
+  const denom = objectifHizb * TUMUNS_PER_HIZB;
+  const pct = Math.min(100, Math.round((100 * realiseTumuns) / denom));
+  return { objectifHizb, realiseTumuns, pct };
+}
+
 /** Dernière position membre connue (ثمن totaux 0–480). null = pas encore lue / invalidée. */
 let cachedMemberTumuns = null;
 
@@ -619,29 +667,12 @@ export function latestProgressionRow(entries) {
 }
 
 /**
- * Delta de saison : dernière − première ligne de la saison active (`date`).
- * Ignore les lignes `saison_id` null. Masqué si < 2 lignes ou delta 0.
- */
-function computeSeasonDeltaTumuns(entries, saisonId) {
-  if (saisonId == null || saisonId === "") return null;
-  const sid = String(saisonId);
-  const ofSeason = datedProgressionAsc(
-    (entries || []).filter(
-      (e) => e?.saison_id != null && e.saison_id !== "" && String(e.saison_id) === sid
-    )
-  );
-  if (ofSeason.length < 2) return null;
-  const delta =
-    rowTumunTotal(ofSeason[ofSeason.length - 1].e) - rowTumunTotal(ofSeason[0].e);
-  return delta === 0 ? null : delta;
-}
-
-/**
  * Delta 7 jours : position actuelle − dernière ligne strictement avant J-7
  * (sinon première ligne du membre, si plus récente que J-7).
  * Net de position, pas un décompte de lignes. Masqué si delta 0 / pas de date.
+ * Le gain « هذا الموسم » vient de la RPC (seasonProgress.gain), pas d'ici.
  */
-function computeWeekDeltaTumuns(entries, now) {
+export function computeWeekDeltaTumuns(entries, now = new Date()) {
   const dated = datedProgressionAsc(entries);
   if (dated.length === 0) return null;
   const current = dated[dated.length - 1];
@@ -650,17 +681,6 @@ function computeWeekDeltaTumuns(entries, now) {
   const baseline = before.length > 0 ? before[before.length - 1] : dated[0];
   const delta = rowTumunTotal(current.e) - rowTumunTotal(baseline.e);
   return delta === 0 ? null : delta;
-}
-
-/**
- * Indicateurs de rythme (carte التقدم). Une passe sur les lignes déjà chargées.
- * @returns {{ seasonDeltaTumuns: number|null, weekDeltaTumuns: number|null }}
- */
-export function computeProgressPace(entries, saisonId, now = new Date()) {
-  return {
-    seasonDeltaTumuns: computeSeasonDeltaTumuns(entries, saisonId),
-    weekDeltaTumuns: computeWeekDeltaTumuns(entries, now),
-  };
 }
 
 /**

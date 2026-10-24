@@ -26,16 +26,18 @@ import {
 } from "../../lib/memberProgramsApi";
 import {
   flushMemberProgressDelta,
+  isKhatm,
   PROGRESS_LOCKED_MESSAGE,
 } from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
   ENROLLMENT_LOCK_INITIAL,
   cachedMyEnrollment,
+  cachedMyProgressPosition,
   enrollmentLockFromResult,
 } from "../../lib/memberOfflineReads";
 import { useOfflineReload } from "../../hooks/useOfflineReload";
-import { requireOnline } from "../../lib/toast";
+import { requireOnline, showToast } from "../../lib/toast";
 import AppToast from "../../components/AppToast";
 import {
   formatHizbCount,
@@ -51,6 +53,10 @@ const EMPTY_FORM = {
   startDate: "",
   type: PROGRAM_TYPE_HIFZ,
 };
+
+/** Toast au clic sur حفظ pour un membre خاتم (création ou programme مراجعة). */
+const KHATM_HIFZ_LOCKED_TOAST =
+  "لقد أتممت حفظ 60 حزبًا، يمكنك إضافة برامج المراجعة فقط";
 
 function todayStr() {
   return dateToStorage(new Date());
@@ -105,6 +111,8 @@ export default function MemberProgramsPanel({ navigation }) {
   /** Inscription inconnue = ± ثمن (حفظ) verrouillé avec message « inconnu ». */
   const [enrollmentLock, setEnrollmentLock] = useState(ENROLLMENT_LOCK_INITIAL);
   const progressLocked = enrollmentLock.locked;
+  /** خاتم : création limitée aux programmes مراجعة. */
+  const [memberIsKhatm, setMemberIsKhatm] = useState(false);
   /** Id du programme en création : fixé à l'ouverture du modal, réutilisé à chaque envoi. */
   const createIdRef = useRef(null);
   const { busy: saving, run: runSave } = useSubmitLock();
@@ -123,10 +131,14 @@ export default function MemberProgramsPanel({ navigation }) {
 
   useEffect(() => {
     let cancelled = false;
-    cachedMyEnrollment(activeSeasonId).then((res) => {
+    Promise.all([
+      cachedMyEnrollment(activeSeasonId),
+      cachedMyProgressPosition(),
+    ]).then(([enrollRes, posRes]) => {
       if (cancelled) return;
-      markOffline(res);
-      setEnrollmentLock(enrollmentLockFromResult(res));
+      markOffline(enrollRes, posRes);
+      setEnrollmentLock(enrollmentLockFromResult(enrollRes));
+      setMemberIsKhatm(posRes.ok && isKhatm(posRes.metrics?.tumunTotal));
     });
     return () => {
       cancelled = true;
@@ -145,7 +157,12 @@ export default function MemberProgramsPanel({ navigation }) {
     if (!requireOnline()) return;
     createIdRef.current = newMemberProgramId();
     setEditingId(null);
-    setForm({ ...EMPTY_FORM, startDate: todayStr() });
+    setForm({
+      ...EMPTY_FORM,
+      startDate: todayStr(),
+      // خاتم : مراجعة présélectionné (حفظ visible mais verrouillé + toast).
+      type: memberIsKhatm ? PROGRAM_TYPE_MOURAJA3A : PROGRAM_TYPE_HIFZ,
+    });
     setModalVisible(true);
   };
 
@@ -184,6 +201,7 @@ export default function MemberProgramsPanel({ navigation }) {
         durationDays: form.durationDays,
         startDate: form.startDate,
         completedTumuns: existing?.completedTumuns ?? 0,
+        // Toujours le type affiché comme sélectionné (pas de conversion silencieuse).
         type: normalizeProgramType(form.type),
       });
       if (!result.ok) {
@@ -290,6 +308,7 @@ export default function MemberProgramsPanel({ navigation }) {
         onClose={closeModal}
         onSave={handleSave}
         saving={saving}
+        memberIsKhatm={memberIsKhatm}
       />
 
       <Modal
@@ -464,6 +483,7 @@ function ProgramFormModal({
   onClose,
   onSave,
   saving = false,
+  memberIsKhatm = false,
 }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const setField = (key, value) => onChange((prev) => ({ ...prev, [key]: value }));
@@ -478,6 +498,19 @@ function ProgramFormModal({
     if (Platform.OS !== "ios") setShowDatePicker(false);
     if (event.type === "dismissed") return;
     if (selected) setField("startDate", dateToStorage(selected));
+  };
+
+  // خاتم : حفظ grisé + toast sauf si le programme édité est déjà حفظ.
+  const hifzChipLocked =
+    memberIsKhatm && form.type !== PROGRAM_TYPE_HIFZ;
+  const hifzSelected = form.type !== PROGRAM_TYPE_MOURAJA3A;
+
+  const onPressHifzChip = () => {
+    if (hifzChipLocked) {
+      showToast(KHATM_HIFZ_LOCKED_TOAST);
+      return;
+    }
+    setField("type", PROGRAM_TYPE_HIFZ);
   };
 
   return (
@@ -521,16 +554,18 @@ function ProgramFormModal({
             <TouchableOpacity
               style={[
                 styles.typeChip,
-                form.type !== PROGRAM_TYPE_MOURAJA3A && styles.typeChipActive,
+                hifzSelected && styles.typeChipActive,
+                hifzChipLocked && styles.typeChipLocked,
               ]}
-              onPress={() => setField("type", PROGRAM_TYPE_HIFZ)}
+              onPress={onPressHifzChip}
               activeOpacity={0.85}
+              accessibilityState={{ disabled: hifzChipLocked }}
             >
               <Text
                 style={[
                   styles.typeChipText,
-                  form.type !== PROGRAM_TYPE_MOURAJA3A &&
-                    styles.typeChipTextActive,
+                  hifzSelected && styles.typeChipTextActive,
+                  hifzChipLocked && styles.typeChipTextLocked,
                 ]}
               >
                 حفظ
@@ -799,6 +834,9 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
     backgroundColor: colors.soft,
   },
+  typeChipLocked: {
+    opacity: 0.55,
+  },
   typeChipText: {
     fontSize: 15,
     fontWeight: "600",
@@ -807,6 +845,9 @@ const styles = StyleSheet.create({
   },
   typeChipTextActive: {
     color: colors.primary,
+  },
+  typeChipTextLocked: {
+    color: colors.muted,
   },
   rowFields: {
     flexDirection: row,

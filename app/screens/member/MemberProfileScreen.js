@@ -15,7 +15,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useApp } from "../../context/AppContext";
 import { colors } from "../../constants/theme";
 import { rtlTextBold, fonts, arrowBack, row as rtlRow } from "../../constants/rtl";
-import { computeProgressPace } from "../../lib/progressApi";
+import { computeWeekDeltaTumuns } from "../../lib/progressApi";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
   ENROLLMENT_LOCK_INITIAL,
@@ -24,6 +24,7 @@ import {
   cachedMyObjectif,
   cachedMyProgressHistory,
   cachedMyProgressPosition,
+  cachedMySeasonProgress,
   cachedPresenceSummary,
   cachedProfileFields,
   enrollmentLockFromResult,
@@ -189,12 +190,14 @@ export default function MemberProfileScreen({ navigation }) {
     });
 
     const objectifSaisonId = getActiveRegularSeason(seasons)?.id ?? null;
-    const [posRes, histRes, objRes, presRes, enrollRes] = await Promise.all([
+    const [posRes, histRes, objRes, progressRes, presRes, enrollRes] =
+      await Promise.all([
       cachedMyProgressPosition(),
       cachedMyProgressHistory(objectifSaisonId),
       objectifSaisonId
         ? cachedMyObjectif(objectifSaisonId)
         : Promise.resolve({ ok: true, objectif: null }),
+      cachedMySeasonProgress(objectifSaisonId),
       seanceId
         ? cachedPresenceSummary(authId, seanceId)
         : // Séance inconnue : présence inconnue (pas de « لا يوجد سجل حضور »).
@@ -212,12 +215,16 @@ export default function MemberProfileScreen({ navigation }) {
           ),
       cachedMyEnrollment(objectifSaisonId),
     ]);
-    markOffline(posRes, histRes, objRes, presRes, enrollRes);
+    markOffline(posRes, histRes, objRes, progressRes, presRes, enrollRes);
 
     setEnrollmentLock(enrollmentLockFromResult(enrollRes));
 
     const objectif =
       objRes.ok && objRes.objectif ? objRes.objectif : null;
+    const seasonGain =
+      progressRes.ok && progressRes.progress?.gain != null
+        ? progressRes.progress.gain
+        : null;
 
     if (!posRes.ok) {
       setProgressState({
@@ -228,14 +235,14 @@ export default function MemberProfileScreen({ navigation }) {
         metrics: null,
         note: null,
         objectif,
-        seasonDeltaTumuns: null,
+        seasonDeltaTumuns: seasonGain,
         weekDeltaTumuns: null,
       });
     } else {
       const metrics = posRes.hasData ? posRes.metrics : null;
-      const pace = histRes.ok
-        ? computeProgressPace(histRes.entries || [], objectifSaisonId)
-        : { seasonDeltaTumuns: null, weekDeltaTumuns: null };
+      const weekDelta = histRes.ok
+        ? computeWeekDeltaTumuns(histRes.entries || [])
+        : null;
       setProgressState({
         loading: false,
         error: null,
@@ -243,8 +250,8 @@ export default function MemberProfileScreen({ navigation }) {
         metrics,
         note: metrics?.notes || null,
         objectif,
-        seasonDeltaTumuns: pace.seasonDeltaTumuns,
-        weekDeltaTumuns: pace.weekDeltaTumuns,
+        seasonDeltaTumuns: seasonGain,
+        weekDeltaTumuns: weekDelta,
       });
     }
 

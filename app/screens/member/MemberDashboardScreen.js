@@ -17,8 +17,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Home, BookOpen, User, ClipboardList, GraduationCap } from "lucide-react-native";
 import { useApp } from "../../context/AppContext";
 import {
+  computeMouraja3aProgress,
   computeProgressMetrics,
-  computeProgressPace,
+  computeWeekDeltaTumuns,
+  isKhatm,
 } from "../../lib/progressApi";
 import { SEASON_TYPES } from "../../constants/roles";
 import { NOTIF_CATEGORY } from "../../constants/notifications";
@@ -62,7 +64,10 @@ import { useInboxThreads } from "../../hooks/useInboxThreads";
 import { useChatGroups } from "../../hooks/useChatGroups";
 import { mapMemberTestToExam } from "../../lib/testsApi";
 import MemberTestsPanel from "../../components/member/MemberTestsPanel";
-import { formatHizbCount, TUMUNS_PER_HIZB } from "../../lib/tumun";
+import {
+  formatHizbCount,
+  TUMUNS_PER_HIZB,
+} from "../../lib/tumun";
 import PersonalInfoSection from "../../components/PersonalInfoSection";
 import ProfileHero from "../../components/profile/ProfileHero";
 import ProfilePasswordCard from "../../components/profile/ProfilePasswordCard";
@@ -191,14 +196,6 @@ function formatRingPercent(rawPct) {
     return { progress: 0, label: `${LRI}0%${PDI}` };
   }
   return { progress: one, label: `${LRI}${one.toFixed(1)}%${PDI}` };
-}
-
-/** Position en أحزاب depuis les أثمان, sans arrondi à l'entier supérieur. */
-function formatHizbAmount(tumunTotal) {
-  const h = (Number(tumunTotal) || 0) / TUMUNS_PER_HIZB;
-  const one = Math.round(h * 10) / 10;
-  if (one === Math.floor(one)) return String(one);
-  return one.toFixed(1);
 }
 
 function parseActivityTimestamp(raw) {
@@ -744,13 +741,14 @@ export default function MemberDashboardScreen({ navigation, route }) {
 
   const totalAhzab = memorizationMetrics?.nbHizbCompletes ?? 0;
 
-  const progressPace = useMemo(
-    () =>
-      computeProgressPace(
-        progressEntries,
-        getActiveRegularSeason(seasons)?.id ?? null
-      ),
-    [progressEntries, seasons]
+  /** Gain saison = RPC G ; masqué si RPC absente (hors ligne sans cache). */
+  const seasonGainTumuns =
+    seasonProgress && seasonProgress.gain != null
+      ? seasonProgress.gain
+      : null;
+  const weekDeltaTumuns = useMemo(
+    () => computeWeekDeltaTumuns(progressEntries),
+    [progressEntries]
   );
 
   const profileProgressState = useMemo(
@@ -765,8 +763,8 @@ export default function MemberDashboardScreen({ navigation, route }) {
       metrics: memorizationMetrics,
       note: memorizationMetrics?.notes || null,
       objectif: seasonObjectif,
-      seasonDeltaTumuns: progressPace.seasonDeltaTumuns,
-      weekDeltaTumuns: progressPace.weekDeltaTumuns,
+      seasonDeltaTumuns: seasonGainTumuns,
+      weekDeltaTumuns,
     }),
     [
       memorizationMetrics,
@@ -776,18 +774,52 @@ export default function MemberDashboardScreen({ navigation, route }) {
       progressState.loading,
       progressState.error,
       seasonObjectif,
-      progressPace,
+      seasonGainTumuns,
+      weekDeltaTumuns,
     ]
   );
 
-  /** Anneau = gain / cible, calculés par le serveur (RPC 0135). */
+  const memberIsKhatm = isKhatm(
+    seasonProgress?.position ?? memorizationMetrics?.tumunTotal
+  );
+  const mouraja3aProgress = useMemo(
+    () => (memberIsKhatm ? computeMouraja3aProgress(myMemberPrograms) : null),
+    [memberIsKhatm, myMemberPrograms]
+  );
+
+  /** Anneau = gain / cible (RPC 0135), ou % مراجعة si خاتم. Centre = % ; sous l'anneau = cible. */
   const homeProgress = useMemo(() => {
+    if (memberIsKhatm) {
+      if (!mouraja3aProgress) {
+        return {
+          mode: "khatm_empty",
+          memorizationPct: 0,
+          memorizationPctLabel: "—",
+          programsHizbLabel: "أضف برنامج مراجعة لمتابعة مراجعتك هذا الموسم",
+          ringTitle: "المراجعة هذا الموسم",
+          ringA11y: "أضف برنامج مراجعة لمتابعة مراجعتك هذا الموسم",
+        };
+      }
+      const ring = formatRingPercent(mouraja3aProgress.pct);
+      const goalLabel = formatHizbCount(mouraja3aProgress.objectifHizb);
+      return {
+        mode: "khatm",
+        memorizationPct: ring.progress,
+        memorizationPctLabel: ring.label,
+        programsHizbLabel: goalLabel,
+        ringTitle: "المراجعة هذا الموسم",
+        ringA11y: `المراجعة هذا الموسم: ${ring.label} — ${goalLabel}`,
+      };
+    }
+
     // Avancement inconnu (échec sans cache) : pas de « لم يُحدد هدف ».
     if (!seasonProgress && seasonProgressError) {
       return {
+        mode: "objectif",
         memorizationPct: 0,
         memorizationPctLabel: "—",
         programsHizbLabel: seasonProgressError,
+        ringTitle: "هدفي لهذا الموسم",
         ringA11y: seasonProgressError,
       };
     }
@@ -797,9 +829,11 @@ export default function MemberDashboardScreen({ navigation, route }) {
     if (!hasObjectif) {
       // Pas de 0 % : l'anneau reste vide, le centre affiche « — ».
       return {
+        mode: "objectif",
         memorizationPct: 0,
         memorizationPctLabel: "—",
         programsHizbLabel: "لم يُحدد هدف لهذا الموسم بعد",
+        ringTitle: "هدفي لهذا الموسم",
         ringA11y: "لم يُحدد هدف لهذا الموسم بعد. اضغط لتحديد عدد الأحزاب.",
       };
     }
@@ -810,25 +844,39 @@ export default function MemberDashboardScreen({ navigation, route }) {
     // Ni 0 % ni 100 % : anneau vide, « — » au centre.
     if (seasonProgress?.avancementPct == null) {
       return {
+        mode: "objectif",
         memorizationPct: 0,
         memorizationPctLabel: "—",
-        programsHizbLabel: `— من ${cibleLabel}`,
+        programsHizbLabel: cibleLabel,
+        ringTitle: "هدفي لهذا الموسم",
         ringA11y: `تقدم هدف الموسم غير متاح. الهدف: ${cibleLabel}`,
       };
     }
 
     const ring = formatRingPercent(seasonProgress.avancementPct);
-    const gainedLabel = formatHizbAmount(seasonProgress.gain);
     return {
+      mode: "objectif",
       memorizationPct: ring.progress,
       memorizationPctLabel: ring.label,
-      programsHizbLabel: `${gainedLabel} من ${cibleLabel}`,
-      ringA11y: `تقدم هدف الموسم: ${gainedLabel} من ${cibleLabel}`,
+      programsHizbLabel: cibleLabel,
+      ringTitle: "هدفي لهذا الموسم",
+      ringA11y: `تقدم هدف الموسم: ${ring.label} — ${cibleLabel}`,
     };
-  }, [seasonProgress, seasonProgressError]);
+  }, [
+    memberIsKhatm,
+    mouraja3aProgress,
+    seasonProgress,
+    seasonProgressError,
+  ]);
 
-  const { memorizationPct, memorizationPctLabel, programsHizbLabel, ringA11y } =
-    homeProgress;
+  const {
+    memorizationPct,
+    memorizationPctLabel,
+    programsHizbLabel,
+    ringA11y,
+    ringTitle,
+    mode: homeProgressMode,
+  } = homeProgress;
 
   const userNotifications = useMemo(
     () => getNotificationsForUser(currentUser),
@@ -1247,7 +1295,11 @@ export default function MemberDashboardScreen({ navigation, route }) {
           <>
             <TouchableOpacity
               style={styles.heroCard}
-              onPress={openProgression}
+              onPress={
+                homeProgressMode === "khatm_empty" || homeProgressMode === "khatm"
+                  ? () => setTab("programs")
+                  : openProgression
+              }
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel={ringA11y}
@@ -1270,7 +1322,7 @@ export default function MemberDashboardScreen({ navigation, route }) {
                   </Text>
                 </View>
               </ProgressRing>
-              <Text style={styles.ringTitle}>هدفي لهذا الموسم</Text>
+              <Text style={styles.ringTitle}>{ringTitle}</Text>
             </TouchableOpacity>
 
             <StatCard
