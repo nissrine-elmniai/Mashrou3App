@@ -583,6 +583,8 @@ export default function RegisterScreen({ navigation }) {
             <View style={styles.inputGroup}>
               <FieldLabel required>
                 ما هو عدد الأحزاب الذي تطمح لحفظه من كتاب الله خلال هذا الموسم؟
+                {" "}
+                (الأحزاب الإضافية هذا الموسم)
               </FieldLabel>
               <View style={styles.inputWrapper}>
                 <TextInput

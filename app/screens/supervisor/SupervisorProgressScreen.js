@@ -18,7 +18,8 @@ import { useApp } from "../../context/AppContext";
 import { getActiveRegularSeason } from "../../lib/seasonScope";
 import {
   computeProgressMetrics,
-  computeProgressPace,
+  computeWeekDeltaTumuns,
+  getMemberSeasonProgress,
 } from "../../lib/progressApi";
 import {
   cachedMemberCutoff,
@@ -131,6 +132,8 @@ export default function SupervisorProgressScreen({
     error: null,
   });
   const [objectif, setObjectif] = useState(null);
+  /** Gain saison (RPC) pour ProgressCard « هذا الموسم ». */
+  const [seasonGainTumuns, setSeasonGainTumuns] = useState(null);
   // Retour du réseau : historique et objectif rechargés. Ils ne dépendent pas
   // du focus : rechargés aussi au prochain focus si l'écran était en arrière-plan.
   const [reloadKey, setReloadKey] = useState(0);
@@ -241,15 +244,24 @@ export default function SupervisorProgressScreen({
   useEffect(() => {
     if (!selectedMemberId || !saisonId) {
       setObjectif(null);
+      setSeasonGainTumuns(null);
       return undefined;
     }
     let cancelled = false;
     (async () => {
-      const res = await cachedMemberObjectif(selectedMemberId, saisonId);
+      const [objRes, seasonRes] = await Promise.all([
+        cachedMemberObjectif(selectedMemberId, saisonId),
+        getMemberSeasonProgress(selectedMemberId),
+      ]);
       if (cancelled) return;
-      markOffline(res);
+      markOffline(objRes, seasonRes);
       // Objectif inconnu : on garde la valeur connue (la ligne est masquée si null).
-      if (res.ok) setObjectif(res.objectif || null);
+      if (objRes.ok) setObjectif(objRes.objectif || null);
+      setSeasonGainTumuns(
+        seasonRes.ok && seasonRes.progress?.gain != null
+          ? seasonRes.progress.gain
+          : null
+      );
     })();
     return () => {
       cancelled = true;
@@ -259,10 +271,16 @@ export default function SupervisorProgressScreen({
     history.memberId === selectedMemberId && !history.loading;
   const pace = useMemo(() => {
     if (!historyReady) {
-      return { seasonDeltaTumuns: null, weekDeltaTumuns: null };
+      return {
+        seasonDeltaTumuns: seasonGainTumuns,
+        weekDeltaTumuns: null,
+      };
     }
-    return computeProgressPace(history.entries, saisonId);
-  }, [historyReady, history.entries, saisonId]);
+    return {
+      seasonDeltaTumuns: seasonGainTumuns,
+      weekDeltaTumuns: computeWeekDeltaTumuns(history.entries),
+    };
+  }, [historyReady, history.entries, seasonGainTumuns]);
 
   const activityCells = useMemo(() => {
     if (history.memberId !== selectedMemberId) return [];

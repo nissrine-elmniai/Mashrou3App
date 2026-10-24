@@ -37,7 +37,8 @@ import { rtlText, rtlTextBold, rtlTextCenter, fonts, arrowBack, row as rtlRow, t
 import {
   getMemberProgressEntries,
   getCurrentProgressPosition,
-  computeProgressPace,
+  computeWeekDeltaTumuns,
+  getMemberSeasonProgress,
 } from "../../lib/progressApi";
 import { getMemberObjectif } from "../../lib/objectifsApi";
 import { getMemberPresenceSummary } from "../../lib/presenceApi";
@@ -613,7 +614,7 @@ export default function MemberProfileScreen({ navigation, route }) {
           ? cachedMemberObjectif(memberId, objectifSaisonId, memberCachePrefix)
           : getMemberObjectif(memberId, objectifSaisonId);
       }
-      const [posRes, objRes, presRes, paceRes] = await Promise.all([
+      const [posRes, objRes, presRes, paceRes, seasonRes] = await Promise.all([
         memberCachePrefix
           ? cachedMemberPosition(memberId, memberCachePrefix)
           : getCurrentProgressPosition(memberId),
@@ -622,12 +623,17 @@ export default function MemberProfileScreen({ navigation, route }) {
         memberCachePrefix
           ? cachedMemberPaceHistory(memberId, activeSeasonId, memberCachePrefix)
           : getMemberProgressEntries(memberId),
+        getMemberSeasonProgress(memberId),
       ]);
       if (cancelled) return;
-      markOffline(posRes, objRes, presRes, paceRes);
+      markOffline(posRes, objRes, presRes, paceRes, seasonRes);
 
       const objectif =
         objRes.ok && objRes.objectif ? objRes.objectif : null;
+      const seasonGain =
+        seasonRes.ok && seasonRes.progress?.gain != null
+          ? seasonRes.progress.gain
+          : null;
 
       if (!posRes.ok) {
         setProgressState({
@@ -638,14 +644,14 @@ export default function MemberProfileScreen({ navigation, route }) {
           metrics: null,
           note: null,
           objectif,
-          seasonDeltaTumuns: null,
+          seasonDeltaTumuns: seasonGain,
           weekDeltaTumuns: null,
         });
       } else {
         const metrics = posRes.hasData ? posRes.metrics : null;
-        const pace = paceRes.ok
-          ? computeProgressPace(paceRes.entries || [], activeSeasonId ?? null)
-          : { seasonDeltaTumuns: null, weekDeltaTumuns: null };
+        const weekDelta = paceRes.ok
+          ? computeWeekDeltaTumuns(paceRes.entries || [])
+          : null;
         setProgressState({
           loading: false,
           error: null,
@@ -653,8 +659,8 @@ export default function MemberProfileScreen({ navigation, route }) {
           metrics,
           note: metrics?.notes || null,
           objectif,
-          seasonDeltaTumuns: pace.seasonDeltaTumuns,
-          weekDeltaTumuns: pace.weekDeltaTumuns,
+          seasonDeltaTumuns: seasonGain,
+          weekDeltaTumuns: weekDelta,
         });
       }
 
