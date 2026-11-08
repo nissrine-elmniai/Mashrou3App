@@ -32,7 +32,6 @@
       ],
       "package": "com.clubaltruisme.mashrou3app",
       "googleServicesFile": "./google-services.json",
-      "supportsRtl": true,
       "intentFilters": [
         {
           "action": "VIEW",
